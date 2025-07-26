@@ -1,26 +1,29 @@
 // prisma/schema.prisma
 
-// 1) Generador del cliente de Prisma
+// 1) Ajusta tu generator y datasource
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/prisma"
 }
 
-// 2) Conexión a la base de datos usando la URL de Railway
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// 3) Define aquí tus modelos (tablas). A modo de ejemplo:
+// 2) Tu modelo de usuarios
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique
   password  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // relación uno-a-muchos: un user puede tener muchas orders
+  orders    Order[]
 }
 
+// 3) Tu modelo de productos
 model Product {
   id          Int       @id @default(autoincrement())
   name        String
@@ -28,4 +31,22 @@ model Product {
   price       Float
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  // relación muchos-a-muchos implícita con orders
+  orders      Order[]
+}
+
+// 4) Tu modelo de órdenes
+model Order {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+
+  // relación muchos-a-uno con User
+  user      User      @relation(fields: [userId], references: [id])
+  userId    Int
+
+  total     Float
+
+  // relación muchos-a-muchos implícita con Product
+  products  Product[]
 }
