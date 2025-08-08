@@ -1,9 +1,7 @@
 // prisma/schema.prisma
 
-// 1) Ajusta tu generator y datasource
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -11,42 +9,51 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// 2) Tu modelo de usuarios
+// ---------- NUEVO: enum de roles ----------
+enum Role {
+  ADMIN
+  CLIENTE
+}
+
+// ---------- User con phone y role ----------
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // relación uno-a-muchos: un user puede tener muchas orders
-  orders    Order[]
-}
-
-// 3) Tu modelo de productos
-model Product {
-  id          Int       @id @default(autoincrement())
-  name        String
-  description String?
-  price       Float
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  // relación muchos-a-muchos implícita con orders
-  orders      Order[]
-}
-
-// 4) Tu modelo de órdenes
-model Order {
   id        Int       @id @default(autoincrement())
+  email     String    @unique
+  password  String
+  name      String
+  phone     String   @default("0000000000")
+  role      Role      @default(CLIENTE)
+  orders    Order[]
   createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
 
-  // relación muchos-a-uno con User
-  user      User      @relation(fields: [userId], references: [id])
+model Order {
+  id        Int         @id @default(autoincrement())
   userId    Int
-
   total     Float
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id])
+  items     OrderItem[]
+}
 
-  // relación muchos-a-muchos implícita con Product
-  products  Product[]
+model Product {
+  id          Int         @id @default(autoincrement())
+  name        String
+  price       Int
+  stock       Int
+  description String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  orderItems  OrderItem[]
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  productId Int
+  quantity  Int
+
+  order   Order   @relation(fields: [orderId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
 }
