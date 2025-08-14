@@ -9,19 +9,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ---------- NUEVO: enum de roles ----------
+// ---------- Enums ----------
 enum Role {
   ADMIN
   CLIENTE
 }
 
-// ---------- User con phone y role ----------
+enum OrderStatus {
+  RECIBIDO
+  EN_CAMINO
+  ENTREGADO
+  CANCELADO
+}
+
+// ---------- Modelos ----------
 model User {
   id        Int       @id @default(autoincrement())
   email     String    @unique
   password  String
   name      String
-  phone     String   @default("0000000000")
+  phone     String    @default("0000000000")
   role      Role      @default(CLIENTE)
   orders    Order[]
   createdAt DateTime  @default(now())
@@ -29,12 +36,15 @@ model User {
 }
 
 model Order {
-  id        Int         @id @default(autoincrement())
+  id        Int          @id @default(autoincrement())
   userId    Int
   total     Float
-  createdAt DateTime    @default(now())
-  user      User        @relation(fields: [userId], references: [id])
+  createdAt DateTime     @default(now())
+  user      User         @relation(fields: [userId], references: [id])
   items     OrderItem[]
+
+  // nuevo campo
+  status    OrderStatus  @default(RECIBIDO)
 }
 
 model Product {

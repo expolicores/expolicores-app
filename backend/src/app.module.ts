@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -17,13 +18,11 @@ import { OrdersModule } from './orders/orders.module';
     PrismaModule,
     UsersModule,
     ProductsModule,
-    OrdersModule, // ¡aquí sí va PrismaModule!
+    OrdersModule,
+    AuthModule, // ¡aquí sí va PrismaModule!
     // otros módulos que agregarás después
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
-
-
-

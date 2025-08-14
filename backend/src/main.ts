@@ -11,9 +11,9 @@ async function bootstrap() {
 
   // ✅ Validation global con mejores prácticas
   app.useGlobalPipes(new ValidationPipe({
-    whitelist: true,
-    transform: true,
-    forbidNonWhitelisted: true,
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
     }));
 
   // ✅ Swagger docs en /docs
