@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
+import * as morgan from 'morgan';
 
 // 👇 Swagger
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -10,11 +11,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // ✅ Validation global con mejores prácticas
-  app.useGlobalPipes(new ValidationPipe({
+  app.useGlobalPipes(
+    new ValidationPipe({
       whitelist: true,
       transform: true,
       forbidNonWhitelisted: true,
     }));
+
+  app.use(morgan('dev')); // <-- verás: POST /auth/register 201 + tiempo
+  // ...
 
   // ✅ Swagger docs en /docs
   const configSwagger = new DocumentBuilder()

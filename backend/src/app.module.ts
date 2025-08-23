@@ -8,7 +8,7 @@ import { UsersModule } from './users/users.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
 import { AuthModule } from './auth/auth.module';
-
+import { AddressesModule } from './addresses/addresses.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -19,7 +19,8 @@ import { AuthModule } from './auth/auth.module';
     UsersModule,
     ProductsModule,
     OrdersModule,
-    AuthModule, // ¡aquí sí va PrismaModule!
+    AuthModule,
+    AddressesModule, // ¡aquí sí va PrismaModule!
     // otros módulos que agregarás después
   ],
   controllers: [AppController],
