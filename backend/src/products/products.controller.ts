@@ -1,5 +1,5 @@
 import {
-  UseGuards, Body, Controller, Get, Param, Post, Put, Patch, Delete, ParseIntPipe
+  UseGuards, Body, Controller, Get, Param, Post, Put, Patch, Delete, ParseIntPipe,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './create-product.dto';
@@ -13,12 +13,39 @@ import { Role } from '@prisma/client';
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
-  // ---- ADMIN ONLY ----
+  // --------- PÚBLICOS ---------
+  // Catálogo (shape público)
+  @Get()
+  listPublic() {
+    return this.productsService.listPublic();
+  }
+
+  // Categorías (DEBE ir antes que ":id")
+  @Get('categories')
+  categories() {
+    return this.productsService.listCategories();
+  }
+
+  // Detalle público por id
+  @Get(':id')
+  findOnePublic(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.findOne(id);
+  }
+
+  // --------- ADMIN ONLY ---------
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @Post()
   create(@Body() dto: CreateProductDto) {
     return this.productsService.create(dto);
+  }
+
+  // Listado completo (admin) con todos los campos
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin')
+  findAllAdmin() {
+    return this.productsService.findAll();
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -40,16 +67,5 @@ export class ProductsController {
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.productsService.remove(id);
-  }
-
-  // ---- PÚBLICOS ----
-  @Get()
-  findAll() {
-    return this.productsService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findOne(id);
   }
 }

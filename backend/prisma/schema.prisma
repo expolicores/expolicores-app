@@ -49,15 +49,20 @@ model Order {
 }
 
 model Product {
-  id          Int         @id @default(autoincrement())
-  name        String
-  price       Int
-  stock       Int
-  description String
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  orderItems  OrderItem[]
+  id              Int @id @default(autoincrement())
+  name            String
+  price           Int
+  stock           Int
+  description     String
+  imageUrl        String?
+  category        String? @db.VarChar(64)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  orderItems      OrderItem[]
+@@index([category])
 }
+
+
 
 model OrderItem {
   id        Int      @id @default(autoincrement())
