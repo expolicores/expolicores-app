@@ -9,13 +9,12 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (no persistas credenciales)
+      - name: Checkout (no persistir credenciales)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false   # 👈 clave
+          persist-credentials: false   # <-- evita usar GITHUB_TOKEN
 
-      # Cinturón y tirantes: borra el header que mete checkout a nivel global
       - name: Remove GITHUB_TOKEN extraheader
         run: |
           git config --global --unset-all http.https://github.com/.extraheader || true
