@@ -1,0 +1,46 @@
+name: Mirror Hotfix (push selected branches)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branches:
+        description: "Ramas a publicar (separadas por espacio)"
+        required: true
+        default: "dev"
+
+jobs:
+  push_selected:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.MIRROR_SSH_KEY }}
+
+      - name: Trust github.com
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Push selected branches to mirror
+        env:
+          BRANCHES: ${{ github.event.inputs.branches }}
+        run: |
+          set -euo pipefail
+          git remote add mirror git@github.com:expolicores/expolicores-app-public.git
+          echo "Publishing branches: $BRANCHES"
+          for B in $BRANCHES; do
+            echo ">> Pushing $B"
+            # Empuja desde el seguimiento remoto de origin a heads del espejo
+            git push --force mirror "refs/remotes/origin/$B:refs/heads/$B"
+          done
+
+      - name: (Optional) Push tags
+        run: |
+          git push mirror --tags || true
