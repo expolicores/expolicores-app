@@ -5,45 +5,33 @@ on:
     branches: [ master, main, dev ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   mirror:
-    # Evita que se ejecute en forks
-    if: ${{ github.repository == 'expolicores/expolicores-app' }}
     runs-on: ubuntu-latest
-    concurrency:
-      group: mirror-${{ github.ref }}
-      cancel-in-progress: true
-
     steps:
-      - name: Checkout full history
+      - name: Checkout (no persistas credenciales)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false   # 👈 clave
+
+      # Cinturón y tirantes: borra el header que mete checkout a nivel global
+      - name: Remove GITHUB_TOKEN extraheader
+        run: |
+          git config --global --unset-all http.https://github.com/.extraheader || true
 
       - name: Configure git
         run: |
           git config user.name  "expolicores-bot"
           git config user.email "bot@users.noreply.github.com"
 
-      - name: Add mirror remote
-        env:
-          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+      - name: Add mirror remote (with PAT)
         run: |
-          set -euo pipefail
-          git remote add mirror https://x-access-token:${MIRROR_TOKEN}@github.com/expolicores/expolicores-app-public.git
+          git remote remove mirror 2>/dev/null || true
+          git remote add mirror "https://x-access-token:${{ secrets.MIRROR_TOKEN }}@github.com/expolicores/expolicores-app-public.git"
           git remote -v
 
       - name: Push current branch to mirror
-        env:
-          BRANCH: ${{ github.ref_name }}
         run: |
-          set -euo pipefail
-          echo "Pushing $BRANCH to mirror..."
-          git push --force-with-lease mirror "$BRANCH:$BRANCH"
-
-      - name: Push tags (optional)
-        run: |
-          git push mirror --tags
+          echo "Pushing ${{ github.ref_name }} -> mirror/${{ github.ref_name }}"
+          git push --force-with-lease mirror "${{ github.ref_name }}:${{ github.ref_name }}"
