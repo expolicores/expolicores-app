@@ -1,0 +1,32 @@
+name: Mirror all branches to Public Repo
+
+on:
+  push:
+    branches: ["*"]
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup SSH key for access
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.MIRROR_SSH_KEY }}
+
+      - name: Trust GitHub host
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Add mirror remote and push
+        run: |
+          git remote add mirror git@github.com:expolicores/expolicores-app-public.git
+          echo "Pushing all branches and tags to mirror..."
+          git push --mirror mirror
