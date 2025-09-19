@@ -34,7 +34,7 @@ jobs:
 
       - name: Authenticate using PAT and push current branch to mirror
         env:
-          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          MIRROR_TOKEN: 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
           BRANCH: ${{ github.ref_name }}
         run: |
           git remote set-url mirror https://x-access-token:$MIRROR_TOKEN@github.com/expolicores/expolicores-app-public.git
@@ -42,7 +42,7 @@ jobs:
 
       - name: Push tags (optional)
         env:
-          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          MIRROR_TOKEN: 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
         run: |
           git remote set-url mirror https://x-access-token:$MIRROR_TOKEN@github.com/expolicores/expolicores-app-public.git
           git push mirror --tags
