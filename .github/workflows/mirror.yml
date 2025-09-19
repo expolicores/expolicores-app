@@ -33,11 +33,13 @@ jobs:
         run: |
           git remote add mirror https://x-access-token:${MIRROR_TOKEN}@github.com/expolicores/expolicores-app-public.git
 
-      - name: Push current branch to mirror
-        env:
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          git push --force-with-lease mirror "$BRANCH:$BRANCH"
+    - name: Push current branch to mirror
+      env:
+        BRANCH: ${{ github.ref_name }}
+        MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+      run: |
+        git push --force-with-lease https://x-access-token:${MIRROR_TOKEN}@github.com/expolicores/expolicores-app-public.git "$BRANCH:$BRANCH"
+
 
       - name: Push tags (optional)
         run: git push mirror --tags
