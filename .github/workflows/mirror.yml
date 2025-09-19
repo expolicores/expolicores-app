@@ -2,7 +2,7 @@ name: Mirror to Public
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ master, main, dev ]
   workflow_dispatch:
 
 permissions:
