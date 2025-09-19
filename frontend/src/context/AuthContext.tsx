@@ -1,103 +1,119 @@
-import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
 import { api, setAuthToken, authHeaderSetter } from '../lib/api';
-import type { User, LoginPayload, RegisterPayload, AuthTokenResponse } from '../types/auth';
 
-interface AuthContextType {
-  initializing: boolean;
-  loading: boolean;
-  user: User | null;
+type AuthCtx = {
+  booting: boolean;
+  isAuthenticated: boolean;
   token: string | null;
-  login: (payload: LoginPayload) => Promise<void>;
-  register: (payload: RegisterPayload) => Promise<void>;
-  logout: () => Promise<void>;
-  refreshMe: () => Promise<void>;
-}
+  signIn: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
+};
 
-export const AuthContext = createContext<AuthContextType>({} as any);
+const TOKEN_KEY = 'expolicores_token';
 
-const TOKEN_KEY = 'expolicores.token';
+export const AuthContext = createContext<AuthCtx>({} as any);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [initializing, setInitializing] = useState(true);
-  const [loading, setLoading] = useState(false);
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [booting, setBooting] = useState(true);
 
-  // Configura cómo se aplica el header Authorization globalmente
-  useEffect(() => { authHeaderSetter((t) => {
-    if (t) api.defaults.headers.common.Authorization = `Bearer ${t}`;
-    else delete api.defaults.headers.common.Authorization;
-  }); }, []);
+  // Inicializa setter para header Authorization
+  authHeaderSetter();
 
-  const loadFromStorage = useCallback(async () => {
-    try {
-      const saved = await SecureStore.getItemAsync(TOKEN_KEY);
-      if (saved) {
-        setToken(saved);
-        setAuthToken(saved);
-        await refreshMeInternal(saved);
+  // Carga token almacenado y valida sesión
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await SecureStore.getItemAsync(TOKEN_KEY);
+        if (saved) {
+          setToken(saved);
+          setAuthToken(saved);
+          await api.get('/auth/me').catch(() => signOut());
+        }
+      } finally {
+        setBooting(false);
       }
-    } finally {
-      setInitializing(false);
+    })();
+  }, []);
+
+  // Interceptor 401 → logout
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (r) => r,
+      async (err) => {
+        if (err?.response?.status === 401) await signOut();
+        return Promise.reject(err);
+      },
+    );
+    return () => api.interceptors.response.eject(id);
+  }, []);
+
+  const signIn = async (email: string, password: string) => {
+    try {
+      const payload = {
+        email: String(email ?? '').trim().toLowerCase(),
+        password: String(password ?? ''),
+      };
+      const { data } = await api.post('/auth/login', payload);
+
+      // Acepta access_token | accessToken | token
+      const token =
+        (data && (data.access_token ?? data.accessToken ?? data.token)) as
+          | string
+          | undefined;
+
+      if (!token) {
+        console.log('[LOGIN] response sin token', data);
+        throw new Error('Respuesta de login inválida (sin access_token)');
+      }
+
+      // Persistencia (si falla no bloquea el login)
+      try {
+        await SecureStore.setItemAsync(TOKEN_KEY, token);
+      } catch (err) {
+        console.warn('[SecureStore] setItem error', err);
+      }
+
+      setAuthToken(token);
+      setToken(token);
+    } catch (e: any) {
+      console.log('LOGIN ERROR →', {
+        message: e?.message,
+        status: e?.response?.status,
+        data: e?.response?.data,
+        baseURL: api.defaults.baseURL,
+      });
+      const serverMsg = e?.response?.data?.message;
+      const msg = serverMsg
+        ? Array.isArray(serverMsg)
+          ? serverMsg.join('\n')
+          : String(serverMsg)
+        : e?.message ?? 'No se pudo iniciar sesión';
+      Alert.alert('Error', msg);
+      throw e;
     }
-  }, []);
+  };
 
-  useEffect(() => { loadFromStorage(); }, [loadFromStorage]);
+  const signOut = async () => {
+    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    setToken(null);
+    setAuthToken(null);
+  };
 
-  const refreshMeInternal = useCallback(async (_token?: string) => {
-    try {
-      if (!_token && !token) return;
-      setLoading(true);
-      const { data } = await api.get<User>('/users/me');
-      setUser(data);
-    } catch (e: any) {
-      // Token inválido/expirado
-      await SecureStore.deleteItemAsync(TOKEN_KEY);
-      setToken(null); setUser(null); setAuthToken(null);
-    } finally { setLoading(false); }
-  }, [token]);
-
-  const login = useCallback(async (payload: LoginPayload) => {
-    setLoading(true);
-    try {
-      const { data } = await api.post<AuthTokenResponse>('/auth/login', payload);
-      const t = data.token;
-      setToken(t); setAuthToken(t);
-      await SecureStore.setItemAsync(TOKEN_KEY, t);
-      await refreshMeInternal(t);
-    } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.message ?? 'No se pudo iniciar sesión');
-      throw e;
-    } finally { setLoading(false); }
-  }, [refreshMeInternal]);
-
-  const register = useCallback(async (payload: RegisterPayload) => {
-    setLoading(true);
-    try {
-      const { data } = await api.post<AuthTokenResponse>('/auth/register', payload);
-      const t = data.token;
-      setToken(t); setAuthToken(t);
-      await SecureStore.setItemAsync(TOKEN_KEY, t);
-      await refreshMeInternal(t);
-    } catch (e: any) {
-      Alert.alert('Error', e?.response?.data?.message ?? 'No se pudo registrar');
-      throw e;
-    } finally { setLoading(false); }
-  }, [refreshMeInternal]);
-
-  const logout = useCallback(async () => {
-    setLoading(true);
-    try {
-      await SecureStore.deleteItemAsync(TOKEN_KEY);
-      setToken(null); setUser(null); setAuthToken(null);
-    } finally { setLoading(false); }
-  }, []);
-
-  const refreshMe = useCallback(async () => refreshMeInternal(), [refreshMeInternal]);
-
-  const value = useMemo(() => ({ initializing, loading, user, token, login, register, logout, refreshMe }), [initializing, loading, user, token, login, register, logout, refreshMe]);
+  const value = useMemo<AuthCtx>(
+    () => ({
+      booting,
+      isAuthenticated: !!token,
+      token,
+      signIn,
+      signOut,
+    }),
+    [booting, token],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
+};
+
+export const useAuth = () => useContext(AuthContext);
