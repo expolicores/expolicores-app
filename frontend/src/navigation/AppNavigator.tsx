@@ -1,17 +1,19 @@
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 
 import LoginScreen from "../screens/LoginScreen";
 import RegisterScreen from "../screens/RegisterScreen";
 import CatalogScreen from "../screens/CatalogScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import AddressListScreen from "../screens/AddressListScreen";
-import ProductDetailScreen from "../screens/ProductDetailScreen"; // 👈 NUEVO
+import ProductDetailScreen from "../screens/ProductDetailScreen";
+import CartScreen from "../screens/CartScreen"; // 👈 NUEVO
 
-// --- Tipado del stack (opcional pero recomendado) ---
+// --- Tipado del stack ---
 export type RootStackParamList = {
   // No-auth
   Login: undefined;
@@ -19,12 +21,43 @@ export type RootStackParamList = {
 
   // Auth
   Catalog: undefined;
-  ProductDetail: { id: number }; // 👈 NUEVO
+  ProductDetail: { id: number };
   Profile: undefined;
   Addresses: undefined;
+  Cart: undefined;            // 👈 NUEVO
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+function HeaderCartButton({ onPress }: { onPress: () => void }) {
+  const { count } = useCart();
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="Ver carrito">
+      <View style={{ position: "relative", paddingHorizontal: 4 }}>
+        <Text style={{ fontSize: 20 }}>🛒</Text>
+        {count > 0 && (
+          <View
+            style={{
+              position: "absolute",
+              top: -4,
+              right: -4,
+              backgroundColor: "#ef4444",
+              borderRadius: 999,
+              paddingHorizontal: 5,
+              paddingVertical: 1,
+              minWidth: 18,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "white", fontSize: 12, fontWeight: "700" }}>
+              {count}
+            </Text>
+          </View>
+        )}
+      </View>
+    </Pressable>
+  );
+}
 
 export default function AppNavigator() {
   const { booting, isAuthenticated } = useAuth();
@@ -44,12 +77,27 @@ export default function AppNavigator() {
           <Stack.Screen
             name="Catalog"
             component={CatalogScreen}
-            options={{ title: "Catálogo" }}
+            options={({ navigation }) => ({
+              title: "Catálogo",
+              headerRight: () => (
+                <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
+              ),
+            })}
           />
           <Stack.Screen
-            name="ProductDetail"               // 👈 NUEVO
+            name="ProductDetail"
             component={ProductDetailScreen}
-            options={{ title: "Detalle" }}
+            options={({ navigation }) => ({
+              title: "Detalle",
+              headerRight: () => (
+                <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
+              ),
+            })}
+          />
+          <Stack.Screen
+            name="Cart"
+            component={CartScreen}
+            options={{ title: "Carrito" }}
           />
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="Addresses" component={AddressListScreen} />

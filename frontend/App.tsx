@@ -1,14 +1,14 @@
-import React from 'react';
-import { AppState, Platform } from 'react-native';
+import React, { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
-import { AuthProvider } from './src/context/AuthContext'; // 👈 named import
-import AppNavigator from './src/navigation/AppNavigator';  // 👈 default import
+import { AuthProvider } from './src/context/AuthContext';
+import { CartProvider } from './src/context/CartContext';
+import AppNavigator from './src/navigation/AppNavigator';
 
 // Mantiene react-query en sync con el foco de la app
 function onAppStateChange(status: string) {
   focusManager.setFocused(status === 'active');
 }
-AppState.addEventListener('change', onAppStateChange);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,10 +20,18 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
+  // Registramos/limpiamos el listener correctamente
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', onAppStateChange);
+    return () => sub.remove();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <AppNavigator />
+        <CartProvider>
+          <AppNavigator />
+        </CartProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
