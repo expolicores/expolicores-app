@@ -3,23 +3,28 @@ name: Mirror all branches to Public Repo
 on:
   push:
     branches:
-      - '**'  # Todas las ramas
+      - '**'  # todas las ramas
+  workflow_dispatch: {}  # permitir ejecución manual desde Actions
 
 jobs:
   mirror:
+    if: ${{ github.repository == 'expolicores/expolicores-app' }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: mirror-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout full repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Trae todo el historial
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup SSH key for access
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.MIRROR_SSH_KEY }}
 
       - name: Trust GitHub host
         run: |
@@ -33,5 +38,4 @@ jobs:
           git push --prune --force --tags mirror "refs/remotes/origin/*:refs/heads/*"
 
       - name: Post Setup SSH key for access
-        run: |
-          ssh-add -D
+        run: ssh-add -D
