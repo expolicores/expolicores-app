@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -8,27 +8,28 @@ import {
   Text,
   TextInput,
   View,
-} from 'react-native';
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { getProductsPaged } from '../lib/api';
-import { useDebounce } from '../lib/useDebounce';
-import CategoryChips from '../components/CategoryChips';
-import ProductCard from '../components/ProductCard';
+  RefreshControl,
+} from "react-native";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { getProductsPaged } from "../lib/api";
+import { useDebounce } from "../lib/useDebounce";
+import CategoryChips from "../components/CategoryChips";
+import ProductCard from "../components/ProductCard";
 
 const PAGE_SIZE = 20;
 const SORT_OPTIONS = [
-  { key: 'newest', label: 'Nuevos' },
-  { key: 'price_asc', label: 'Precio ↑' },
-  { key: 'price_desc', label: 'Precio ↓' },
-  { key: 'name_asc', label: 'Nombre A-Z' },
-  { key: 'name_desc', label: 'Nombre Z-A' },
+  { key: "newest", label: "Nuevos" },
+  { key: "price_asc", label: "Precio ↑" },
+  { key: "price_desc", label: "Precio ↓" },
+  { key: "name_asc", label: "Nombre A-Z" },
+  { key: "name_desc", label: "Nombre Z-A" },
 ] as const;
-type SortKey = typeof SORT_OPTIONS[number]['key'];
+type SortKey = (typeof SORT_OPTIONS)[number]["key"];
 
 export default function CatalogScreen() {
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string | undefined>(undefined);
-  const [sort, setSort] = useState<SortKey>('newest');
+  const [sort, setSort] = useState<SortKey>("newest");
 
   const q = useDebounce(search.trim(), 400);
   const listRef = useRef<FlatList>(null);
@@ -41,31 +42,38 @@ export default function CatalogScreen() {
     fetchNextPage,
     isFetchingNextPage,
     hasNextPage,
+    isRefetching,
   } = useInfiniteQuery({
-    queryKey: ['products', { q, category, sort }],
-    queryFn: ({ pageParam = 1 }) =>
-      getProductsPaged({
-        q: q || undefined,
-        category,
-        sort,
-        page: pageParam,
-        limit: PAGE_SIZE,
-      }),
+    queryKey: ["products", { q, category, sort }],
+    queryFn: ({ pageParam = 1, signal }) =>
+      getProductsPaged(
+        { q: q || undefined, category, sort, page: pageParam, limit: PAGE_SIZE },
+        { signal }
+      ),
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((acc, p) => acc + p.items.length, 0);
-      return loaded < (lastPage.total || 0) ? allPages.length + 1 : undefined;
+      if (loaded >= (lastPage.total ?? 0)) return undefined;
+      const totalPages = Math.max(1, Math.ceil((lastPage.total ?? 0) / PAGE_SIZE));
+      const next = allPages.length + 1; // 1-based
+      return next <= totalPages ? next : undefined;
     },
+    keepPreviousData: true,
+    staleTime: 30_000,
   });
 
-  // UX: cuando cambian filtros/búsqueda/orden, volvemos el scroll al inicio
+  // Volver al inicio al cambiar filtros/búsqueda/orden
   useEffect(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [q, category, sort]);
 
-  const items = useMemo(
-    () => (data?.pages ?? []).flatMap((p) => p.items),
-    [data]
-  );
+  // Aplana y deduplica por id para evitar duplicados
+  const items = useMemo(() => {
+    const map = new Map<number, any>();
+    (data?.pages ?? []).forEach((p) => {
+      p.items.forEach((it: any) => map.set(it.id, it));
+    });
+    return Array.from(map.values());
+  }, [data]);
 
   if (isLoading) {
     return (
@@ -101,9 +109,9 @@ export default function CatalogScreen() {
 
       {/* Categorías */}
       <CategoryChips
-        selected={category}                // string | undefined
-        onSelect={(c) => setCategory(c)}   // c = undefined para "Todos"
-        onResetAll={() => setSearch('')}   // limpia el buscador al tocar "Todos"
+        selected={category}
+        onSelect={(c) => setCategory(c)}
+        onResetAll={() => setSearch("")}
       />
 
       {/* Ordenar (scrollable) */}
@@ -118,9 +126,7 @@ export default function CatalogScreen() {
             onPress={() => setSort(opt.key)}
             style={[styles.sortChip, sort === opt.key && styles.sortChipActive]}
           >
-            <Text
-              style={[styles.sortText, sort === opt.key && styles.sortTextActive]}
-            >
+            <Text style={[styles.sortText, sort === opt.key && styles.sortTextActive]}>
               {opt.label}
             </Text>
           </Pressable>
@@ -141,16 +147,17 @@ export default function CatalogScreen() {
             <ProductCard product={item} onAdd={() => { /* US08 */ }} />
           )}
           contentContainerStyle={{ padding: 12 }}
-          onEndReachedThreshold={0.4}
+          onEndReachedThreshold={0.5}
           onEndReached={() => {
             if (hasNextPage && !isFetchingNextPage) fetchNextPage();
           }}
           ListFooterComponent={
-            isFetchingNextPage ? (
-              <ActivityIndicator style={{ marginVertical: 12 }} />
-            ) : null
+            isFetchingNextPage ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null
           }
-          // Mejoras de rendimiento en listas largas
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={refetch} />
+          }
+          // Performance en listas largas
           initialNumToRender={12}
           windowSize={10}
           removeClippedSubviews
@@ -161,16 +168,33 @@ export default function CatalogScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  muted: { color: '#666', marginTop: 8 },
-  error: { color: '#c1121f', marginBottom: 12, fontWeight: '600' },
-  retryBtn: { backgroundColor: '#111827', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
-  retryText: { color: '#fff', fontWeight: '600' },
-  search: { backgroundColor: '#f3f4f6', margin: 12, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
-  sortRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 8, marginBottom: 6 },
-  sortChip: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  sortChipActive: { backgroundColor: '#111827' },
-  sortText: { color: '#111827' },
-  sortTextActive: { color: '#fff', fontWeight: '600' },
+  container: { flex: 1, backgroundColor: "#fff" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  muted: { color: "#666", marginTop: 8 },
+  error: { color: "#c1121f", marginBottom: 12, fontWeight: "600" },
+  retryBtn: {
+    backgroundColor: "#111827",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryText: { color: "#fff", fontWeight: "600" },
+  search: {
+    backgroundColor: "#f3f4f6",
+    margin: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  sortRow: { flexDirection: "row", paddingHorizontal: 12, gap: 8, marginBottom: 6 },
+  sortChip: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  sortChipActive: { backgroundColor: "#111827" },
+  sortText: { color: "#111827" },
+  sortTextActive: { color: "#fff", fontWeight: "600" },
 });
