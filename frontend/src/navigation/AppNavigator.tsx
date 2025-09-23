@@ -10,8 +10,15 @@ import RegisterScreen from "../screens/RegisterScreen";
 import CatalogScreen from "../screens/CatalogScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import AddressListScreen from "../screens/AddressListScreen";
+import AddressFormScreen from "../screens/AddressFormScreen";
 import ProductDetailScreen from "../screens/ProductDetailScreen";
-import CartScreen from "../screens/CartScreen"; // 👈 NUEVO
+import CartScreen from "../screens/CartScreen";
+
+// ✅ NUEVO
+import MyOrdersScreen from "../screens/MyOrdersScreen";
+
+import CheckoutScreen from "../screens/CheckoutScreen";
+import OrderSuccessScreen from "../screens/OrderSuccessScreen";
 
 // --- Tipado del stack ---
 export type RootStackParamList = {
@@ -24,7 +31,14 @@ export type RootStackParamList = {
   ProductDetail: { id: number };
   Profile: undefined;
   Addresses: undefined;
-  Cart: undefined;            // 👈 NUEVO
+  AddressForm: { addressId?: number } | undefined;
+  Cart: undefined;
+
+  // ✅ NUEVO
+  MyOrders: undefined;
+
+  Checkout: undefined;
+  OrderSuccess: { orderId: number; total: number };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -80,10 +94,18 @@ export default function AppNavigator() {
             options={({ navigation }) => ({
               title: "Catálogo",
               headerRight: () => (
-                <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
+                  {/* ===== SOLO PARA PRUEBAS — ELIMINAR ANTES DE PRODUCCIÓN ===== */}
+                  <Pressable onPress={() => navigation.navigate("Profile")} style={{ marginLeft: 12 }}>
+                    <Text style={{ fontSize: 16 }}>👤</Text>
+                  </Pressable>
+                  {/* ============================================================ */}
+                </View>
               ),
             })}
           />
+
           <Stack.Screen
             name="ProductDetail"
             component={ProductDetailScreen}
@@ -94,13 +116,33 @@ export default function AppNavigator() {
               ),
             })}
           />
+
+          <Stack.Screen name="Cart" component={CartScreen} options={{ title: "Carrito" }} />
+
+          {/* Direcciones */}
           <Stack.Screen
-            name="Cart"
-            component={CartScreen}
-            options={{ title: "Carrito" }}
+            name="Addresses"
+            component={AddressListScreen}
+            options={{ title: "Mis direcciones" }}
           />
+          <Stack.Screen
+            name="AddressForm"
+            component={AddressFormScreen}
+            options={{ title: "Nueva dirección" }}
+          />
+
+          {/* ✅ Mis pedidos */}
+          <Stack.Screen
+            name="MyOrders"
+            component={MyOrdersScreen}
+            options={{ title: "Mis pedidos" }}
+          />
+
+          {/* Checkout */}
+          <Stack.Screen name="Checkout" component={CheckoutScreen} options={{ title: "Checkout" }} />
+          <Stack.Screen name="OrderSuccess" component={OrderSuccessScreen} options={{ title: "Pedido creado" }} />
+
           <Stack.Screen name="Profile" component={ProfileScreen} />
-          <Stack.Screen name="Addresses" component={AddressListScreen} />
         </Stack.Navigator>
       ) : (
         <Stack.Navigator initialRouteName="Login">

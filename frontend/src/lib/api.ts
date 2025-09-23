@@ -1,9 +1,12 @@
 // frontend/src/lib/api.ts
 import axios from "axios";
 import type { Product } from "../types/product";
+import type { Address } from "../types/address";
+import type { CreateOrderDto, OrderSuccess } from "../types/order";
 
 // Expo expone variables EXPO_PUBLIC_* en process.env
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://localhost:3000";
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://localhost:3000";
 console.log("[API] baseURL =", API_BASE_URL);
 
 export const api = axios.create({
@@ -75,7 +78,11 @@ export async function getProductsPaged(
  * const getNextPageParam = getNextPageParamFactory(PAGE_SIZE);
  */
 export function getNextPageParamFactory(pageSize = 20) {
-  return (lastPage: ProductList, allPages: ProductList[], lastPageParam?: number) => {
+  return (
+    lastPage: ProductList,
+    allPages: ProductList[],
+    lastPageParam?: number
+  ) => {
     // Opción A (más precisa): calcular por conteo acumulado
     const loaded = allPages.reduce((acc, p) => acc + p.items.length, 0);
     if (loaded < lastPage.total) {
@@ -90,19 +97,45 @@ export function getNextPageParamFactory(pageSize = 20) {
 
 // -------------------- Compat (array “plano”) -------------------- //
 /** Compatibilidad: devuelve SOLO el array (ignora total). */
-export async function getProducts(params?: GetProductsParams, opts?: RequestOpts): Promise<Product[]> {
-  const { items } = await getProductsPaged(params ?? {}, opts);
+export async function getProducts(
+  params?: GetProductsParams,
+  opts?: RequestOpts
+): Promise<Product[]> {
+  const { items } = await getProductsPaged(params ?? {}, opts ?? {});
   return items; // 200 y [] si vacío
 }
 
-export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
+export async function getCategories(
+  opts: RequestOpts = {}
+): Promise<string[]> {
   try {
-    const { data } = await api.get<string[]>("/products/categories", { signal: opts.signal });
+    const { data } = await api.get<string[]>("/products/categories", {
+      signal: opts.signal,
+    });
     return Array.isArray(data) ? data : [];
   } catch (e: any) {
     if (e?.response?.status === 404) return [];
     throw e;
   }
+}
+
+// ==================== US09 — Helpers de Checkout ==================== //
+/** Direcciones del usuario autenticado (el BE ya filtra por user) */
+export async function fetchAddresses(
+  opts: RequestOpts = {}
+): Promise<Address[]> {
+  const { data } = await api.get<Address[]>("/addresses", {
+    signal: opts.signal,
+  });
+  return data ?? [];
+}
+
+/** Crear la orden en el backend (usa JWT ya configurado en `api`) */
+export async function createOrder(
+  payload: CreateOrderDto
+): Promise<OrderSuccess & { address?: Partial<Address> }> {
+  const { data } = await api.post("/orders", payload);
+  return data;
 }
 
 export default api;

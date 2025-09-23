@@ -144,7 +144,7 @@ export default function CatalogScreen() {
           data={items}
           keyExtractor={(item) => String(item.id)}
           renderItem={({ item }) => (
-            <ProductCard product={item} onAdd={() => { /* US08 */ }} />
+            <ProductCard product={item}/>
           )}
           contentContainerStyle={{ padding: 12 }}
           onEndReachedThreshold={0.5}

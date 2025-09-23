@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { AuthContext } from '../context/AuthContext'; // compat con versión anterior
 
+
 type Me = { name: string; email: string; phone: string; role: string };
 
 // Nota: si ya tienes un hook useAuth(), puedes importarlo y usarlo aquí.

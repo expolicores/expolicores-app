@@ -1,9 +1,13 @@
+// src/main.ts
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import * as morgan from 'morgan';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+
+// ⬇️ Filtro global para mapear errores Prisma → HTTP
+import { PrismaClientExceptionFilter } from './common/filters/prisma-exception.filter';
 
 async function bootstrap() {
   // Creamos la app (desactivamos CORS aquí para configurarlo manualmente abajo)
@@ -18,9 +22,12 @@ async function bootstrap() {
     }),
   );
 
-  // CORS para dev: permitir origenes locales y exponer X-Total-Count al FE
+  // Filtro global de Prisma (P2025, P2002, etc.)
+  app.useGlobalFilters(new PrismaClientExceptionFilter());
+
+  // CORS para dev: permitir orígenes locales y exponer X-Total-Count al FE
   app.enableCors({
-    origin: true,                 // en prod, reemplaza por tu dominio(s)
+    origin: true, // en prod, reemplaza por tu(s) dominio(s)
     credentials: false,
     exposedHeaders: ['X-Total-Count'],
   });
@@ -28,11 +35,12 @@ async function bootstrap() {
   // Logs HTTP
   app.use(morgan('dev'));
 
-  // Swagger en /docs
+  // Swagger en /docs + Bearer auth (JWT)
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Expolicores API')
     .setDescription('Documentación de la API de Expolicores')
     .setVersion('1.0')
+    .addBearerAuth() // ⬅️ para @ApiBearerAuth() en controllers
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);

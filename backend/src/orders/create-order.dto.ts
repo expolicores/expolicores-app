@@ -1,36 +1,62 @@
-import { IsNotEmpty, IsNumber, IsArray, ValidateNested } from 'class-validator';
+// src/orders/dto/create-order.dto.ts
+import {
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+  Min,
+  ValidateNested,
+  IsIn,
+} from 'class-validator';
 import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-class OrderItemDto {
-  @ApiProperty({ example: 1, description: 'ID del producto' })
-  @IsNotEmpty()
-  @IsNumber()
+export class CreateOrderItemDto {
+  @ApiProperty({ example: 10, description: 'ID del producto' })
+  @IsInt()
+  @IsPositive()
   productId: number;
 
-  @ApiProperty({ example: 3, description: 'Cantidad del producto en la orden' })
-  @IsNotEmpty()
-  @IsNumber()
+  @ApiProperty({ example: 2, description: 'Cantidad del producto' })
+  @IsInt()
+  @Min(1)
   quantity: number;
 }
 
 export class CreateOrderDto {
-  @ApiProperty({ example: 2, description: 'ID del usuario que realiza la orden' })
-  @IsNotEmpty()
-  @IsNumber()
-  userId: number;
+  @ApiProperty({ example: 123, description: 'ID de la dirección de entrega' })
+  @IsInt()
+  @IsPositive()
+  addressId: number;
 
   @ApiProperty({
-    type: [OrderItemDto],
-    description: 'Listado de productos en la orden',
+    type: [CreateOrderItemDto],
+    description: 'Listado de productos del carrito',
+    example: [
+      { productId: 10, quantity: 2 },
+      { productId: 22, quantity: 1 },
+    ],
   })
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => OrderItemDto)
-  items: OrderItemDto[];
+  @Type(() => CreateOrderItemDto)
+  items: CreateOrderItemDto[];
 
-  @ApiProperty({ example: 9000, description: 'Total de la orden en pesos' })
-  @IsNotEmpty()
-  @IsNumber()
-  total: number;
+  @ApiPropertyOptional({
+    example: 'Recepción en portería. Llamar al llegar.',
+    description: 'Notas opcionales para la entrega',
+  })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @ApiPropertyOptional({
+    example: 'COD',
+    enum: ['COD'],
+    description: 'Método de pago. MVP: solo contraentrega',
+  })
+  @IsOptional()
+  @IsIn(['COD'])
+  paymentMethod?: 'COD';
 }

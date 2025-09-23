@@ -1,18 +1,17 @@
-export interface Address {
+export type Address = {
   id: number;
   label: string;
   recipient: string;
   phone: string;
   line1: string;
-  line2?: string;
-  neighborhood?: string;
-  city: string;
-  state: string;
-  country: string;
-  lat?: number;
-  lng?: number;
-  notes?: string;
+  line2?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
   isDefault: boolean;
+  lat?: number | null;   // 👈
+  lng?: number | null;   // 👈
   createdAt?: string;
   updatedAt?: string;
-}
+};
