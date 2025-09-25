@@ -1,19 +1,26 @@
 // src/config/shipping.ts
-export const SHIPPING_CFG = {
-  store: {
-    lat: Number(process.env.STORE_LAT),
-    lng: Number(process.env.STORE_LNG),
-  },
-  radiusKm: Number(process.env.DELIVERY_RADIUS_KM ?? 12),
-  base: Number(process.env.SHIPPING_BASE ?? 2000),
-  perKm: Number(process.env.SHIPPING_PER_KM ?? 400),
-  min: Number(process.env.SHIPPING_MIN ?? 5000),
-};
+import { registerAs } from '@nestjs/config';
 
-// Validación mínima (fail-fast en arranque o al primer uso)
-export function assertShippingEnv() {
-  const { lat, lng } = SHIPPING_CFG.store;
-  if (Number.isNaN(lat) || Number.isNaN(lng)) {
-    throw new Error('ENV STORE_LAT/STORE_LNG inválidas o faltantes');
+function num(v: string | undefined, fallback?: number): number {
+  const n = Number(v);
+  if (Number.isNaN(n)) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`Valor numérico inválido para env: ${v}`);
   }
+  return n;
 }
+
+export default registerAs('shipping', () => {
+  const storeLat = num(process.env.STORE_LAT);  // sin fallback: obligatorio
+  const storeLng = num(process.env.STORE_LNG);  // sin fallback: obligatorio
+
+  const cfg = {
+    store: { lat: storeLat, lng: storeLng },
+    radiusKm: num(process.env.DELIVERY_RADIUS_KM, 12),
+    base:     num(process.env.SHIPPING_BASE, 2000),
+    perKm:    num(process.env.SHIPPING_PER_KM, 400),
+    min:      num(process.env.SHIPPING_MIN, 5000),
+  };
+
+  return cfg;
+});

@@ -24,45 +24,43 @@ enum OrderStatus {
 
 // ---------- Modelos ----------
 model User {
-  id        Int       @id @default(autoincrement())
-  email     String    @unique
-  password  String
-  name      String
-  phone     String    @default("0000000000")
-  role      Role      @default(CLIENTE)
-  orders    Order[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  addresses  Address[]   // <— relación 1:* 
+  id         Int       @id @default(autoincrement())
+  email      String    @unique
+  password   String
+  name       String
+  phone      String    @default("0000000000")
+  role       Role      @default(CLIENTE)
+  orders     Order[]
+  addresses  Address[]
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 model Order {
-  id        Int          @id @default(autoincrement())
-  userId    Int
-  total     Float
-  createdAt DateTime     @default(now())
-  user      User         @relation(fields: [userId], references: [id])
-  items     OrderItem[]
-
-  // nuevo campo
-  status    OrderStatus  @default(RECIBIDO)
+  id             Int               @id @default(autoincrement())
+  userId         Int
+  total          Float
+  status         OrderStatus       @default(RECIBIDO)
+  createdAt      DateTime          @default(now())
+  user           User              @relation(fields: [userId], references: [id])
+  items          OrderItem[]
+  notifications  NotificationLog[]
 }
 
 model Product {
-  id              Int @id @default(autoincrement())
-  name            String
-  price           Int
-  stock           Int
-  description     String
-  imageUrl        String?
-  category        String? @db.VarChar(64)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  orderItems      OrderItem[]
-@@index([category])
+  id          Int       @id @default(autoincrement())
+  name        String
+  price       Int
+  stock       Int
+  description String
+  imageUrl    String?
+  category    String?   @db.VarChar(64)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  orderItems  OrderItem[]
+
+  @@index([category])
 }
-
-
 
 model OrderItem {
   id        Int      @id @default(autoincrement())
@@ -70,28 +68,57 @@ model OrderItem {
   productId Int
   quantity  Int
 
-  order   Order   @relation(fields: [orderId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  order     Order   @relation(fields: [orderId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
 }
 
 model Address {
-  id          Int      @id @default(autoincrement())
-  userId      Int
-  label       String   // Casa, Hotel, Trabajo
-  recipient   String   // A nombre de
-  phone       String
-  line1       String   // Calle/No
-  line2       String?  // Apto/Habitación
-  neighborhood String? // Barrio
-  city        String   @default("Villa de Leyva")
-  state       String   @default("Boyacá")
-  country     String   @default("CO")
-  lat         Float?
-  lng         Float?
-  notes       String?
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  label        String
+  recipient    String
+  phone        String
+  line1        String
+  line2        String?
+  neighborhood String?
+  city         String   @default("Villa de Leyva")
+  state        String   @default("Boyacá")
+  country      String   @default("CO")
+  lat          Float?
+  lng          Float?
+  notes        String?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+}
 
-  user User @relation(fields: [userId], references: [id])
+model NotificationLog {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  channel   String   @default("WHATSAPP") // por si luego agregas email/sms
+  type      String   // "ORDER_CREATED" | "STATUS_EN_CAMINO" | "STATUS_ENTREGADO" | "STATUS_CANCELADO"
+  sid       String?  // SID Twilio
+  ok        Boolean
+  error     String?
+  to        String?  // E.164 destino
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@unique([orderId, type])       // <- evita duplicados del mismo tipo por orden
+}
+
+// ---------- Idempotencia ----------
+model IdempotencyKey {
+  key       String   @id                   // valor del header Idempotency-Key
+  orderId   Int?
+  status    String   @default("PENDING")   // PENDING | DONE | FAILED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status, createdAt])
 }

@@ -4,101 +4,74 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './create-order.dto';
 import { UpdateOrderDto } from './update-order.dto';
 import { OrderStatus, Role } from '@prisma/client';
-
-// Utilidades de envío/distancia y configuración (.env)
 import { haversineKm, shippingForKm } from '../common/geo';
-import { SHIPPING_CFG, assertShippingEnv } from '../config/shipping';
+import shippingConfig from '../config/shipping';
+import { ConfigType } from '@nestjs/config';
+import { WhatsAppService } from '../notifications/whatsapp.service';
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(shippingConfig.KEY)
+    private readonly shipping: ConfigType<typeof shippingConfig>,
+    private readonly whatsapp: WhatsAppService,
+  ) {}
 
-  // Qué incluimos siempre al devolver una orden
   private readonly orderInclude = {
     items: { include: { product: true } },
-    user: { select: { id: true, email: true, name: true, role: true } },
+    user: { select: { id: true, email: true, name: true, role: true, phone: true } },
   } as const;
 
-  // ===== US09: Crear orden (transacción + validaciones + envío) =====
   async create(userId: number, dto: CreateOrderDto) {
-    assertShippingEnv();
-
-    // 1) Dirección del usuario (y pertenencia)
     const address = await this.prisma.address.findFirst({
       where: { id: dto.addressId, userId },
       select: {
-        id: true,
-        label: true,
-        line1: true,
-        city: true,
-        lat: true,
-        lng: true,
+        id: true, label: true, line1: true, neighborhood: true, city: true,
+        lat: true, lng: true, notes: true,
       },
     });
     if (!address) throw new NotFoundException('ADDRESS_NOT_FOUND');
-    if (address.lat == null || address.lng == null) {
-      throw new BadRequestException('ADDRESS_MISSING_GEO');
-    }
+    if (address.lat == null || address.lng == null) throw new BadRequestException('ADDRESS_MISSING_GEO');
 
-    // 2) Cobertura (tienda -> cliente)
     const km = haversineKm(
-      { lat: SHIPPING_CFG.store.lat, lng: SHIPPING_CFG.store.lng },
+      { lat: this.shipping.store.lat, lng: this.shipping.store.lng },
       { lat: address.lat, lng: address.lng },
     );
-    if (km > SHIPPING_CFG.radiusKm) {
-      throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
-    }
+    if (km > this.shipping.radiusKm) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
 
-    // 3) Items
-    if (!dto.items || dto.items.length === 0) {
-      throw new BadRequestException('EMPTY_CART');
-    }
-    const ids = dto.items.map((i) => i.productId);
+    if (!dto.items || dto.items.length === 0) throw new BadRequestException('EMPTY_CART');
+    const ids = dto.items.map(i => i.productId);
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true, price: true, stock: true },
     });
-    if (products.length !== ids.length) {
-      throw new NotFoundException('PRODUCT_NOT_FOUND');
-    }
+    if (products.length !== ids.length) throw new NotFoundException('PRODUCT_NOT_FOUND');
 
-    // 4) Validar stock + subtotal
-    const byId = new Map(products.map((p) => [p.id, p]));
+    const byId = new Map(products.map(p => [p.id, p]));
     let subtotal = 0;
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
-      if (p.stock < it.quantity)
-        throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
+      if (p.stock < it.quantity) throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
       subtotal += p.price * it.quantity;
     }
 
-    // 5) Envío y total
-    const shipping = shippingForKm(
-      km,
-      SHIPPING_CFG.base,
-      SHIPPING_CFG.perKm,
-      SHIPPING_CFG.min,
-    );
+    const shipping = shippingForKm(km, this.shipping.base, this.shipping.perKm, this.shipping.min);
     const total = subtotal + shipping;
 
-    // 6) Transacción: create order + items + decrementos condicionales
     const created = await this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          items: {
-            create: dto.items.map((i) => ({
-              productId: i.productId,
-              quantity: i.quantity,
-            })),
-          },
+          items: { create: dto.items.map(i => ({ productId: i.productId, quantity: i.quantity })) },
         },
         include: this.orderInclude,
       });
@@ -108,117 +81,157 @@ export class OrdersService {
           where: { id: it.productId, stock: { gte: it.quantity } },
           data: { stock: { decrement: it.quantity } },
         });
-        if (res.count !== 1)
-          throw new ConflictException(`OUT_OF_STOCK:${it.productId}`);
+        if (res.count !== 1) throw new ConflictException(`OUT_OF_STOCK:${it.productId}`);
       }
 
       return order;
     });
 
-    // 7) Respuesta enriquecida para FE
-    return {
-      ...created,
-      subtotal,
+    // --- WhatsApp confirmación ---
+    const toPhone = this.normalizeCoPhone(created.user?.phone ?? '');
+    const addressLabel = address.label ?? 'Dirección';
+    const addressLine = [address.line1, address.neighborhood, address.city].filter(Boolean).join(', ');
+    const waItems = created.items.map(i => ({ name: i.product.name, quantity: i.quantity, price: i.product.price }));
+    const notes = dto.notes ?? address.notes ?? undefined;
+
+    const waRes = await this.whatsapp.sendOrderConfirmation({
+      toPhone,
+      orderId: created.id,
+      subtotal,                 // (tu servicio puede tratarlos como opcionales)
       shipping,
-      total, // redundante pero útil en FE
-      address, // referencia de entrega (no se persiste en Order en este MVP)
-    };
+      total: created.total,
+      paymentMethod: dto.paymentMethod ?? 'COD',
+      items: waItems,
+      addressLabel,
+      addressLine,
+      notes,
+      tenant: 'Expolicores Villa de Leyva',
+    });
+
+    // 👈 NEW: log idempotente (una fila por tipo de notif y orden)
+    await this.prisma.notificationLog.upsert({
+      where: { orderId_type: { orderId: created.id, type: 'ORDER_CREATED' } },
+      update: {
+        sid: waRes.sid ?? null,
+        ok: waRes.ok,
+        error: waRes.ok ? null : 'send failed',
+        to: toPhone,
+      },
+      create: {
+        orderId: created.id,
+        channel: 'WHATSAPP',
+        type: 'ORDER_CREATED',
+        sid: waRes.sid ?? null,
+        ok: waRes.ok,
+        error: waRes.ok ? null : 'send failed',
+        to: toPhone,
+      },
+    });
+
+    return { ...created, subtotal, shipping, total, address };
   }
 
-  // ===== Utilidad heredada: usada en update() si reemplazas items =====
   private async calcTotal(items: { productId: number; quantity: number }[]) {
-    const ids = [...new Set(items.map((i) => i.productId))];
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, price: true },
-    });
-    const priceMap = new Map(products.map((p) => [p.id, p.price]));
-    return items.reduce(
-      (sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity,
-      0,
-    );
+    const ids = [...new Set(items.map(i => i.productId))];
+    const products = await this.prisma.product.findMany({ where: { id: { in: ids } }, select: { id: true, price: true } });
+    const priceMap = new Map(products.map(p => [p.id, p.price]));
+    return items.reduce((sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
   }
 
-  // ===== Admin / Consultas =====
   async findAll() {
-    return this.prisma.order.findMany({
-      orderBy: { id: 'desc' },
-      include: this.orderInclude,
-    });
+    return this.prisma.order.findMany({ orderBy: { id: 'desc' }, include: this.orderInclude });
   }
 
   async findMine(userId: number) {
-    return this.prisma.order.findMany({
-      where: { userId },
-      orderBy: { id: 'desc' },
-      include: this.orderInclude,
-    });
+    return this.prisma.order.findMany({ where: { userId }, orderBy: { id: 'desc' }, include: this.orderInclude });
   }
 
   async findOneAs(id: number, user: { id: number; role: Role }) {
     const where = user.role === 'ADMIN' ? { id } : { id, userId: user.id };
-    const order = await this.prisma.order.findFirst({
-      where,
-      include: this.orderInclude,
-    });
+    const order = await this.prisma.order.findFirst({ where, include: this.orderInclude });
     if (!order) throw new NotFoundException('Order not found');
     return order;
   }
 
-  // (Compat) Ver por id sin verificar dueño/admin
   async findOne(id: number) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      include: this.orderInclude,
-    });
+    const order = await this.prisma.order.findUnique({ where: { id }, include: this.orderInclude });
     if (!order) throw new NotFoundException(`Order with ID ${id} not found`);
     return order;
   }
 
-  // Actualizar (ADMIN). Reemplaza items si vienen y recalcula total.
   async update(id: number, dto: UpdateOrderDto) {
     const { items, ...rest } = dto;
-
     let totalUpdate: number | undefined;
     if (items) {
       await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
       totalUpdate = await this.calcTotal(items);
     }
-
     const updated = await this.prisma.order.update({
       where: { id },
       data: {
         ...rest,
         ...(totalUpdate !== undefined ? { total: totalUpdate } : {}),
-        items: items
-          ? {
-              create: items.map((i) => ({
-                productId: i.productId,
-                quantity: i.quantity,
-              })),
-            }
-          : undefined,
+        items: items ? { create: items.map(i => ({ productId: i.productId, quantity: i.quantity })) } : undefined,
       },
       include: this.orderInclude,
     });
-
     return updated;
   }
 
-  // Cambiar estado (solo ADMIN)
+  // --- Estado + WhatsApp corto + log ---
   async updateStatus(id: number, status: OrderStatus) {
     const order = await this.prisma.order.update({
       where: { id },
       data: { status },
       include: this.orderInclude,
     });
+
+    if (status === 'EN_CAMINO' || status === 'ENTREGADO' || status === 'CANCELADO') {
+      const toPhone = this.normalizeCoPhone(order.user?.phone ?? '');
+      const res = await this.whatsapp.sendStatusUpdate({
+        toPhone,
+        orderId: order.id,
+        newStatus: status as 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO',
+        tenant: 'Expolicores Villa de Leyva',
+      });
+
+      // 👈 NEW: log por estado (puedes guardar uno por estado si cambias el type)
+      await this.prisma.notificationLog.upsert({
+        where: { orderId_type: { orderId: order.id, type: `STATUS_${status}` } },
+        update: {
+          sid: res.sid ?? null,
+          ok: res.ok,
+          error: res.ok ? null : 'send failed',
+          to: toPhone,
+        },
+        create: {
+          orderId: order.id,
+          channel: 'WHATSAPP',
+          type: `STATUS_${status}`,
+          sid: res.sid ?? null,
+          ok: res.ok,
+          error: res.ok ? null : 'send failed',
+          to: toPhone,
+        },
+      });
+    }
+
     return order;
   }
 
-  // Eliminar (solo ADMIN)
   async remove(id: number) {
     await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
     await this.prisma.order.delete({ where: { id } });
     return { id };
+  }
+
+  private normalizeCoPhone(input: string): string {
+    const digits = (input || '').replace(/\D/g, '');
+    if (!digits) return '+57';
+    if (digits.startsWith('57')) return `+${digits}`;
+    if (digits.length === 10) return `+57${digits}`;
+    if (digits.startsWith('0') && digits.length === 11) return `+57${digits.slice(1)}`;
+    if (input?.startsWith('+')) return input;
+    return `+57${digits}`;
   }
 }
