@@ -5,8 +5,7 @@ import {
   Injectable,
   NotFoundException,
   Inject,
-  ForbiddenException, // ⬅️ agregar
-  //
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './create-order.dto';
@@ -16,7 +15,6 @@ import { haversineKm, shippingForKm } from '../common/geo';
 import shippingConfig from '../config/shipping';
 import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
-
 
 @Injectable()
 export class OrdersService {
@@ -36,8 +34,14 @@ export class OrdersService {
     const address = await this.prisma.address.findFirst({
       where: { id: dto.addressId, userId },
       select: {
-        id: true, label: true, line1: true, neighborhood: true, city: true,
-        lat: true, lng: true, notes: true,
+        id: true,
+        label: true,
+        line1: true,
+        neighborhood: true,
+        city: true,
+        lat: true,
+        lng: true,
+        notes: true,
       },
     });
     if (!address) throw new NotFoundException('ADDRESS_NOT_FOUND');
@@ -50,14 +54,15 @@ export class OrdersService {
     if (km > this.shipping.radiusKm) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
 
     if (!dto.items || dto.items.length === 0) throw new BadRequestException('EMPTY_CART');
-    const ids = dto.items.map(i => i.productId);
+
+    const ids = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true, price: true, stock: true },
     });
     if (products.length !== ids.length) throw new NotFoundException('PRODUCT_NOT_FOUND');
 
-    const byId = new Map(products.map(p => [p.id, p]));
+    const byId = new Map(products.map((p) => [p.id, p]));
     let subtotal = 0;
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
@@ -74,7 +79,7 @@ export class OrdersService {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          items: { create: dto.items.map(i => ({ productId: i.productId, quantity: i.quantity })) },
+          items: { create: dto.items.map((i) => ({ productId: i.productId, quantity: i.quantity })) },
         },
         include: this.orderInclude,
       });
@@ -90,17 +95,21 @@ export class OrdersService {
       return order;
     });
 
-    // --- WhatsApp confirmación ---
+    // --- WhatsApp confirmación (US10) ---
     const toPhone = this.normalizeCoPhone(created.user?.phone ?? '');
     const addressLabel = address.label ?? 'Dirección';
     const addressLine = [address.line1, address.neighborhood, address.city].filter(Boolean).join(', ');
-    const waItems = created.items.map(i => ({ name: i.product.name, quantity: i.quantity, price: i.product.price }));
+    const waItems = created.items.map((i) => ({
+      name: i.product.name,
+      quantity: i.quantity,
+      price: i.product.price,
+    }));
     const notes = dto.notes ?? address.notes ?? undefined;
 
     const waRes = await this.whatsapp.sendOrderConfirmation({
       toPhone,
       orderId: created.id,
-      subtotal,                 // (tu servicio puede tratarlos como opcionales)
+      subtotal,
       shipping,
       total: created.total,
       paymentMethod: dto.paymentMethod ?? 'COD',
@@ -111,22 +120,22 @@ export class OrdersService {
       tenant: 'Expolicores Villa de Leyva',
     });
 
-    // 👈 NEW: log idempotente (una fila por tipo de notif y orden)
+    // Log idempotente de confirmación (ORDER_CREATED)
     await this.prisma.notificationLog.upsert({
       where: { orderId_type: { orderId: created.id, type: 'ORDER_CREATED' } },
       update: {
-        sid: waRes.sid ?? null,
-        ok: waRes.ok,
-        error: waRes.ok ? null : 'send failed',
+        sid: (waRes as any).sid ?? null,
+        ok: (waRes as any).ok,
+        error: (waRes as any).ok ? null : 'send failed',
         to: toPhone,
       },
       create: {
         orderId: created.id,
         channel: 'WHATSAPP',
         type: 'ORDER_CREATED',
-        sid: waRes.sid ?? null,
-        ok: waRes.ok,
-        error: waRes.ok ? null : 'send failed',
+        sid: (waRes as any).sid ?? null,
+        ok: (waRes as any).ok,
+        error: (waRes as any).ok ? null : 'send failed',
         to: toPhone,
       },
     });
@@ -135,9 +144,12 @@ export class OrdersService {
   }
 
   private async calcTotal(items: { productId: number; quantity: number }[]) {
-    const ids = [...new Set(items.map(i => i.productId))];
-    const products = await this.prisma.product.findMany({ where: { id: { in: ids } }, select: { id: true, price: true } });
-    const priceMap = new Map(products.map(p => [p.id, p.price]));
+    const ids = [...new Set(items.map((i) => i.productId))];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, price: true },
+    });
+    const priceMap = new Map(products.map((p) => [p.id, p.price]));
     return items.reduce((sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
   }
 
@@ -167,16 +179,12 @@ export class OrdersService {
       where: { id },
       include: { items: { include: { product: true } }, user: true },
     });
+    if (!order) throw new NotFoundException('Order not found');
 
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-
-    // 👇 owner o admin
+    // owner o admin
     if (user.role !== Role.ADMIN && order.userId !== user.id) {
       throw new ForbiddenException('You cannot access this order');
     }
-
     return order;
   }
 
@@ -192,14 +200,16 @@ export class OrdersService {
       data: {
         ...rest,
         ...(totalUpdate !== undefined ? { total: totalUpdate } : {}),
-        items: items ? { create: items.map(i => ({ productId: i.productId, quantity: i.quantity })) } : undefined,
+        items: items
+          ? { create: items.map((i) => ({ productId: i.productId, quantity: i.quantity })) }
+          : undefined,
       },
       include: this.orderInclude,
     });
     return updated;
   }
 
-  // --- Estado + WhatsApp corto + log ---
+  // --- Cambio de estado + WhatsApp corto + log por estado (US12) ---
   async updateStatus(id: number, status: OrderStatus) {
     const order = await this.prisma.order.update({
       where: { id },
@@ -207,6 +217,7 @@ export class OrdersService {
       include: this.orderInclude,
     });
 
+    // Solo notificamos los estados de la HU
     if (status === 'EN_CAMINO' || status === 'ENTREGADO' || status === 'CANCELADO') {
       const toPhone = this.normalizeCoPhone(order.user?.phone ?? '');
       const res = await this.whatsapp.sendStatusUpdate({
@@ -216,22 +227,22 @@ export class OrdersService {
         tenant: 'Expolicores Villa de Leyva',
       });
 
-      // 👈 NEW: log por estado (puedes guardar uno por estado si cambias el type)
+      // Log por estado idempotente (STATUS_EN_CAMINO | STATUS_ENTREGADO | STATUS_CANCELADO)
       await this.prisma.notificationLog.upsert({
         where: { orderId_type: { orderId: order.id, type: `STATUS_${status}` } },
         update: {
-          sid: res.sid ?? null,
-          ok: res.ok,
-          error: res.ok ? null : 'send failed',
+          sid: (res as any).sid ?? null,
+          ok: (res as any).ok,
+          error: (res as any).ok ? null : 'send failed',
           to: toPhone,
         },
         create: {
           orderId: order.id,
           channel: 'WHATSAPP',
           type: `STATUS_${status}`,
-          sid: res.sid ?? null,
-          ok: res.ok,
-          error: res.ok ? null : 'send failed',
+          sid: (res as any).sid ?? null,
+          ok: (res as any).ok,
+          error: (res as any).ok ? null : 'send failed',
           to: toPhone,
         },
       });
@@ -246,6 +257,7 @@ export class OrdersService {
     return { id };
   }
 
+  // E.164 CO básica (+57) para compatibilidad con Twilio WhatsApp
   private normalizeCoPhone(input: string): string {
     const digits = (input || '').replace(/\D/g, '');
     if (!digits) return '+57';

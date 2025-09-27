@@ -6,6 +6,9 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
+  Platform,
+  ToastAndroid,
+  Alert,
 } from "react-native";
 import { useRoute } from "@react-navigation/native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,6 +16,7 @@ import api from "../lib/api";
 import StatusBadge from "../components/StatusBadge";
 import { Order } from "../types/order";
 import { isFinal, statusLabel } from "../lib/orderStatus";
+import { timeAgo } from "../lib/time"; // opcional, para texto "humano"
 
 async function fetchOrder(orderId: number): Promise<Order> {
   const { data } = await api.get(`/orders/${orderId}`);
@@ -36,10 +40,10 @@ export default function OrderTrackingScreen() {
     queryKey: ["order", orderId],
     queryFn: () => fetchOrder(orderId),
     enabled: Number.isFinite(orderId),
-    // Muestra algo de inmediato si venimos desde la lista
-    initialData: initial,
+    initialData: initial,            // muestra algo si venimos desde la lista
     refetchOnFocus: true,
     refetchOnReconnect: true,
+    refetchIntervalInBackground: false, // no gastar batería en background
     // Polling solo si el estado no es final
     refetchInterval: (q) => {
       const s = (q.state.data as Order | undefined)?.status;
@@ -93,6 +97,25 @@ export default function OrderTrackingScreen() {
       ? -1
       : steps.findIndex((s) => s === order.status);
 
+  const lastUpdateISO = order.updatedAt ?? order.createdAt;
+
+  // ⚡ Opción A — aviso nativo (Toast en Android, Alert en iOS)
+  const lastStatusRef = React.useRef<Order["status"] | null>(initial?.status ?? null);
+  React.useEffect(() => {
+    const s = order?.status;
+    if (!s) return;
+
+    if (lastStatusRef.current && lastStatusRef.current !== s) {
+      const msg = `Estado actualizado: ${statusLabel[s] ?? s}`;
+      if (Platform.OS === "android") {
+        ToastAndroid.show(msg, ToastAndroid.SHORT);
+      } else {
+        Alert.alert("Pedido", msg);
+      }
+    }
+    lastStatusRef.current = s;
+  }, [order?.status]);
+
   return (
     <ScrollView
       contentContainerStyle={{ padding: 16 }}
@@ -114,8 +137,10 @@ export default function OrderTrackingScreen() {
       </View>
 
       <Text style={{ marginTop: 6, color: "#666" }}>
-        Última actualización:{" "}
-        {new Date(order.updatedAt ?? order.createdAt).toLocaleString()}
+        Última actualización: {timeAgo(lastUpdateISO)}{" "}
+        <Text style={{ color: "#999" }}>
+          ({new Date(lastUpdateISO).toLocaleString()})
+        </Text>
       </Text>
 
       <View style={{ marginTop: 20 }}>
@@ -130,7 +155,11 @@ export default function OrderTrackingScreen() {
             return (
               <View
                 key={s}
-                style={{ flexDirection: "row", alignItems: "center", marginBottom: 14 }}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 14,
+                }}
               >
                 <View
                   style={{
@@ -165,7 +194,9 @@ export default function OrderTrackingScreen() {
             {i.product ? `— $${i.product.price}` : ""}
           </Text>
         ))}
-        <Text style={{ marginTop: 8, fontWeight: "700" }}>Total: ${order.total}</Text>
+        <Text style={{ marginTop: 8, fontWeight: "700" }}>
+          Total: ${order.total}
+        </Text>
       </View>
     </ScrollView>
   );
@@ -173,7 +204,9 @@ export default function OrderTrackingScreen() {
 
 function Center({ children }: { children: React.ReactNode }) {
   return (
-    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <View
+      style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}
+    >
       {children}
     </View>
   );

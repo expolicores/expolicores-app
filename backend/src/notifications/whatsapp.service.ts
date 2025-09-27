@@ -5,6 +5,7 @@ import whatsappConfig from '../config/whatsapp';
 import { PrismaService } from '../prisma/prisma.service';
 
 type ItemRow = { name: string; quantity: number; price: number };
+type Status = 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO';
 
 @Injectable()
 export class WhatsAppService {
@@ -24,10 +25,20 @@ export class WhatsAppService {
     }
   }
 
+  /** Formatea números a COP (entero redondeado) */
   private cop(n: number) {
     return `$${Math.round(n).toLocaleString('es-CO')}`;
   }
 
+  /** Normaliza a E.164 CO para canal WhatsApp de Twilio */
+  private toWhatsAppE164CO(phoneRaw?: string | null): string | null {
+    const digits = (phoneRaw ?? '').replace(/\D/g, '');
+    if (!digits) return null;
+    const withCountry = digits.startsWith('57') ? digits : `57${digits}`;
+    return `whatsapp:+${withCountry}`;
+  }
+
+  /** Log "create" básico (para confirmaciones donde se permite múltiples) */
   private async log(orderId: number, type: string, to: string, ok: boolean, sid?: string, error?: string) {
     try {
       await this.prisma.notificationLog.create({ data: { orderId, type, to, ok, sid, error } });
@@ -36,7 +47,20 @@ export class WhatsAppService {
     }
   }
 
-  // === CONFIRMACIÓN PEDIDO ===
+  /** Log idempotente por tipo (STATUS_*) — usa upsert y NO reenvía si existe */
+  private async logOnce(orderId: number, type: string, to: string, sid?: string | null, error?: string | null) {
+    try {
+      await this.prisma.notificationLog.upsert({
+        where: { orderId_type: { orderId, type } },
+        create: { orderId, type, to, ok: !!sid, sid: sid ?? undefined, error: sid ? null : error ?? 'SEND_FAILED' },
+        update: {}, // idempotente: si ya existe, no lo modifica
+      });
+    } catch (e: any) {
+      this.logger.error(`No se pudo upsert NotificationLog: ${e?.message ?? e}`);
+    }
+  }
+
+  // === CONFIRMACIÓN PEDIDO (US10) ===
   async sendOrderConfirmation(params: {
     toPhone: string;
     orderId: number;
@@ -50,25 +74,37 @@ export class WhatsAppService {
     notes?: string;
     tenant?: string;
   }) {
-    if (!this.cfg.enabled) { await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, 'disabled'); return { ok:false }; }
-    if (!this.client || !this.cfg.from) { await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, 'twilio_not_ready'); return { ok:false }; }
+    if (!this.cfg.enabled) {
+      await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, 'disabled');
+      return { ok: false };
+    }
+    if (!this.client || !this.cfg.from) {
+      await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, 'twilio_not_ready');
+      return { ok: false };
+    }
+
+    const to = this.toWhatsAppE164CO(params.toPhone);
+    if (!to) {
+      await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, 'invalid_phone');
+      return { ok: false };
+    }
 
     // === RUTA PRODUCCIÓN (plantillas a través de Content SID) ===
     if (this.cfg.useTemplates && this.cfg.confirmationContentSid) {
       // Mapea variables de la plantilla (orden: {{1}}, {{2}}, …) tal como la definiste en Twilio Content
       const vars = {
-        "1": String(params.orderId),
-        "2": this.cop(params.subtotal),
-        "3": this.cop(params.shipping),
-        "4": this.cop(params.total),
-        "5": params.paymentMethod === 'COD' ? 'Contraentrega' : params.paymentMethod,
-        "6": `${params.addressLabel ?? ''} — ${params.addressLine ?? ''}`.trim(),
+        '1': String(params.orderId),
+        '2': this.cop(params.subtotal),
+        '3': this.cop(params.shipping),
+        '4': this.cop(params.total),
+        '5': params.paymentMethod === 'COD' ? 'Contraentrega' : params.paymentMethod,
+        '6': `${params.addressLabel ?? ''} — ${params.addressLine ?? ''}`.trim(),
       };
 
       try {
         const res = await this.client.messages.create({
           from: this.cfg.from,
-          to: `whatsapp:${params.toPhone}`,
+          to,
           contentSid: this.cfg.confirmationContentSid,
           contentVariables: JSON.stringify(vars),
         });
@@ -82,12 +118,11 @@ export class WhatsAppService {
 
     // === RUTA SANDBOX (cuerpo libre) ===
     const head = `*${params.tenant ?? 'Expolicores'}* ✅\nConfirmación de pedido #${params.orderId}`;
-    const lines = params.items.slice(0, 8).map(i => `• ${i.quantity}× ${i.name}`);
+    const lines = params.items.slice(0, 8).map((i) => `• ${i.quantity}× ${i.name}`);
     const more = params.items.length > 8 ? `…(+${params.items.length - 8} ítems)` : '';
     const addr = [params.addressLabel, params.addressLine].filter(Boolean).join(' — ');
-    const obs  = params.notes ? `\n📝 Notas: ${params.notes}` : '';
-    const body =
-`${head}
+    const obs = params.notes ? `\n📝 Notas: ${params.notes}` : '';
+    const body = `${head}
 ${lines.join('\n')} ${more}
 ————————————
 Subtotal: ${this.cop(params.subtotal)}
@@ -102,7 +137,7 @@ Consulta tus pedidos en la app: *Perfil → Mis pedidos*`;
     try {
       const res = await this.client.messages.create({
         from: this.cfg.from,
-        to: `whatsapp:${params.toPhone}`,
+        to,
         body,
       });
       await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, true, res.sid);
@@ -113,59 +148,83 @@ Consulta tus pedidos en la app: *Perfil → Mis pedidos*`;
     }
   }
 
-  // === CAMBIO DE ESTADO ===
-  async sendStatusUpdate(params: { toPhone: string; orderId: number; newStatus: 'EN_CAMINO'|'ENTREGADO'|'CANCELADO'; tenant?: string; }) {
+  // === CAMBIO DE ESTADO (US12) ===
+  async sendStatusUpdate(params: {
+    toPhone: string;
+    orderId: number;
+    newStatus: Status;
+    tenant?: string;
+  }) {
     if (!this.cfg.enabled || !this.cfg.sendStatusUpdates) {
-      await this.log(params.orderId, 'STATUS_UPDATE', params.toPhone, false, undefined, 'disabled');
+      await this.logOnce(params.orderId, 'STATUS_' + params.newStatus, params.toPhone, null, 'disabled');
       return { ok: false };
     }
     if (!this.client || !this.cfg.from) {
-      await this.log(params.orderId, 'STATUS_UPDATE', params.toPhone, false, undefined, 'twilio_not_ready');
+      await this.logOnce(params.orderId, 'STATUS_' + params.newStatus, params.toPhone, null, 'twilio_not_ready');
       return { ok: false };
+    }
+
+    const to = this.toWhatsAppE164CO(params.toPhone);
+    if (!to) {
+      await this.logOnce(params.orderId, 'STATUS_' + params.newStatus, params.toPhone, null, 'invalid_phone');
+      return { ok: false };
+    }
+
+    // Idempotencia: si ya existe un log para este estado, no reenvíes
+    const type = `STATUS_${params.newStatus}`;
+    const existing = await this.prisma.notificationLog.findUnique({
+      where: { orderId_type: { orderId: params.orderId, type } },
+      select: { sid: true, ok: true },
+    });
+    if (existing) {
+      return { ok: !!existing.ok, sid: existing.sid ?? undefined, skipped: true as const };
     }
 
     // Producción con plantilla (si config disponible)
     if (this.cfg.useTemplates && this.cfg.statusContentSid) {
       const human =
         params.newStatus === 'EN_CAMINO' ? 'En camino' :
-        params.newStatus === 'ENTREGADO' ? 'Entregado' : 'Cancelado';
-      const vars = { "1": String(params.orderId), "2": human };
+        params.newStatus === 'ENTREGADO' ? 'Entregado' :
+        'Cancelado';
+      const vars = { '1': String(params.orderId), '2': human };
 
       try {
         const res = await this.client.messages.create({
           from: this.cfg.from,
-          to: `whatsapp:${params.toPhone}`,
+          to,
           contentSid: this.cfg.statusContentSid,
           contentVariables: JSON.stringify(vars),
         });
-        await this.log(params.orderId, 'STATUS_UPDATE', params.toPhone, true, res.sid);
+        await this.logOnce(params.orderId, type, params.toPhone, res.sid, null);
         return { ok: true, sid: res.sid };
       } catch (e: any) {
-        await this.log(params.orderId, 'STATUS_UPDATE', params.toPhone, false, undefined, e?.message ?? String(e));
+        await this.logOnce(params.orderId, type, params.toPhone, null, e?.message ?? String(e));
         return { ok: false };
       }
     }
 
     // Sandbox: texto libre
     const statusText =
-      params.newStatus === 'EN_CAMINO' ? '🚚 Tu pedido va en camino.' :
-      params.newStatus === 'ENTREGADO' ? '✅ Tu pedido fue entregado.' :
-      '❌ Tu pedido fue cancelado.';
-    const body =
-`*${params.tenant ?? 'Expolicores'}* – Pedido #${params.orderId}
+      params.newStatus === 'EN_CAMINO'
+        ? '🚚 Tu pedido va en camino.'
+        : params.newStatus === 'ENTREGADO'
+        ? '✅ Tu pedido fue entregado.'
+        : '❌ Tu pedido fue cancelado.';
+
+    const body = `*${params.tenant ?? 'Expolicores'}* – Pedido #${params.orderId}
 ${statusText}
 Gracias por comprar con nosotros.`;
 
     try {
       const res = await this.client.messages.create({
         from: this.cfg.from,
-        to: `whatsapp:${params.toPhone}`,
+        to,
         body,
       });
-      await this.log(params.orderId, 'STATUS_UPDATE', params.toPhone, true, res.sid);
+      await this.logOnce(params.orderId, type, params.toPhone, res.sid, null);
       return { ok: true, sid: res.sid };
     } catch (e: any) {
-      await this.log(params.orderId, 'STATUS_UPDATE', params.toPhone, false, undefined, e?.message ?? String(e));
+      await this.logOnce(params.orderId, type, params.toPhone, null, e?.message ?? String(e));
       return { ok: false };
     }
   }

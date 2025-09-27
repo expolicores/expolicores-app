@@ -67,9 +67,7 @@ function HeaderIcon({
   );
 }
 
-/** Pedidos activos (RECIBIDO/EN_CAMINO) para mostrar puntico en “Mis pedidos”
- *  (dentro de CatalogScreen.tsx — o muévelo a un hook dedicado)
- */
+/** Pedidos activos (RECIBIDO/EN_CAMINO) para mostrar puntico en “Mis pedidos” */
 function useActiveOrdersCount() {
   return useQuery({
     queryKey: ["my-orders", "active-count"],
@@ -79,14 +77,14 @@ function useActiveOrdersCount() {
         (o) => o.status === "RECIBIDO" || o.status === "EN_CAMINO"
       ).length;
     },
-    // ✅ refresca rápido cuando hay activos, lento cuando no
+    // refresca rápido cuando hay activos, más lento cuando no
     refetchInterval: (q) => {
       const n = (q.state.data as number | undefined) ?? 0;
       return n > 0 ? 8000 : 30000;
     },
-    refetchIntervalInBackground: false,
-    refetchOnFocus: true,
-    staleTime: 0, // no “congelar” el puntico
+    refetchIntervalInBackground: false, // ⬅️ clave para no gastar batería
+    refetchOnFocus: true,               // refetch inmediato al enfocar
+    staleTime: 0,                       // no “congelar” el puntico
   });
 }
 

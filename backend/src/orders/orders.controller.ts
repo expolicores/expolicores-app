@@ -1,4 +1,4 @@
-// src/orders/orders.controller.ts
+// backend/src/orders/orders.controller.ts
 import {
   Body,
   Controller,
@@ -31,10 +31,11 @@ import {
   ApiNotFoundResponse,
   ApiConflictResponse,
   ApiParam,
+  ApiBody,
 } from '@nestjs/swagger';
 
-// 👇 NUEVO: guard que valida "dueño o admin"
-import { SelfOrAdminGuard } from '../auth/guards/self-or-admin.guard';
+// 👇 Disponible si quisieras mover la validación al guard a futuro
+// import { SelfOrAdminGuard } from '../auth/guards/self-or-admin.guard';
 
 @ApiTags('orders')
 @ApiBearerAuth()
@@ -46,8 +47,11 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Post()
   @ApiOperation({ summary: 'Crear una orden desde el carrito' })
-  @ApiCreatedResponse({ description: 'Orden creada (RECIBIDO)' })
-  @ApiBadRequestResponse({ description: 'EMPTY_CART | ADDRESS_MISSING_GEO | COVERAGE_OUT_OF_RANGE' })
+  @ApiCreatedResponse({ description: 'Orden creada (status: RECIBIDO)' })
+  @ApiBadRequestResponse({
+    description:
+      'EMPTY_CART | ADDRESS_MISSING_GEO | COVERAGE_OUT_OF_RANGE',
+  })
   @ApiNotFoundResponse({ description: 'ADDRESS_NOT_FOUND | PRODUCT_NOT_FOUND' })
   @ApiConflictResponse({ description: 'OUT_OF_STOCK:<productId>' })
   @ApiUnauthorizedResponse()
@@ -59,20 +63,22 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Get('my')
   @ApiOperation({ summary: 'Listar mis órdenes' })
-  @ApiOkResponse({ description: 'Listado de órdenes del usuario (incluye status y totales)' })
+  @ApiOkResponse({
+    description: 'Listado de órdenes del usuario (incluye status y totales)',
+  })
   @ApiUnauthorizedResponse()
   findMine(@CurrentUser('id') userId: number) {
     return this.ordersService.findMine(userId);
   }
 
   // Ver UNA orden (dueño o ADMIN) -> usado por OrderTrackingScreen
-  @UseGuards(JwtAuthGuard) // 👈 solo autenticación; la autorización va en el service
+  @UseGuards(JwtAuthGuard) // 👈 solo autenticación; la autorización se valida en el service
   @Get(':id')
   @ApiOperation({ summary: 'Ver una orden por id (dueño o ADMIN)' })
-  @ApiParam({ name: 'id', type: Number })
+  @ApiParam({ name: 'id', type: Number, description: 'ID de la orden' })
   @ApiOkResponse({
     description:
-      'Detalle de la orden: { id, status, total, createdAt, updatedAt, items[{ product{name, imageUrl, price}, quantity }]}',
+      'Detalle: { id, status, total, createdAt, updatedAt, items[{ product{name,imageUrl,price}, quantity }]}',
   })
   @ApiNotFoundResponse({ description: 'Order not found' })
   @ApiUnauthorizedResponse()
@@ -80,7 +86,7 @@ export class OrdersController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: { id: number; role: Role },
   ) {
-    return this.ordersService.findOneForUser(id, user); // 👈 pasa el user al service
+    return this.ordersService.findOneForUser(id, user); // 👈 owner-safe
   }
 
   // Listar TODAS las órdenes (solo ADMIN)
@@ -110,9 +116,24 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @Patch(':id/status')
-  @ApiOperation({ summary: 'Cambiar estado de la orden (ADMIN)' })
-  @ApiOkResponse()
-  @ApiForbiddenResponse()
+  @ApiOperation({
+    summary: 'Cambiar estado de la orden (ADMIN)',
+    description:
+      'Cambia el estado de una orden.\n\n' +
+      '**Efecto colateral:** si `WHATSAPP_STATUS_NOTIFS=true`, el sistema enviará un WhatsApp corto al cliente cuando el nuevo estado sea `EN_CAMINO`, `ENTREGADO` o `CANCELADO`.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'ID de la orden' })
+  @ApiBody({
+    type: UpdateOrderStatusDto,
+    description: 'Nuevo estado de la orden',
+    examples: {
+      enCamino: { value: { status: 'EN_CAMINO' } },
+      entregado: { value: { status: 'ENTREGADO' } },
+      cancelado: { value: { status: 'CANCELADO' } },
+    },
+  })
+  @ApiOkResponse({ description: 'Orden actualizada. Devuelve el objeto Order.' })
+  @ApiForbiddenResponse({ description: 'Requiere rol ADMIN.' })
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateOrderStatusDto,
