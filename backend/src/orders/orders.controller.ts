@@ -30,7 +30,11 @@ import {
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiConflictResponse,
+  ApiParam,
 } from '@nestjs/swagger';
+
+// 👇 NUEVO: guard que valida "dueño o admin"
+import { SelfOrAdminGuard } from '../auth/guards/self-or-admin.guard';
 
 @ApiTags('orders')
 @ApiBearerAuth()
@@ -55,27 +59,31 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard)
   @Get('my')
   @ApiOperation({ summary: 'Listar mis órdenes' })
-  @ApiOkResponse({ description: 'Listado de órdenes del usuario' })
+  @ApiOkResponse({ description: 'Listado de órdenes del usuario (incluye status y totales)' })
   @ApiUnauthorizedResponse()
   findMine(@CurrentUser('id') userId: number) {
     return this.ordersService.findMine(userId);
   }
 
-  // Ver una orden (dueño o ADMIN)
-  @UseGuards(JwtAuthGuard)
+  // Ver UNA orden (dueño o ADMIN) -> usado por OrderTrackingScreen
+  @UseGuards(JwtAuthGuard) // 👈 solo autenticación; la autorización va en el service
   @Get(':id')
   @ApiOperation({ summary: 'Ver una orden por id (dueño o ADMIN)' })
-  @ApiOkResponse()
+  @ApiParam({ name: 'id', type: Number })
+  @ApiOkResponse({
+    description:
+      'Detalle de la orden: { id, status, total, createdAt, updatedAt, items[{ product{name, imageUrl, price}, quantity }]}',
+  })
   @ApiNotFoundResponse({ description: 'Order not found' })
   @ApiUnauthorizedResponse()
   findOne(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: { id: number; role: Role },
   ) {
-    return this.ordersService.findOneAs(id, user);
+    return this.ordersService.findOneForUser(id, user); // 👈 pasa el user al service
   }
 
-  // Listar todas las órdenes (solo ADMIN)
+  // Listar TODAS las órdenes (solo ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @Get()

@@ -5,6 +5,8 @@ import {
   Injectable,
   NotFoundException,
   Inject,
+  ForbiddenException, // ⬅️ agregar
+  //
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './create-order.dto';
@@ -14,6 +16,7 @@ import { haversineKm, shippingForKm } from '../common/geo';
 import shippingConfig from '../config/shipping';
 import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
+
 
 @Injectable()
 export class OrdersService {
@@ -156,6 +159,24 @@ export class OrdersService {
   async findOne(id: number) {
     const order = await this.prisma.order.findUnique({ where: { id }, include: this.orderInclude });
     if (!order) throw new NotFoundException(`Order with ID ${id} not found`);
+    return order;
+  }
+
+  async findOneForUser(id: number, user: { id: number; role: Role }) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: { items: { include: { product: true } }, user: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    // 👇 owner o admin
+    if (user.role !== Role.ADMIN && order.userId !== user.id) {
+      throw new ForbiddenException('You cannot access this order');
+    }
+
     return order;
   }
 

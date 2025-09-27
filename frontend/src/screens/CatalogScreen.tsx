@@ -1,4 +1,11 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+// src/screens/CatalogScreen.tsx
+import React, {
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -10,11 +17,15 @@ import {
   View,
   RefreshControl,
 } from "react-native";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useNavigation } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getProductsPaged } from "../lib/api";
+import api from "../lib/api";
 import { useDebounce } from "../lib/useDebounce";
 import CategoryChips from "../components/CategoryChips";
 import ProductCard from "../components/ProductCard";
+import { useCart } from "../context/CartContext";
 
 const PAGE_SIZE = 20;
 const SORT_OPTIONS = [
@@ -26,7 +37,95 @@ const SORT_OPTIONS = [
 ] as const;
 type SortKey = (typeof SORT_OPTIONS)[number]["key"];
 
+/** HeaderIcon: botón de ícono con badge (contador o puntico) */
+function HeaderIcon({
+  name,
+  onPress,
+  badge,
+  size = 22,
+}: {
+  name: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  badge?: number | "dot";
+  size?: number;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={styles.headerIconBtn}
+    >
+      <Ionicons name={name} size={size} color="#111" />
+      {badge === "dot" && <View style={styles.dot} />}
+      {typeof badge === "number" && badge > 0 && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badge > 9 ? "9+" : badge}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+/** Pedidos activos (RECIBIDO/EN_CAMINO) para mostrar puntico en “Mis pedidos”
+ *  (dentro de CatalogScreen.tsx — o muévelo a un hook dedicado)
+ */
+function useActiveOrdersCount() {
+  return useQuery({
+    queryKey: ["my-orders", "active-count"],
+    queryFn: async () => {
+      const { data } = await api.get("/orders/my");
+      return (data as any[]).filter(
+        (o) => o.status === "RECIBIDO" || o.status === "EN_CAMINO"
+      ).length;
+    },
+    // ✅ refresca rápido cuando hay activos, lento cuando no
+    refetchInterval: (q) => {
+      const n = (q.state.data as number | undefined) ?? 0;
+      return n > 0 ? 8000 : 30000;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnFocus: true,
+    staleTime: 0, // no “congelar” el puntico
+  });
+}
+
 export default function CatalogScreen() {
+  const navigation = useNavigation<any>();
+  const { data: activeOrders } = useActiveOrdersCount();
+
+  // count del carrito desde el contexto (seguro)
+  const cart = useCart?.();
+  const count = cart?.count ?? 0;
+
+  // --- Header buttons (Mis pedidos / Carrito / Perfil) ---
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: "Catálogo",
+      headerRight: () => (
+        <View style={styles.headerPill}>
+          <HeaderIcon
+            name="receipt-outline"
+            onPress={() => navigation.navigate("MyOrders")}
+            badge={activeOrders && activeOrders > 0 ? "dot" : undefined}
+          />
+          <HeaderIcon
+            name="cart-outline"
+            onPress={() => navigation.navigate("Cart")}
+            badge={count > 0 ? Math.min(count, 99) : undefined}
+            size={24}
+          />
+          <HeaderIcon
+            name="person-circle-outline"
+            onPress={() => navigation.navigate("Profile")}
+            size={26}
+          />
+        </View>
+      ),
+    });
+  }, [navigation, activeOrders, count]);
+  // --------------------------------------------------------
+
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string | undefined>(undefined);
   const [sort, setSort] = useState<SortKey>("newest");
@@ -143,9 +242,7 @@ export default function CatalogScreen() {
           ref={listRef as any}
           data={items}
           keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => (
-            <ProductCard product={item}/>
-          )}
+          renderItem={({ item }) => <ProductCard product={item} />}
           contentContainerStyle={{ padding: 12 }}
           onEndReachedThreshold={0.5}
           onEndReached={() => {
@@ -154,9 +251,7 @@ export default function CatalogScreen() {
           ListFooterComponent={
             isFetchingNextPage ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null
           }
-          refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} />
-          }
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
           // Performance en listas largas
           initialNumToRender={12}
           windowSize={10}
@@ -197,4 +292,51 @@ const styles = StyleSheet.create({
   sortChipActive: { backgroundColor: "#111827" },
   sortText: { color: "#111827" },
   sortTextActive: { color: "#fff", fontWeight: "600" },
+
+  /** Header pill + iconos y badges */
+  headerPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 4,
+    overflow: "visible", // no cortar los badges
+  },
+  headerIconBtn: {
+    backgroundColor: "#fff",
+    padding: 6,
+    borderRadius: 18,
+    marginHorizontal: 6,
+    position: "relative", // ancla para el badge
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  dot: {
+    position: "absolute",
+    right: 1,
+    top: 1,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#16a34a",
+    zIndex: 2,
+  },
+  badge: {
+    position: "absolute",
+    right: -2,
+    top: -2,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
+  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
 });

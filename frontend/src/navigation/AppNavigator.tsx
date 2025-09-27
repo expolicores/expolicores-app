@@ -1,3 +1,4 @@
+// src/navigation/AppNavigator.tsx
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -16,6 +17,7 @@ import CartScreen from "../screens/CartScreen";
 
 // ✅ NUEVO
 import MyOrdersScreen from "../screens/MyOrdersScreen";
+import OrderTrackingScreen from "../screens/OrderTrackingScreen"; // 👈 NUEVO
 
 import CheckoutScreen from "../screens/CheckoutScreen";
 import OrderSuccessScreen from "../screens/OrderSuccessScreen";
@@ -36,6 +38,7 @@ export type RootStackParamList = {
 
   // ✅ NUEVO
   MyOrders: undefined;
+  OrderTracking: { orderId: number }; // 👈 NUEVO
 
   Checkout: undefined;
   OrderSuccess: { orderId: number; total: number };
@@ -73,6 +76,17 @@ function HeaderCartButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+// ✅ Botón “Mis pedidos” (emoji de recibo para no depender de libs)
+function HeaderOrdersButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="Mis pedidos">
+      <View style={{ paddingHorizontal: 6 }}>
+        <Text style={{ fontSize: 20 }}>🧾</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function AppNavigator() {
   const { booting, isAuthenticated } = useAuth();
 
@@ -95,12 +109,16 @@ export default function AppNavigator() {
               title: "Catálogo",
               headerRight: () => (
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  {/* 👉 Acceso directo a Mis pedidos */}
+                  <HeaderOrdersButton onPress={() => navigation.navigate("MyOrders")} />
+
+                  {/* Carrito */}
                   <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
-                  {/* ===== SOLO PARA PRUEBAS — ELIMINAR ANTES DE PRODUCCIÓN ===== */}
+
+                  {/* Perfil (temporal para pruebas) */}
                   <Pressable onPress={() => navigation.navigate("Profile")} style={{ marginLeft: 12 }}>
                     <Text style={{ fontSize: 16 }}>👤</Text>
                   </Pressable>
-                  {/* ============================================================ */}
                 </View>
               ),
             })}
@@ -136,6 +154,13 @@ export default function AppNavigator() {
             name="MyOrders"
             component={MyOrdersScreen}
             options={{ title: "Mis pedidos" }}
+          />
+
+          {/* ✅ Estado del pedido (tracking) */}
+          <Stack.Screen
+            name="OrderTracking"
+            component={OrderTrackingScreen}
+            options={{ title: "Estado del pedido" }}
           />
 
           {/* Checkout */}
