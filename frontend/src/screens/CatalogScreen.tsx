@@ -26,6 +26,7 @@ import { useDebounce } from "../lib/useDebounce";
 import CategoryChips from "../components/CategoryChips";
 import ProductCard from "../components/ProductCard";
 import { useCart } from "../context/CartContext";
+import HeaderAddress from "../components/HeaderAddress"; // ⬅️ NUEVO
 
 const PAGE_SIZE = 20;
 const SORT_OPTIONS = [
@@ -96,12 +97,16 @@ export default function CatalogScreen() {
   const cart = useCart?.();
   const count = cart?.count ?? 0;
 
-  // --- Header buttons (Mis pedidos / Carrito / Perfil) ---
+  // --- Header: Address Pill + Mis pedidos + Carrito + Perfil ---
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: "Catálogo",
+      headerTitle: "", // dejamos el espacio visual limpio (Rappi/DiDi style)
       headerRight: () => (
-        <View style={styles.headerPill}>
+        <View style={styles.headerRightRow}>
+          {/* Dirección principal (pill). Tap -> AddressList */}
+          <HeaderAddress compact />
+
+          {/* Íconos existentes */}
           <HeaderIcon
             name="receipt-outline"
             onPress={() => navigation.navigate("MyOrders")}
@@ -122,7 +127,7 @@ export default function CatalogScreen() {
       ),
     });
   }, [navigation, activeOrders, count]);
-  // --------------------------------------------------------
+  // --------------------------------------------------------------
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string | undefined>(undefined);
@@ -291,22 +296,18 @@ const styles = StyleSheet.create({
   sortText: { color: "#111827" },
   sortTextActive: { color: "#fff", fontWeight: "600" },
 
-  /** Header pill + iconos y badges */
-  headerPill: {
+  /** Header Right: dirección + iconos */
+  headerRightRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginRight: 4,
-    overflow: "visible", // no cortar los badges
+    gap: 6,
+    marginRight: 6,
   },
   headerIconBtn: {
     backgroundColor: "#fff",
     padding: 6,
     borderRadius: 18,
-    marginHorizontal: 6,
+    marginHorizontal: 2,
     position: "relative", // ancla para el badge
     shadowColor: "#000",
     shadowOpacity: 0.06,
