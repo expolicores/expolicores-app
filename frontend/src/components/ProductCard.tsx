@@ -1,107 +1,306 @@
-import React from "react";
-import {
-  View,
-  Text,
-  Image,
-  Pressable,
-  TouchableOpacity,
-  GestureResponderEvent,
-  Alert,
-} from "react-native";
-import { useNavigation } from "@react-navigation/native";
-import { Product } from "../types/product";
-import { useCart } from "../context/CartContext";
+// src/components/ProductCard.tsx
+import React, { useMemo, useState } from 'react';
+import { View, Text, Image, StyleSheet, Pressable, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
+import type { Product } from '../types/product';
 
 type Props = {
   product: Product;
-  onAdd?: () => void; // opcional: el padre puede sobreescribir el comportamiento
+
+  /** Modo controlado (opcional). Si no se proveen, el componente usa useCart internamente */
+  quantity?: number;
+  stock?: number | null;
+  onAdd?: () => void;
+  onInc?: () => void;
+  onDec?: () => void;
+  onRemove?: () => void; // opcional en modo controlado
+
+  showFavorite?: boolean;
+  onOpenDetail?: () => void;
 };
 
-export default function ProductCard({ product, onAdd }: Props) {
+const COLORS = {
+  text: '#111111',
+  border: '#E5E7EB',
+  bg: '#FFFFFF',
+  imgBg: '#F3F4F6',
+  green: '#0E8A3A', // CTA Boyacá
+  greenLight: '#E8F3EC',
+  grayText: '#6B7280',
+  red: '#D32F2F',
+};
+
+export default function ProductCard({
+  product,
+  quantity,
+  stock,
+  onAdd,
+  onInc,
+  onDec,
+  onRemove,
+  showFavorite = true,
+  onOpenDetail,
+}: Props) {
   const navigation = useNavigation<any>();
-  const { add } = useCart();
+  const { user } = useAuth();
+  const cart = useCart();
 
-  const goToDetail = () => {
-    navigation.navigate("ProductDetail", { id: product.id });
-  };
+  // ===== MODO AUTÓNOMO (si no vienen handlers/cantidad desde el padre) =====
+  const autonomous = typeof quantity !== 'number' && !onAdd && !onInc && !onDec;
 
-  const handleAdd = (e: GestureResponderEvent) => {
-    // Aún llamamos por si algún RN soporta stopPropagation, pero ya NO lo necesitamos
-    e.stopPropagation?.();
+  const qtyFromCart = useMemo(() => {
+    if (!autonomous) return 0;
+    return cart.items.find((it: any) => it.productId === product.id)?.qty ?? 0;
+  }, [autonomous, cart.items, product.id]);
 
-    if (onAdd) {
-      onAdd();
-      return;
-    }
+  // Cantidad efectiva que se muestra
+  const effectiveQty = autonomous ? qtyFromCart : quantity ?? 0;
 
-    const fallbackStock = 99;
-    const stock = (product as any).stock ?? fallbackStock;
+  // Stock efectivo: number -> limitado, null/undefined -> sin límite conocido
+  const productStock =
+    (typeof stock === 'number' ? stock : (product as any).stock) as
+      | number
+      | undefined
+      | null;
+  const effectiveStock = productStock ?? null;
 
-    add(
-      {
+  const atMax = effectiveStock != null && effectiveQty >= effectiveStock;
+  const isOutOfStock = effectiveStock === 0;
+  const canInc = effectiveStock == null ? true : effectiveQty < effectiveStock;
+
+  // ===== Handlers efectivos =====
+  const addOne = () => {
+    if (atMax) return; // 🚫 no exceder stock
+    if (!autonomous) return onAdd?.();
+
+    // Si tu CartContext tiene add(product) úsalo; si no, subimos qty con setQty
+    const existing = qtyFromCart;
+    if (typeof cart.add === 'function') {
+      // muchos proyectos definen add(product)
+      cart.add({
         productId: product.id,
         name: product.name,
         price: product.price,
         imageUrl: product.imageUrl ?? undefined,
-        stock,
-        category: product.category ?? null,
-      },
-      1
-    );
+        stock: (product as any).stock ?? undefined,
+        category: (product as any).category ?? null,
+      });
+    } else if (typeof cart.setQty === 'function') {
+      const next = effectiveStock == null ? existing + 1 : Math.min(existing + 1, effectiveStock);
+      cart.setQty(product.id, next);
+    }
+  };
 
-    Alert.alert(
-      "Agregado",
-      product.name,
-      [
-        { text: "Seguir comprando", style: "cancel" },
-        { text: "Ir al carrito", onPress: () => navigation.navigate("Cart") },
-      ],
-      { cancelable: true }
-    );
+  const incOne = () => {
+    if (atMax) return; // 🚫
+    if (!autonomous) return onInc?.();
+
+    if (typeof cart.add === 'function') {
+      cart.add({
+        productId: product.id,
+        name: product.name,
+        price: product.price,
+        imageUrl: product.imageUrl ?? undefined,
+        stock: (product as any).stock ?? undefined,
+        category: (product as any).category ?? null,
+      });
+    } else if (typeof cart.setQty === 'function') {
+      const next = effectiveStock == null ? effectiveQty + 1 : Math.min(effectiveQty + 1, effectiveStock);
+      cart.setQty(product.id, next);
+    }
+  };
+
+  const decOne = () => {
+    if (!autonomous) return onDec?.();
+    if (effectiveQty > 1) {
+      cart.setQty(product.id, effectiveQty - 1);
+    } else {
+      // qty === 1 -> eliminar
+      if (typeof cart.remove === 'function') cart.remove(product.id);
+      else cart.setQty(product.id, 0);
+    }
+  };
+
+  const removeLine = () => {
+    if (!autonomous) return onRemove?.();
+    if (typeof cart.remove === 'function') cart.remove(product.id);
+    else cart.setQty(product.id, 0);
+  };
+
+  // ===== Favoritos (login-gate) =====
+  const [fav, setFav] = useState(false);
+  const handleFavorite = () => {
+    if (!user) {
+      Alert.alert(
+        'Inicia sesión',
+        'Necesitas estar logueado para guardar favoritos.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Ingresar', onPress: () => navigation.navigate('Login') },
+        ],
+      );
+      return;
+    }
+    setFav((v) => !v);
+    // TODO: integrar /favorites
+  };
+
+  const goToDetail = () => {
+    if (onOpenDetail) return onOpenDetail();
+    navigation.navigate('ProductDetail', { id: product.id });
   };
 
   return (
-    <View style={{ flexDirection: "row", gap: 12, paddingVertical: 10 }}>
-      {/* Bloque clicable solo para navegar */}
-      <Pressable
-        onPress={goToDetail}
-        style={{ flexDirection: "row", gap: 12, flex: 1 }}
-        android_ripple={{ color: "#e5e7eb" }}
-      >
+    <View style={styles.card}>
+      <Pressable style={{ flex: 1 }} onPress={goToDetail}>
         <Image
-          source={{ uri: product.imageUrl ?? "https://picsum.photos/80" }}
-          style={{
-            width: 80,
-            height: 80,
-            borderRadius: 8,
-            backgroundColor: "#f3f4f6",
-          }}
+          source={{ uri: product.imageUrl ?? 'https://via.placeholder.com/300' }}
+          style={styles.image}
         />
-
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontWeight: "600" }} numberOfLines={2}>
-            {product.name}
-          </Text>
-          <Text>${product.price.toLocaleString("es-CO")}</Text>
-        </View>
+        <Text style={styles.name} numberOfLines={2}>
+          {product.name}
+        </Text>
+        <Text style={styles.price}>
+          ${product.price.toLocaleString('es-CO')}
+        </Text>
+        {typeof effectiveStock === 'number' && (
+          <Text style={styles.stockHint}>Stock: {effectiveStock}</Text>
+        )}
       </Pressable>
 
-      {/* Botón independiente: NO navega */}
-      <TouchableOpacity
-        onPress={handleAdd}
-        style={{
-          alignSelf: "center",
-          backgroundColor: "#111",
-          paddingVertical: 8,
-          paddingHorizontal: 12,
-          borderRadius: 8,
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={`Agregar ${product.name}`}
-        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-      >
-        <Text style={{ color: "white", textAlign: "center" }}>Agregar</Text>
-      </TouchableOpacity>
+      {/* Acción principal: Agregar / Contador / Agotado */}
+      {effectiveQty > 0 ? (
+        <>
+          <View style={styles.counter}>
+            <Pressable
+              onPress={effectiveQty === 1 ? removeLine : decOne}
+              style={[styles.roundBtn, effectiveQty === 1 && styles.deleteBtn]}
+              accessibilityLabel={effectiveQty === 1 ? 'Eliminar del carrito' : 'Disminuir'}
+            >
+              {effectiveQty === 1 ? (
+                <Ionicons name="trash-outline" size={18} color={COLORS.red} />
+              ) : (
+                <Ionicons name="remove" size={18} color="#fff" />
+              )}
+            </Pressable>
+
+            <View style={styles.qtyBox}>
+              <Text style={styles.qtyText}>{effectiveQty}</Text>
+            </View>
+
+            <Pressable
+              onPress={canInc ? incOne : undefined}
+              disabled={!canInc}
+              style={[styles.roundBtn, !canInc && { opacity: 0.5 }]}
+              accessibilityLabel="Aumentar"
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+            </Pressable>
+          </View>
+          {atMax && <Text style={styles.stockNote}>Sin más stock</Text>}
+        </>
+      ) : isOutOfStock ? (
+        <View style={[styles.addBtn, { backgroundColor: '#E5E7EB' }]}>
+          <Text style={[styles.addText, { color: COLORS.grayText }]}>Agotado</Text>
+        </View>
+      ) : (
+        <Pressable onPress={addOne} style={styles.addBtn} accessibilityLabel={`Agregar ${product.name}`}>
+          <Ionicons name="add" size={18} color="#FFF" />
+          <Text style={styles.addText}>Agregar</Text>
+        </Pressable>
+      )}
+
+      {showFavorite && (
+        <Pressable
+          onPress={handleFavorite}
+          style={styles.favBtn}
+          hitSlop={8}
+          accessibilityLabel="Agregar a favoritos"
+        >
+          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? '#EF4444' : '#111'} />
+        </Pressable>
+      )}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  card: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 10,
+  },
+  image: {
+    width: '100%',
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: COLORS.imgBg,
+  },
+  name: { marginTop: 8, color: COLORS.text, fontWeight: '600' },
+  price: { color: COLORS.text, marginTop: 4, fontWeight: '800' },
+  stockHint: { marginTop: 2, color: COLORS.grayText, fontSize: 12 },
+
+  addBtn: {
+    marginTop: 8,
+    backgroundColor: COLORS.green,
+    borderRadius: 12,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  addText: { color: 'white', textAlign: 'center', fontWeight: '700' },
+
+  counter: {
+    marginTop: 8,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.greenLight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+  },
+  roundBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.green,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteBtn: {
+    backgroundColor: '#FFF4F4',
+    borderWidth: 1,
+    borderColor: '#FAD1D1',
+  },
+  qtyBox: {
+    minWidth: 44,
+    paddingHorizontal: 8,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyText: { fontWeight: '800', color: COLORS.text },
+  stockNote: { marginTop: 4, color: COLORS.grayText, fontSize: 12 },
+
+  favBtn: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    backgroundColor: '#FFFFFFE6',
+    padding: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+});

@@ -1,21 +1,44 @@
 // frontend/src/lib/api.ts
-import axios from "axios";
-import type { Product } from "../types/product";
-import type { Address } from "../types/address";
-import type { CreateOrderDto, OrderSuccess } from "../types/order";
+import axios from 'axios';
+import type { Product } from '../types/product';
+import type { Address } from '../types/address';
+import type { CreateOrderDto, OrderSuccess } from '../types/order';
 
-// Expo expone variables EXPO_PUBLIC_* en process.env
+// ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://localhost:3000";
-console.log("[API] baseURL =", API_BASE_URL);
+  (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim() || 'http://localhost:3000';
 
+console.log('[API] baseURL =', API_BASE_URL);
+
+// ============================== Axios instance ========================================
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
-  headers: { Accept: "application/json" },
+  headers: {
+    Accept: 'application/json',
+    // Evita respuestas 304 del intermediario y forza al servidor a responder fresco
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+    Expires: '0',
+  },
 });
 
-// -------- Auth header plumbing --------
+// —— anti-cache reforzado en GET (por si algún proxy ignora los defaults)
+api.interceptors.request.use((config) => {
+  if ((config.method || 'get').toLowerCase() === 'get') {
+    config.headers = {
+      ...config.headers,
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      Expires: '0',
+      // Sonda para algunos proxies tercos (opcional; no afecta al backend)
+      'If-Modified-Since': 'Mon, 26 Jul 1997 05:00:00 GMT',
+    };
+  }
+  return config;
+});
+
+// ============================ Auth header plumbing ====================================
 let _setAuthHeader: (token: string | null) => void = (t) => {
   if (t) api.defaults.headers.common.Authorization = `Bearer ${t}`;
   else delete api.defaults.headers.common.Authorization;
@@ -30,22 +53,26 @@ export function setAuthToken(token: string | null) {
   _setAuthHeader(token);
 }
 
-// -------------------- US06 (paginación real) -------------------- //
+/** Útil para debug: leer el baseURL actual desde la app */
+export function getApiBaseUrl() {
+  return (api.defaults as any).baseURL as string;
+}
+
+// =============================== Productos (paginación) ===============================
 export type GetProductsParams = {
   q?: string;
   category?: string;
   page?: number; // 1-based
   limit?: number;
-  sort?: "newest" | "price_asc" | "price_desc" | "name_asc" | "name_desc";
+  sort?: 'newest' | 'price_asc' | 'price_desc' | 'name_asc' | 'name_desc';
 };
 
 export type ProductList = { items: Product[]; total: number };
 
 function parseTotal(headers: Record<string, any>): number {
   if (!headers) return 0;
-  // Axios normaliza headers a minúscula, pero soportamos ambos por si acaso
-  const raw = headers["x-total-count"] ?? headers["X-Total-Count"];
-  const n = Number.parseInt(String(raw ?? "0"), 10);
+  const raw = headers['x-total-count'] ?? headers['X-Total-Count'];
+  const n = Number.parseInt(String(raw ?? '0'), 10);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -59,35 +86,35 @@ export async function getProductsPaged(
   const {
     q,
     category,
-    // Defaults explícitos: si el BE también tiene defaults no pasa nada
     page = 1,
     limit = 20,
-    sort = "newest",
+    sort = 'newest',
   } = params;
 
-  const resp = await api.get<Product[]>("/products", {
+  const resp = await api.get<Product[]>('/products', {
     params: { q, category, page, limit, sort },
     signal: opts.signal,
+    headers: {
+      // refuerzo no-cache por si hay CDNs intermedios
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      Expires: '0',
+    },
   });
 
   return { items: resp.data ?? [], total: parseTotal(resp.headers as any) };
 }
 
-/**
- * Helper para useInfiniteQuery:
- * const getNextPageParam = getNextPageParamFactory(PAGE_SIZE);
- */
+/** Helper para useInfiniteQuery: next page param calculado por conteo */
 export function getNextPageParamFactory(pageSize = 20) {
   return (
     lastPage: ProductList,
     allPages: ProductList[],
     lastPageParam?: number
   ) => {
-    // Opción A (más precisa): calcular por conteo acumulado
     const loaded = allPages.reduce((acc, p) => acc + p.items.length, 0);
     if (loaded < lastPage.total) {
-      const nextByCount = Math.floor(loaded / pageSize) + 1; // siguiente 1-based
-      // Opción B (simple): incrementar el pageParam conocido
+      const nextByCount = Math.floor(loaded / pageSize) + 1;
       const nextByParam = (lastPageParam ?? 1) + 1;
       return Math.max(nextByCount, nextByParam);
     }
@@ -95,21 +122,18 @@ export function getNextPageParamFactory(pageSize = 20) {
   };
 }
 
-// -------------------- Compat (array “plano”) -------------------- //
 /** Compatibilidad: devuelve SOLO el array (ignora total). */
 export async function getProducts(
   params?: GetProductsParams,
   opts?: RequestOpts
 ): Promise<Product[]> {
   const { items } = await getProductsPaged(params ?? {}, opts ?? {});
-  return items; // 200 y [] si vacío
+  return items;
 }
 
-export async function getCategories(
-  opts: RequestOpts = {}
-): Promise<string[]> {
+export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
   try {
-    const { data } = await api.get<string[]>("/products/categories", {
+    const { data } = await api.get<string[]>('/products/categories', {
       signal: opts.signal,
     });
     return Array.isArray(data) ? data : [];
@@ -119,12 +143,10 @@ export async function getCategories(
   }
 }
 
-// ==================== US09 — Helpers de Checkout ==================== //
+// ============================ US09 — Checkout helpers ================================
 /** Direcciones del usuario autenticado (el BE ya filtra por user) */
-export async function fetchAddresses(
-  opts: RequestOpts = {}
-): Promise<Address[]> {
-  const { data } = await api.get<Address[]>("/addresses", {
+export async function fetchAddresses(opts: RequestOpts = {}): Promise<Address[]> {
+  const { data } = await api.get<Address[]>('/addresses', {
     signal: opts.signal,
   });
   return data ?? [];
@@ -134,7 +156,7 @@ export async function fetchAddresses(
 export async function createOrder(
   payload: CreateOrderDto
 ): Promise<OrderSuccess & { address?: Partial<Address> }> {
-  const { data } = await api.post("/orders", payload);
+  const { data } = await api.post('/orders', payload);
   return data;
 }
 

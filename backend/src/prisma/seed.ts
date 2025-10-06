@@ -33,6 +33,19 @@ async function main() {
     },
   });
 
+  // 🆕 Usuario de ejemplo con rol NEGOCIO (para Bodega Virtual)
+  await prisma.user.upsert({
+    where: { email: 'hotel@expolicores.com' },
+    update: { password: pass123, role: Role.NEGOCIO, name: 'Hotel Demo' },
+    create: {
+      email: 'hotel@expolicores.com',
+      password: pass123,
+      name: 'Hotel Demo',
+      role: Role.NEGOCIO,
+      phone: '0000000000',
+    },
+  });
+
   // ---- Limpieza segura del catálogo (respeta FKs)
   // OrderItem -> Order -> Product para evitar error P2003
   await prisma.$transaction([
@@ -59,19 +72,19 @@ async function main() {
     { name: 'Suavitel 1L',                price: 11000, stock: 70,  description: 'Aseo',               category: 'Aseo',        imageUrl: 'https://picsum.photos/seed/suavitel/400/400' },
   ];
 
-//>>> Opcional: generar más productos de demo para probar paginación/sort
-const ADD_DEMO_ITEMS = true;
+  // >>> Opcional: generar más productos de demo para probar paginación/sort
+  const ADD_DEMO_ITEMS = true;
   if (ADD_DEMO_ITEMS) {
-    const categories = ['Cerveza','Vino','Ron','Aguardiente','Whisky','Snacks','Aseo'];
-  for (let i = 1; i <= 60; i++) {
-  products.push({
-    name: `Producto ${i}`,
-    price: 1000 + i * 137,
-    stock: 5 + (i % 30),
-    description: `Demo #${i}`,
-    category: categories[i % categories.length],
-    imageUrl: `https://picsum.photos/seed/p${i}/400/400`,
-    });
+    const categories = ['Cerveza', 'Vino', 'Ron', 'Aguardiente', 'Whisky', 'Snacks', 'Aseo'];
+    for (let i = 1; i <= 60; i++) {
+      products.push({
+        name: `Producto ${i}`,
+        price: 1000 + i * 137,
+        stock: 5 + (i % 30),
+        description: `Demo #${i}`,
+        category: categories[i % categories.length],
+        imageUrl: `https://picsum.photos/seed/p${i}/400/400`,
+      });
     }
   }
 

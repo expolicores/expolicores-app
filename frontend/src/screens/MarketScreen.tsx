@@ -1,0 +1,288 @@
+// src/screens/MarketScreen.tsx
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  SafeAreaView,
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Pressable,
+  TextInput,
+  RefreshControl,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { Ionicons } from '@expo/vector-icons';
+import { api } from '../lib/api';
+import { useCart } from '../context/CartContext';
+import ProductCard from '../components/ProductCard';
+
+type Category = string;
+export type Product = {
+  id: number;
+  name: string;
+  price: number;
+  imageUrl?: string | null;
+  stock?: number | null;     // en listado puede llegar null
+  category?: string | null;
+};
+type Paged = { items: Product[]; nextPage?: number | null };
+
+// Tags virtuales (UI)
+const VIRTUAL_TAGS = [
+  { key: 'oferta', label: 'Ofertas' },
+  { key: 'low_price', label: '≤ $16.000' },
+  { key: 'pack', label: 'Packs' },
+];
+
+export default function MarketScreen() {
+  const navigation = useNavigation<any>();
+  const { items: cartItems, add, setQty, remove } = useCart() as any;
+
+  const [q, setQ] = useState('');
+  const [category, setCategory] = useState<Category | undefined>(undefined);
+  const [tag, setTag] = useState<string | undefined>(undefined);
+
+  // Cache local de stock (cuando el listado viene sin stock)
+  const stockCacheRef = useRef<Record<number, number | null>>({});
+  const pendingRef = useRef<Record<number, boolean>>({}); // anti multi-tap
+
+  // ----- CATEGORÍAS -----
+  const { data: categories } = useQuery<Category[]>({
+    queryKey: ['categories'],
+    queryFn: async () => {
+      const r = await api.get('/products/categories');
+      return r.data as string[];
+    },
+  });
+
+  // ----- PRODUCTOS (paginado) -----
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+    isFetching,
+  } = useInfiniteQuery<Paged>({
+    queryKey: ['products', { q, category, tag }],
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }) => {
+      const r = await api.get('/products', {
+        params: { q, category, tag, page: pageParam, limit: 20 },
+      });
+      const total = parseInt(r.headers['x-total-count'] || '0', 10);
+      const next = pageParam * 20 < total ? pageParam + 1 : null;
+      return { items: r.data as Product[], nextPage: next };
+    },
+    getNextPageParam: (last) => last.nextPage ?? undefined,
+  });
+
+  const products = useMemo(
+    () => data?.pages.flatMap((p) => p.items) ?? [],
+    [data],
+  );
+
+  const qtyInCart = (pid: number) =>
+    cartItems.find((it: any) => it.productId === pid)?.qty ?? 0;
+
+  // Obtiene stock confiable: listado -> cache -> fetch detalle
+  const ensureStock = async (item: Product): Promise<number | null> => {
+    if (typeof item.stock === 'number') return item.stock;
+
+    const cached = stockCacheRef.current[item.id];
+    if (typeof cached === 'number' || cached === null) return cached;
+
+    if (pendingRef.current[item.id]) return null; // evita paralelizar
+    pendingRef.current[item.id] = true;
+    try {
+      const r = await api.get(`/products/${item.id}`);
+      const s: number | null =
+        typeof r.data?.stock === 'number' ? r.data.stock : null;
+      stockCacheRef.current[item.id] = s;
+
+      // Si ya hay qty y excede el stock recién conocido → clampeamos
+      const q = qtyInCart(item.id);
+      if (typeof s === 'number' && q > s) setQty(item.id, s);
+
+      return s;
+    } catch {
+      stockCacheRef.current[item.id] = null;
+      return null;
+    } finally {
+      pendingRef.current[item.id] = false;
+    }
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+      {/* Buscador */}
+      <View style={styles.searchRow}>
+        <Ionicons name="search" size={18} color="#666" />
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          placeholder="Busca productos"
+          style={styles.searchInput}
+          returnKeyType="search"
+          onSubmitEditing={() => refetch()}
+        />
+      </View>
+
+      {/* Chips: virtuales + reales */}
+      <FlatList
+        data={[
+          ...VIRTUAL_TAGS.map((t) => ({ type: 'tag', key: t.key, label: t.label } as const)),
+          ...(categories?.map((c) => ({ type: 'cat', key: c, label: c })) || []),
+        ]}
+        keyExtractor={(it) => `${it.type}:${it.key}`}
+        renderItem={({ item }) => {
+          const active =
+            item.type === 'tag' ? tag === item.key : category === (item.key as string);
+          return (
+            <Pressable
+              onPress={() => {
+                if (item.type === 'tag') {
+                  setTag(item.key as string);
+                  setCategory(undefined);
+                } else {
+                  setCategory(item.key as string);
+                  setTag(undefined);
+                }
+                refetch();
+              }}
+              style={[styles.chip, active && styles.chipActive]}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {item.label}
+              </Text>
+            </Pressable>
+          );
+        }}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
+        style={{ maxHeight: 48, marginTop: 8 }}
+      />
+
+      {/* Grid de productos */}
+      <FlatList
+        data={products}
+        keyExtractor={(p) => String(p.id)}
+        numColumns={2}
+        columnWrapperStyle={{ gap: 12, paddingHorizontal: 12 }}
+        contentContainerStyle={{ paddingVertical: 12, paddingBottom: 24, gap: 12 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={isFetching && !isFetchingNextPage}
+            onRefresh={refetch}
+          />
+        }
+        ListEmptyComponent={
+          <View style={{ padding: 24, alignItems: 'center' }}>
+            <Text style={{ color: '#6B7280' }}>Sin resultados</Text>
+          </View>
+        }
+        renderItem={({ item }) => {
+          const qty = qtyInCart(item.id);
+
+          // Stock efectivo para mostrar: cache > listado > null
+          const cached = stockCacheRef.current[item.id];
+          const effectiveStock =
+            typeof cached === 'number'
+              ? cached
+              : typeof item.stock === 'number'
+              ? item.stock
+              : null;
+
+          const handleAdd = async () => {
+            if (pendingRef.current[item.id]) return;
+
+            const s = await ensureStock(item); // null = desconocido
+            if (typeof s === 'number') {
+              if (qty >= s) return; // tope
+              add({
+                productId: item.id,
+                name: item.name,
+                price: item.price,
+                imageUrl: item.imageUrl ?? null,
+                stock: s, // guardamos el stock real en la línea
+                category: item.category ?? null,
+              });
+            } else {
+              // Stock no disponible → no arriesgar sobreventa (conservador)
+              // (opcional: mostrar toast/alerta)
+              return;
+            }
+          };
+
+          const handleInc = async () => {
+            if (pendingRef.current[item.id]) return;
+
+            const s = await ensureStock(item);
+            if (typeof s === 'number') {
+              if (qty >= s) return;
+              setQty(item.id, Math.min(qty + 1, s));
+            } else {
+              // sin stock conocido → no incrementamos (conservador)
+              return;
+            }
+          };
+
+          const handleDec = () => {
+            if (qty > 1) setQty(item.id, qty - 1);
+            else remove(item.id);
+          };
+
+          return (
+            <ProductCard
+              product={item}
+              quantity={qty}
+              stock={effectiveStock} // el card muestra "stock" si lo conoce
+              onAdd={() => { void handleAdd(); }}
+              onInc={() => { void handleInc(); }}
+              onDec={handleDec}
+              onRemove={() => remove(item.id)}
+              onOpenDetail={() =>
+                navigation.navigate('ProductDetail', { id: item.id })
+              }
+              showFavorite
+            />
+          );
+        }}
+        onEndReachedThreshold={0.6}
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+        }}
+      />
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    marginHorizontal: 12,
+    marginTop: 10,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 40,
+    gap: 8,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: '#111' },
+  chip: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipActive: { backgroundColor: '#0E8A3A1A', borderColor: '#0E8A3A' },
+  chipText: { color: '#111', fontSize: 13, fontWeight: '600' },
+  chipTextActive: { color: '#0E8A3A' },
+});
