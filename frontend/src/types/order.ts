@@ -1,10 +1,8 @@
-// src/types/order.ts
+import type { Role } from './auth';
 
-// --- Enums/Unions de dominio ---
 export type OrderStatus = 'RECIBIDO' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO';
 export type PaymentMethod = 'COD';
 
-// --- DTO de creación (checkout) ---
 export interface CreateOrderItem {
   productId: number;
   quantity: number;
@@ -17,7 +15,6 @@ export interface CreateOrderDto {
   paymentMethod?: PaymentMethod;
 }
 
-// --- Respuesta de éxito al crear la orden (se mantiene) ---
 export interface OrderSuccess {
   id: number;
   status: OrderStatus;
@@ -26,7 +23,6 @@ export interface OrderSuccess {
   total: number;
 }
 
-// --- Tipos para listar y ver detalle (US11) ---
 export interface ProductMini {
   id: number;
   name: string;
@@ -38,18 +34,27 @@ export interface OrderItem {
   id: number;
   productId: number;
   quantity: number;
-  product?: ProductMini; // opcional: depende del include del BE
+  product?: ProductMini;
+}
+
+export interface OrderUserSummary {
+  id: number;
+  email: string;
+  name?: string | null;
+  phone?: string | null;
+  role: Role;
 }
 
 export interface Order {
   id: number;
   total: number;
   status: OrderStatus;
-  createdAt: string;     // ISO string
-  updatedAt?: string;    // ISO string (si agregas @updatedAt en Prisma)
+  createdAt: string;
+  updatedAt?: string;
   items: OrderItem[];
+  user?: OrderUserSummary | null;
 }
 
-// Alias útiles para endpoints
-export type OrderListItem = Order;        // GET /orders/my
-export type OrderDetail = Order;          // GET /orders/:id (owner o admin)
+export type OrderListItem = Order;
+export type OrderDetail = Order;
+export type OrderWithUser = Order & { user: OrderUserSummary | null };
