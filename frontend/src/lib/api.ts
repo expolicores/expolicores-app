@@ -1,12 +1,17 @@
 // frontend/src/lib/api.ts
-import axios from 'axios';
+import axios, { type AxiosRequestHeaders } from 'axios';
+import { Platform } from 'react-native';
 import type { Product } from '../types/product';
 import type { Address } from '../types/address';
-import type { CreateOrderDto, OrderSuccess } from '../types/order';
+import type { CreateOrderDto, OrderSuccess, Order, OrderStatus} from '../types/order';
+
+
 
 // ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================
 const API_BASE_URL =
-  (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim() || 'http://localhost:3000';
+  (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim() ||
+  // Fallbacks útiles en dev según simulador/emulador
+  (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');
 
 console.log('[API] baseURL =', API_BASE_URL);
 
@@ -15,25 +20,25 @@ export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
   headers: {
-    Accept: 'application/json',
-    // Evita respuestas 304 del intermediario y forza al servidor a responder fresco
-    'Cache-Control': 'no-cache',
-    Pragma: 'no-cache',
-    Expires: '0',
+    // Claves en minúsculas para Axios v1
+    accept: 'application/json',
+    // Evita respuestas 304 del intermediario y fuerza respuesta fresca
+    'cache-control': 'no-cache',
+    pragma: 'no-cache',
+    expires: '0',
   },
 });
 
 // —— anti-cache reforzado en GET (por si algún proxy ignora los defaults)
 api.interceptors.request.use((config) => {
   if ((config.method || 'get').toLowerCase() === 'get') {
-    config.headers = {
-      ...config.headers,
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-      Expires: '0',
-      // Sonda para algunos proxies tercos (opcional; no afecta al backend)
-      'If-Modified-Since': 'Mon, 26 Jul 1997 05:00:00 GMT',
-    };
+    const h = (config.headers ?? {}) as AxiosRequestHeaders;
+    h['cache-control'] = 'no-cache';
+    h['pragma'] = 'no-cache';
+    h['expires'] = '0';
+    // Sonda para algunos proxies tercos (opcional; no afecta al backend)
+    h['if-modified-since'] = 'Mon, 26 Jul 1997 05:00:00 GMT';
+    config.headers = h;
   }
   return config;
 });
@@ -83,22 +88,16 @@ export async function getProductsPaged(
   params: GetProductsParams = {},
   opts: RequestOpts = {}
 ): Promise<ProductList> {
-  const {
-    q,
-    category,
-    page = 1,
-    limit = 20,
-    sort = 'newest',
-  } = params;
+  const { q, category, page = 1, limit = 20, sort = 'newest' } = params;
 
   const resp = await api.get<Product[]>('/products', {
     params: { q, category, page, limit, sort },
     signal: opts.signal,
     headers: {
-      // refuerzo no-cache por si hay CDNs intermedios
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-      Expires: '0',
+      // refuerzo no-cache por si hay CDNs intermedios (minúsculas)
+      'cache-control': 'no-cache',
+      pragma: 'no-cache',
+      expires: '0',
     },
   });
 
@@ -143,9 +142,39 @@ export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
   }
 }
 
+// ============================ Orders (Admin / MyOrders) ===============================
+export type GetOrdersParams = {
+  status?: 'RECIBIDO' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO';
+  page?: number;   // 1-based
+  limit?: number;  // default 20
+  q?: string;      // id/teléfono si el BE lo soporta
+};
+
+/** Lista de órdenes (resumen) — tipa con tu `Order` si ya lo tienes definido */
+export async function fetchAllOrders(
+  params: GetOrdersParams = {},
+  opts: { signal?: AbortSignal } = {}
+): Promise<Order[]> {
+  const { data } = await api.get<Order[]>('/orders', {
+    params,
+    signal: opts.signal,
+  });
+  return data ?? [];
+}
+
+// Actualizar estado de una orden (Admin)
+export async function updateOrderStatus(orderId: number, status: OrderStatus): Promise<Order> {
+  // Ajusta la ruta si tu backend usa otra (p. ej. '/orders/:id' con body parcial)
+  const { data } = await api.patch<Order>(`/orders/${orderId}/status`, { status });
+  return data;
+}
+
+
 // ============================ US09 — Checkout helpers ================================
 /** Direcciones del usuario autenticado (el BE ya filtra por user) */
-export async function fetchAddresses(opts: RequestOpts = {}): Promise<Address[]> {
+export async function fetchAddresses(
+  opts: RequestOpts = {}
+): Promise<Address[]> {
   const { data } = await api.get<Address[]>('/addresses', {
     signal: opts.signal,
   });
