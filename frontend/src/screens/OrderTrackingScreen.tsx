@@ -17,6 +17,8 @@ import StatusBadge from "../components/StatusBadge";
 import { Order } from "../types/order";
 import { isFinal, statusLabel } from "../lib/orderStatus";
 import { timeAgo } from "../lib/time"; // opcional, para texto "humano"
+import { useAuth } from "../context/AuthContext";
+import { formatCurrency } from "../lib/formatCurrency";
 
 async function fetchOrder(orderId: number): Promise<Order> {
   const { data } = await api.get(`/orders/${orderId}`);
@@ -29,6 +31,8 @@ export default function OrderTrackingScreen() {
   const initial: Order | undefined = params?.initial;
 
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const useB2BPrices = user?.role === "NEGOCIO" || user?.role === "ADMIN";
 
   const {
     data,
@@ -188,14 +192,19 @@ export default function OrderTrackingScreen() {
         }}
       >
         <Text style={{ fontWeight: "700", marginBottom: 8 }}>Resumen</Text>
-        {order.items?.map((i) => (
-          <Text key={i.id} style={{ color: "#444" }}>
-            {i.quantity}× {i.product?.name ?? "Producto"}{" "}
-            {i.product ? `— $${i.product.price}` : ""}
-          </Text>
-        ))}
+        {order.items?.map((i) => {
+          const linePrice = useB2BPrices
+            ? i.product?.b2bPrice ?? i.product?.price
+            : i.product?.price;
+          return (
+            <Text key={i.id} style={{ color: "#444" }}>
+              {i.quantity}x {i.product?.name ?? "Producto"}{" "}
+              {typeof linePrice === "number" ? `- ${formatCurrency(linePrice)}` : ""}
+            </Text>
+          );
+        })}
         <Text style={{ marginTop: 8, fontWeight: "700" }}>
-          Total: ${order.total}
+          Total: {formatCurrency(order.total)}
         </Text>
       </View>
     </ScrollView>

@@ -11,7 +11,12 @@ export class ProductsService {
 
   // ---------- CRUD (admin) ----------
   async create(data: CreateProductDto) {
-    return this.prisma.product.create({ data });
+    return this.prisma.product.create({
+      data: {
+        ...data,
+        b2bPrice: data.b2bPrice ?? data.price,
+      },
+    });
   }
 
   findAll() {
@@ -33,7 +38,7 @@ export class ProductsService {
   // ---------- Catálogo (público) ----------
   async listPublic() {
     return this.prisma.product.findMany({
-      select: { id: true, name: true, price: true, imageUrl: true, category: true },
+      select: { id: true, name: true, price: true, b2bPrice: true, imageUrl: true, category: true },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -99,9 +104,16 @@ export class ProductsService {
     const orderBy = this.orderBySql(sort);
 
     const items = await this.prisma.$queryRaw<
-      { id: number; name: string; price: number; imageUrl: string | null; category: string | null }[]
+      {
+        id: number;
+        name: string;
+        price: number;
+        b2bPrice: number;
+        imageUrl: string | null;
+        category: string | null;
+      }[]
     >(Prisma.sql`
-      SELECT "id","name","price","imageUrl","category"
+      SELECT "id","name","price","b2bPrice","imageUrl","category"
       FROM "Product"
       ${where}
       ORDER BY ${orderBy}

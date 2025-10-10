@@ -14,11 +14,13 @@ import { useRoute, useNavigation } from "@react-navigation/native";
 import { useQuery } from "@tanstack/react-query";
 import api from "../lib/api";
 import { useCart } from "../context/CartContext";
+import { useAuth } from "../context/AuthContext";
 
 type ProductDetail = {
   id: number;
   name: string;
   price: number;
+  b2bPrice: number;
   description: string;
   stock: number;
   imageUrl?: string | null;
@@ -51,6 +53,7 @@ export default function ProductDetailScreen() {
 
   // ⬇️ Mantenemos el MISMO hook (useCart) y solo leemos más campos
   const { items, add } = useCart();
+  const { user } = useAuth();
   const [qty, setQty] = useState(1);
 
   // ÚNICO useEffect (mantenemos el orden/contador de hooks)
@@ -91,6 +94,8 @@ export default function ProductDetailScreen() {
 
   // UI principal
   const p = data!;
+  const isB2B = user?.role === 'NEGOCIO' || user?.role === 'ADMIN';
+  const unitPrice = isB2B ? (typeof p.b2bPrice === 'number' ? p.b2bPrice : p.price) : p.price;
   const stockTotal = p.stock ?? 0;
 
   // Cantidad ya reservada de ESTE producto en el carrito (no es un hook)
@@ -118,7 +123,7 @@ export default function ProductDetailScreen() {
       {
         productId: p.id,
         name: p.name,
-        price: p.price,
+        price: unitPrice,
         imageUrl: p.imageUrl ?? undefined,
         stock: stockTotal || 99, // tope UI; el BE valida el stock real en checkout
         category: p.category ?? null,
@@ -165,9 +170,14 @@ export default function ProductDetailScreen() {
         {/* Contenido */}
         <View style={{ padding: 16 }}>
           <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 4 }}>{p.name}</Text>
-          <Text style={{ fontSize: 18, color: "#111827", marginBottom: 12 }}>
-            ${p.price.toLocaleString("es-CO")}
+          <Text style={{ fontSize: 18, color: "#111827", marginBottom: isB2B ? 4 : 12 }}>
+            ${unitPrice.toLocaleString("es-CO")}
           </Text>
+          {isB2B ? (
+            <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
+              Precio cliente: ${p.price.toLocaleString("es-CO")}
+            </Text>
+          ) : null}
 
           {p.category ? <Text style={{ color: "#6b7280", marginBottom: 6 }}>Categoría: {p.category}</Text> : null}
 

@@ -1,7 +1,7 @@
 // frontend/src/lib/api.ts
 import axios, { type AxiosRequestHeaders } from 'axios';
 import { Platform } from 'react-native';
-import type { Product } from '../types/product';
+import type { Product, AdminProduct } from '../types/product';
 import type { Address } from '../types/address';
 import type { CreateOrderDto, OrderSuccess, Order, OrderStatus} from '../types/order';
 
@@ -140,6 +140,24 @@ export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
     if (e?.response?.status === 404) return [];
     throw e;
   }
+}
+
+// ============================ Productos (Admin) =======================================
+export async function fetchAdminProducts(opts: RequestOpts = {}): Promise<AdminProduct[]> {
+  const { data } = await api.get<AdminProduct[]>('/products/admin', {
+    signal: opts.signal,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export type ProductPricePatch = Partial<Pick<AdminProduct, 'price' | 'b2bPrice'>>;
+
+export async function updateProductPricing(
+  productId: number,
+  payload: ProductPricePatch
+): Promise<AdminProduct> {
+  const { data } = await api.patch<AdminProduct>(`/products/${productId}`, payload);
+  return data;
 }
 
 // ============================ Orders (Admin / MyOrders) ===============================

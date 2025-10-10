@@ -31,6 +31,12 @@ export class OrdersService {
   } as const;
 
   async create(userId: number, dto: CreateOrderDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, phone: true },
+    });
+    if (!user) throw new NotFoundException('USER_NOT_FOUND');
+
     const address = await this.prisma.address.findFirst({
       where: { id: dto.addressId, userId },
       select: {
@@ -58,16 +64,18 @@ export class OrdersService {
     const ids = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids } },
-      select: { id: true, name: true, price: true, stock: true },
+      select: { id: true, name: true, price: true, b2bPrice: true, stock: true },
     });
     if (products.length !== ids.length) throw new NotFoundException('PRODUCT_NOT_FOUND');
 
     const byId = new Map(products.map((p) => [p.id, p]));
     let subtotal = 0;
+    const usesB2B = user.role === Role.NEGOCIO || user.role === Role.ADMIN;
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
       if (p.stock < it.quantity) throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
-      subtotal += p.price * it.quantity;
+      const unitPrice = usesB2B ? p.b2bPrice : p.price;
+      subtotal += unitPrice * it.quantity;
     }
 
     const shipping = shippingForKm(km, this.shipping.base, this.shipping.perKm, this.shipping.min);
@@ -96,14 +104,17 @@ export class OrdersService {
     });
 
     // --- WhatsApp confirmación (US10) ---
-    const toPhone = this.normalizeCoPhone(created.user?.phone ?? '');
+    const toPhone = this.normalizeCoPhone(user.phone ?? created.user?.phone ?? '');
     const addressLabel = address.label ?? 'Dirección';
     const addressLine = [address.line1, address.neighborhood, address.city].filter(Boolean).join(', ');
-    const waItems = created.items.map((i) => ({
-      name: i.product.name,
-      quantity: i.quantity,
-      price: i.product.price,
-    }));
+    const waItems = created.items.map((i) => {
+      const linePrice = usesB2B ? i.product.b2bPrice : i.product.price;
+      return {
+        name: i.product.name,
+        quantity: i.quantity,
+        price: linePrice,
+      };
+    });
     const notes = dto.notes ?? address.notes ?? undefined;
 
     const waRes = await this.whatsapp.sendOrderConfirmation({
@@ -143,13 +154,15 @@ export class OrdersService {
     return { ...created, subtotal, shipping, total, address };
   }
 
-  private async calcTotal(items: { productId: number; quantity: number }[]) {
+  private async calcTotal(items: { productId: number; quantity: number }[], useB2B: boolean) {
     const ids = [...new Set(items.map((i) => i.productId))];
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids } },
-      select: { id: true, price: true },
+      select: { id: true, price: true, b2bPrice: true },
     });
-    const priceMap = new Map(products.map((p) => [p.id, p.price]));
+    const priceMap = new Map(
+      products.map((p) => [p.id, useB2B ? p.b2bPrice : p.price]),
+    );
     return items.reduce((sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
   }
 
@@ -190,10 +203,17 @@ export class OrdersService {
 
   async update(id: number, dto: UpdateOrderDto) {
     const { items, ...rest } = dto;
+    const existing = await this.prisma.order.findUnique({
+      where: { id },
+      select: { user: { select: { role: true } } },
+    });
+    if (!existing) throw new NotFoundException(`Order with ID ${id} not found`);
+    const usesB2B = existing.user?.role === Role.NEGOCIO || existing.user?.role === Role.ADMIN;
+
     let totalUpdate: number | undefined;
     if (items) {
       await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
-      totalUpdate = await this.calcTotal(items);
+      totalUpdate = await this.calcTotal(items, usesB2B);
     }
     const updated = await this.prisma.order.update({
       where: { id },

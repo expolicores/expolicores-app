@@ -16,17 +16,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { api } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import ProductCard from '../components/ProductCard';
+import type { Product } from '../types/product';
 
 type Category = string;
-export type Product = {
-  id: number;
-  name: string;
-  price: number;
-  imageUrl?: string | null;
-  stock?: number | null;     // en listado puede llegar null
-  category?: string | null;
-};
 type Paged = { items: Product[]; nextPage?: number | null };
+
+const AUTO_REFRESH_INTERVAL = 10_000;
+type MarketScreenProps = { variant?: 'B2C' | 'B2B' };
 
 // Tags virtuales (UI)
 const VIRTUAL_TAGS = [
@@ -35,9 +31,10 @@ const VIRTUAL_TAGS = [
   { key: 'pack', label: 'Packs' },
 ];
 
-export default function MarketScreen() {
+export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const navigation = useNavigation<any>();
   const { items: cartItems, add, setQty, remove } = useCart() as any;
+  const isB2B = variant === 'B2B';
 
   const [q, setQ] = useState('');
   const [category, setCategory] = useState<Category | undefined>(undefined);
@@ -65,7 +62,7 @@ export default function MarketScreen() {
     refetch,
     isFetching,
   } = useInfiniteQuery<Paged>({
-    queryKey: ['products', { q, category, tag }],
+    queryKey: ['products', { q, category, tag, variant }],
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       const r = await api.get('/products', {
@@ -73,14 +70,24 @@ export default function MarketScreen() {
       });
       const total = parseInt(r.headers['x-total-count'] || '0', 10);
       const next = pageParam * 20 < total ? pageParam + 1 : null;
-      return { items: r.data as Product[], nextPage: next };
+      const rawItems = Array.isArray(r.data) ? (r.data as Product[]) : [];
+      const items = rawItems.map((item) => ({
+        ...item,
+        b2bPrice:
+          typeof item.b2bPrice === 'number' && !Number.isNaN(item.b2bPrice)
+            ? item.b2bPrice
+            : item.price,
+      }));
+      return { items, nextPage: next };
     },
     getNextPageParam: (last) => last.nextPage ?? undefined,
+    refetchInterval: AUTO_REFRESH_INTERVAL,
+    refetchIntervalInBackground: false,
   });
 
   const products = useMemo(
     () => data?.pages.flatMap((p) => p.items) ?? [],
-    [data],
+    [data, variant],
   );
 
   const qtyInCart = (pid: number) =>
@@ -185,6 +192,8 @@ export default function MarketScreen() {
         }
         renderItem={({ item }) => {
           const qty = qtyInCart(item.id);
+          const unitPrice = isB2B ? item.b2bPrice : item.price;
+          const productForCard: Product = { ...item, price: unitPrice };
 
           // Stock efectivo para mostrar: cache > listado > null
           const cached = stockCacheRef.current[item.id];
@@ -204,7 +213,7 @@ export default function MarketScreen() {
               add({
                 productId: item.id,
                 name: item.name,
-                price: item.price,
+                price: unitPrice,
                 imageUrl: item.imageUrl ?? null,
                 stock: s, // guardamos el stock real en la línea
                 category: item.category ?? null,
@@ -236,7 +245,7 @@ export default function MarketScreen() {
 
           return (
             <ProductCard
-              product={item}
+              product={productForCard}
               quantity={qty}
               stock={effectiveStock} // el card muestra "stock" si lo conoce
               onAdd={() => { void handleAdd(); }}

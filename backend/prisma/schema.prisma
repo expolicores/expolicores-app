@@ -53,6 +53,7 @@ model Product {
   id          Int       @id @default(autoincrement())
   name        String
   price       Int
+  b2bPrice    Int       @default(0)
   stock       Int
   description String
   imageUrl    String?

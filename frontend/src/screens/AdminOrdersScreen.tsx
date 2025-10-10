@@ -24,7 +24,7 @@ const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCE
 
 export default function AdminOrdersScreen() {
   const navigation = useNavigation<any>();
-  const { user, logout } = useAuth();
+  const { user, signOut } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
   const queryClient = useQueryClient();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
@@ -47,26 +47,26 @@ export default function AdminOrdersScreen() {
     retry: 1,
     // polling condicional: activar si hay pedidos activos
     refetchInterval: (dataOrQuery) => {
-  const data = Array.isArray(dataOrQuery)
-    ? dataOrQuery
-    : Array.isArray((dataOrQuery as any)?.state?.data)
-      ? (dataOrQuery as any).state.data
-      : undefined;
+      const data = Array.isArray(dataOrQuery)
+        ? dataOrQuery
+        : Array.isArray((dataOrQuery as any)?.state?.data)
+        ? (dataOrQuery as any).state.data
+        : undefined;
 
-  const hasActive =
-    Array.isArray(data) &&
-    data.some((o: OrderWithUser) => o.status === 'RECIBIDO' || o.status === 'EN_CAMINO');
+      const hasActive =
+        Array.isArray(data) &&
+        data.some((o: OrderWithUser) => o.status === 'RECIBIDO' || o.status === 'EN_CAMINO');
 
-  return hasActive ? 8_000 : false;
-},
+      return hasActive ? 8_000 : false;
+    },
     onError: (err) => {
       const axiosErr = err as AxiosError<any>;
       const status = axiosErr?.response?.status;
       const payload = axiosErr?.response?.data;
       console.error('[AdminOrders] fetch error', status, payload ?? axiosErr?.message);
       if (status === 401) {
-        Alert.alert('Sesión expirada', 'Vuelve a iniciar sesión.', [
-          { text: 'OK', onPress: () => logout?.() },
+        Alert.alert('Sesion expirada', 'Vuelve a iniciar sesion.', [
+          { text: 'OK', onPress: () => signOut() },
         ]);
       }
     },

@@ -23,6 +23,8 @@ import ProductDetailScreen from "../screens/ProductDetailScreen";
 import CartScreen from "../screens/CartScreen";
 import MyOrdersScreen from "../screens/MyOrdersScreen";
 import AdminOrdersScreen from "../screens/AdminOrdersScreen";
+import AdminPriceListB2CScreen from "../screens/AdminPriceListB2CScreen";
+import AdminPriceListB2BScreen from "../screens/AdminPriceListB2BScreen";
 import OrderTrackingScreen from "../screens/OrderTrackingScreen";
 import CheckoutScreen from "../screens/CheckoutScreen";
 import OrderSuccessScreen from "../screens/OrderSuccessScreen";
@@ -31,6 +33,7 @@ import OrderSuccessScreen from "../screens/OrderSuccessScreen";
 import HomeScreen from "../screens/HomeScreen";
 import MarketScreen from "../screens/MarketScreen";
 import RestaurantsPlaceholderScreen from "../screens/RestaurantsPlaceholderScreen";
+import BodegaScreen from "../screens/BodegaScreen";
 
 // Botón con puntico de órdenes activas
 import OrdersButton from "../components/OrdersButton";
@@ -38,28 +41,6 @@ import OrdersButton from "../components/OrdersButton";
 /** ---------------- Feature flags ---------------- **/
 const RESTAURANTS_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_RESTAURANTS || "false") === "true";
-
-/** ---------------- Placeholder Bodega ---------------- **/
-function BodegaPlaceholderScreen() {
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: "#fff",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <Text style={{ fontSize: 20, fontWeight: "800", color: "#111" }}>
-        Bodega Virtual
-      </Text>
-      <Text style={{ marginTop: 8, color: "#666", textAlign: "center" }}>
-        Sección mayorista (solo negocios). Próximamente.
-      </Text>
-    </View>
-  );
-}
 
 /** ---------------- Tipos de navegación ---------------- **/
 export type AddressStackParamList = {
@@ -96,6 +77,8 @@ export type RootStackParamList = {
   // Pedidos
   MyOrders: undefined;
   AdminOrders: undefined;
+  AdminPriceListB2C: undefined;
+  AdminPriceListB2B: undefined;
   OrderTracking: { orderId: number };
 
   // Compra
@@ -189,14 +172,32 @@ export default function AppNavigator() {
   const headerRightCommon = (navigation: any) => (
     <View style={{ flexDirection: "row", alignItems: "center" }}>
       {user?.role === "ADMIN" ? (
-        <Pressable
-          onPress={() => navigation.navigate("AdminOrders")}
-          accessibilityRole="button"
-          accessibilityLabel="Administrar pedidos"
-          style={{ paddingHorizontal: 6 }}
-        >
-          <Ionicons name="clipboard-outline" size={22} color="#111" />
-        </Pressable>
+        <>
+          <Pressable
+            onPress={() => navigation.navigate("AdminPriceListB2C")}
+            accessibilityRole="button"
+            accessibilityLabel="Lista de precios B2C"
+            style={{ paddingHorizontal: 6 }}
+          >
+            <Ionicons name="pricetag-outline" size={22} color="#111" />
+          </Pressable>
+          <Pressable
+            onPress={() => navigation.navigate("AdminPriceListB2B")}
+            accessibilityRole="button"
+            accessibilityLabel="Lista de precios B2B"
+            style={{ paddingHorizontal: 6 }}
+          >
+            <Ionicons name="pricetags-outline" size={22} color="#111" />
+          </Pressable>
+          <Pressable
+            onPress={() => navigation.navigate("AdminOrders")}
+            accessibilityRole="button"
+            accessibilityLabel="Administrar pedidos"
+            style={{ paddingHorizontal: 6 }}
+          >
+            <Ionicons name="clipboard-outline" size={22} color="#111" />
+          </Pressable>
+        </>
       ) : null}
       <OrdersButton />
       <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
@@ -250,10 +251,10 @@ export default function AppNavigator() {
             />
           )}
 
-          {/* BODEGA VIRTUAL (placeholder o real si ya lo tienes) */}
+          {/* BODEGA VIRTUAL (B2B) */}
           <RootStack.Screen
             name="Bodega"
-            component={BodegaPlaceholderScreen}
+            component={BodegaScreen}
             options={({ navigation }) => ({
               title: "Bodega Virtual",
               headerRight: () => headerRightCommon(navigation),
@@ -292,6 +293,22 @@ export default function AppNavigator() {
             name="MyOrders"
             component={MyOrdersScreen}
             options={{ title: "Mis pedidos" }}
+          />
+          <RootStack.Screen
+            name="AdminPriceListB2C"
+            component={AdminPriceListB2CScreen}
+            options={({ navigation }) => ({
+              title: "Lista precio cliente (B2C)",
+              headerRight: () => headerRightCommon(navigation),
+            })}
+          />
+          <RootStack.Screen
+            name="AdminPriceListB2B"
+            component={AdminPriceListB2BScreen}
+            options={({ navigation }) => ({
+              title: "Lista precios negocios (B2B)",
+              headerRight: () => headerRightCommon(navigation),
+            })}
           />
           <RootStack.Screen
             name="AdminOrders"
