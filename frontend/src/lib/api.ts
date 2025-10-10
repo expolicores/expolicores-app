@@ -1,6 +1,6 @@
 // frontend/src/lib/api.ts
 import axios from 'axios';
-import type { Product } from '../types/product';
+import type { AdminProduct, Product } from '../types/product';
 import type { Address } from '../types/address';
 import type { CreateOrderDto, OrderSuccess } from '../types/order';
 
@@ -141,6 +141,22 @@ export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
     if (e?.response?.status === 404) return [];
     throw e;
   }
+}
+
+// ============================ Productos (admin) =======================================
+export async function fetchAdminProducts(opts: RequestOpts = {}): Promise<AdminProduct[]> {
+  const { data } = await api.get<AdminProduct[]>('/products/admin', {
+    signal: opts.signal,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function updateProductPrice(
+  productId: number,
+  price: number,
+): Promise<AdminProduct> {
+  const { data } = await api.patch<AdminProduct>(`/products/${productId}`, { price });
+  return data;
 }
 
 // ============================ US09 — Checkout helpers ================================

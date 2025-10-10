@@ -23,6 +23,7 @@ import ProductDetailScreen from "../screens/ProductDetailScreen";
 import CartScreen from "../screens/CartScreen";
 import MyOrdersScreen from "../screens/MyOrdersScreen";
 import AdminOrdersScreen from "../screens/AdminOrdersScreen";
+import AdminPriceListScreen from "../screens/AdminPriceListScreen";
 import OrderTrackingScreen from "../screens/OrderTrackingScreen";
 import CheckoutScreen from "../screens/CheckoutScreen";
 import OrderSuccessScreen from "../screens/OrderSuccessScreen";
@@ -96,6 +97,7 @@ export type RootStackParamList = {
   // Pedidos
   MyOrders: undefined;
   AdminOrders: undefined;
+  AdminPriceList: undefined;
   OrderTracking: { orderId: number };
 
   // Compra
@@ -189,14 +191,24 @@ export default function AppNavigator() {
   const headerRightCommon = (navigation: any) => (
     <View style={{ flexDirection: "row", alignItems: "center" }}>
       {user?.role === "ADMIN" ? (
-        <Pressable
-          onPress={() => navigation.navigate("AdminOrders")}
-          accessibilityRole="button"
-          accessibilityLabel="Administrar pedidos"
-          style={{ paddingHorizontal: 6 }}
-        >
-          <Ionicons name="clipboard-outline" size={22} color="#111" />
-        </Pressable>
+        <>
+          <Pressable
+            onPress={() => navigation.navigate("AdminPriceList")}
+            accessibilityRole="button"
+            accessibilityLabel="Lista de precios"
+            style={{ paddingHorizontal: 6 }}
+          >
+            <Ionicons name="pricetag-outline" size={22} color="#111" />
+          </Pressable>
+          <Pressable
+            onPress={() => navigation.navigate("AdminOrders")}
+            accessibilityRole="button"
+            accessibilityLabel="Administrar pedidos"
+            style={{ paddingHorizontal: 6 }}
+          >
+            <Ionicons name="clipboard-outline" size={22} color="#111" />
+          </Pressable>
+        </>
       ) : null}
       <OrdersButton />
       <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
@@ -298,6 +310,14 @@ export default function AppNavigator() {
             component={AdminOrdersScreen}
             options={({ navigation }) => ({
               title: "Pedidos (Admin)",
+              headerRight: () => headerRightCommon(navigation),
+            })}
+          />
+          <RootStack.Screen
+            name="AdminPriceList"
+            component={AdminPriceListScreen}
+            options={({ navigation }) => ({
+              title: "Lista de precios",
               headerRight: () => headerRightCommon(navigation),
             })}
           />
