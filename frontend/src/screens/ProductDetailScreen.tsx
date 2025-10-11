@@ -1,5 +1,5 @@
 // src/screens/ProductDetailScreen.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +9,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Pressable,
 } from "react-native";
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { useQuery } from "@tanstack/react-query";
@@ -56,19 +57,13 @@ export default function ProductDetailScreen() {
     },
   });
 
-  // Mantenemos el MISMO hook (useCart) y solo leemos mas campos
   const { items, add } = useCart();
   const { user, isAuthenticated } = useAuth();
   const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
   const [qty, setQty] = useState(1);
 
-  // Unico useEffect (mantenemos el orden/contador de hooks)
   useEffect(() => {
     if (data?.name) navigation.setOptions({ title: "Detalle" });
-    // si cambia lo disponible, clamp de qty (evita pasar del limite)
-    // Nota: 'remaining' se calcula mas abajo, por eso usamos un truco con setTimeout
-    // para esperar a que 'remaining' este definido en el siguiente render.
-    // Alternativamente, se puede hacer clamp en el onPress de "+" y en handleAdd.
   }, [data, navigation]);
 
   // Loading skeleton
@@ -100,57 +95,61 @@ export default function ProductDetailScreen() {
 
   // UI principal
   const p = data!;
-  const isB2B = user?.role === 'NEGOCIO' || user?.role === 'ADMIN';
-  const unitPrice = isB2B ? (typeof p.b2bPrice === 'number' ? p.b2bPrice : p.price) : p.price;
+  const isB2B = user?.role === "NEGOCIO" || user?.role === "ADMIN";
+  const unitPrice = isB2B ? (typeof p.b2bPrice === "number" ? p.b2bPrice : p.price) : p.price;
   const formattedPrice = formatCurrency(unitPrice);
   const referencePrice = formatCurrency(p.price);
   const isFavorite = favoriteIds.has(p.id) || p.isFavorite === true;
-  const productForToggle = useMemo<Product>(() => ({
+
+  // ← ya NO usamos useMemo (evita romper el orden de hooks)
+  const productForToggle: Product = {
     ...p,
     price: unitPrice,
     isFavorite: true,
-  }), [p, unitPrice]);
+  };
+
   const stockTotal = p.stock ?? 0;
 
-  // Cantidad ya reservada de ESTE producto en el carrito (no es un hook)
+  // Cantidad ya reservada en el carrito
   const inCartQty = items.find((i) => i.productId === p.id)?.qty ?? 0;
 
-  // Disponible para agregar (no restamos stock real hasta checkout; solo mostramos lo reservado)
+  // Disponible (UI)
   const remaining = Math.max(0, stockTotal - inCartQty);
+  const remainingAfterSelection = Math.max(0, remaining - qty);
 
-  // Asegura que qty no supere lo disponible (sin agregar hooks nuevos)
   const clampQty = (q: number) => {
     if (remaining <= 0) return 1;
     return Math.min(Math.max(1, q), remaining);
+    // Nota: adicionalmente hacemos clamp en handleAddToCart por si cambia el stock
   };
 
   const handleToggleFavorite = () => {
     if (!isAuthenticated) {
-      navigation.navigate('Login', { message: 'Inicia sesion para guardar favoritos' });
+      navigation.navigate("Login", { message: "Inicia sesion para guardar favoritos" });
       return;
     }
     toggleFavorite(productForToggle);
   };
+
   const handleAddToCart = () => {
     if (remaining <= 0) {
       Alert.alert("Sin stock", "No hay mas unidades disponibles para agregar.");
       return;
     }
-
     const finalQty = clampQty(qty);
-    if (finalQty !== qty) setQty(finalQty); // feedback en UI si estaba fuera de rango
-
     add(
       {
         productId: p.id,
         name: p.name,
         price: unitPrice,
         imageUrl: p.imageUrl ?? undefined,
-        stock: stockTotal || 99, // tope UI; el BE valida el stock real en checkout
+        stock: stockTotal || 99,
         category: p.category ?? null,
       },
-      finalQty
+      finalQty,
     );
+
+    setQty(1);
 
     Alert.alert(
       "Agregado al carrito",
@@ -159,7 +158,7 @@ export default function ProductDetailScreen() {
         { text: "Seguir comprando", style: "cancel" },
         { text: "Ir al carrito", onPress: () => navigation.navigate("Cart") },
       ],
-      { cancelable: true }
+      { cancelable: true },
     );
   };
 
@@ -202,37 +201,36 @@ export default function ProductDetailScreen() {
               disabled={isMutating}
               style={{ padding: 4, opacity: isMutating ? 0.6 : 1 }}
             >
-              <Ionicons
-                name={isFavorite ? "heart" : "heart-outline"}
-                size={22}
-                color={isFavorite ? "#ef4444" : "#111"}
-              />
+              <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={22} color={isFavorite ? "#ef4444" : "#111"} />
             </Pressable>
           </View>
-          <Text style={{ fontSize: 18, color: "#111827", marginBottom: isB2B ? 4 : 12 }}>
-            {formattedPrice}
-          </Text>
+
+          <Text style={{ fontSize: 18, color: "#111827", marginBottom: isB2B ? 4 : 12 }}>{formattedPrice}</Text>
           {isB2B ? (
-            <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
-              Precio cliente: {referencePrice}
-            </Text>
+            <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>Precio cliente: {referencePrice}</Text>
           ) : null}
           {p.category ? <Text style={{ color: "#6b7280", marginBottom: 6 }}>Categoria: {p.category}</Text> : null}
 
           <Text style={{ color: "#374151", lineHeight: 20 }}>{p.description || "Sin descripcion."}</Text>
 
           {/* Estado de stock con desglose */}
-          <Text
-            style={{
-              marginTop: 12,
-              color: remaining > 0 ? "#059669" : "#dc2626",
-              fontWeight: "600",
-            }}
-          >
-            {remaining > 0
-              ? `Stock total: ${stockTotal} - En carrito: ${inCartQty} - Disponible: ${remaining}`
-              : `Sin stock disponible (en carrito: ${inCartQty} de ${stockTotal})`}
-          </Text>
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ color: remaining > 0 ? "#059669" : "#dc2626", fontWeight: "600" }}>
+              {remaining > 0
+                ? `Stock disponible ahora: ${remaining} unidad${remaining === 1 ? "" : "es"}`
+                : `Sin stock disponible`}
+            </Text>
+            {inCartQty > 0 && (
+              <Text style={{ color: "#6b7280", marginTop: 2 }}>
+                En tu carrito: {inCartQty} unidad{inCartQty === 1 ? "" : "es"}
+              </Text>
+            )}
+            {remaining > 0 && qty > 0 && (
+              <Text style={{ color: "#6b7280", marginTop: 2 }}>
+                Si agregas {qty}, quedarian {remainingAfterSelection} unidad{remainingAfterSelection === 1 ? "" : "es"}.
+              </Text>
+            )}
+          </View>
 
           {/* Selector de cantidad */}
           {remaining > 0 && (
@@ -271,7 +269,7 @@ export default function ProductDetailScreen() {
             </View>
           )}
 
-          {/* Boton Agregar al carrito */}
+          {/* Botón Agregar al carrito */}
           <TouchableOpacity
             onPress={handleAddToCart}
             disabled={remaining <= 0}

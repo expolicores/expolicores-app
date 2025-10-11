@@ -139,9 +139,13 @@ export function createAdminPriceListScreen({
           [updated.id]: String(updated[priceKey]),
         }));
       },
-      onSettled: () => {
+      onSettled: (_data, _error, variables) => {
         setSavingId(null);
         queryClient.invalidateQueries({ queryKey: ['admin-products'] });
+        queryClient.invalidateQueries({ queryKey: ['products'], exact: false });
+        if (variables?.productId) {
+          queryClient.invalidateQueries({ queryKey: ['product', variables.productId] });
+        }
       },
     });
 

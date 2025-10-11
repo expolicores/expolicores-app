@@ -4,13 +4,14 @@ import {
   SafeAreaView,
   View,
   Text,
+  ActivityIndicator,
   StyleSheet,
   FlatList,
   Pressable,
   TextInput,
   RefreshControl,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../lib/api';
@@ -34,6 +35,7 @@ const VIRTUAL_TAGS = [
 
 export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const navigation = useNavigation<any>();
+  const isFocused = useIsFocused();
   const { items: cartItems, add, setQty, remove } = useCart() as any;
   const { favoriteIds } = useFavorites();
   const isB2B = variant === 'B2B';
@@ -83,8 +85,15 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
       return { items, nextPage: next };
     },
     getNextPageParam: (last) => last.nextPage ?? undefined,
-    refetchInterval: AUTO_REFRESH_INTERVAL,
+    refetchInterval: isFocused ? AUTO_REFRESH_INTERVAL : false,
     refetchIntervalInBackground: false,
+    staleTime: AUTO_REFRESH_INTERVAL,
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
+    retry: 1,
+    placeholderData: (prev) => prev,
   });
   const favoriteKey = useMemo(() => Array.from(favoriteIds).join(","), [favoriteIds]);
 
@@ -97,12 +106,18 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
     }));
   }, [data, isB2B, favoriteKey]);
 
+  const isInitialLoad = !data && isFetching && !isFetchingNextPage;
+  const isRefreshing = !!data && isFetching && !isFetchingNextPage;
+
   const qtyInCart = (pid: number) =>
     cartItems.find((it: any) => it.productId === pid)?.qty ?? 0;
 
   // Obtiene stock confiable: listado -> cache -> fetch detalle
   const ensureStock = async (item: Product): Promise<number | null> => {
-    if (typeof item.stock === 'number') return item.stock;
+    if (typeof item.stock === 'number') {
+      stockCacheRef.current[item.id] = item.stock;
+      return item.stock;
+    }
 
     const cached = stockCacheRef.current[item.id];
     if (typeof cached === 'number' || cached === null) return cached;
@@ -181,21 +196,28 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
 
       {/* Grid de productos */}
       <FlatList
-        data={products}
+        data={isInitialLoad ? [] : products}
         keyExtractor={(p) => String(p.id)}
         numColumns={2}
         columnWrapperStyle={{ gap: 12, paddingHorizontal: 12 }}
-        contentContainerStyle={{ paddingVertical: 12, paddingBottom: 24, gap: 12 }}
+        contentContainerStyle={{ paddingVertical: 12, paddingBottom: 24, gap: 12, flexGrow: 1 }}
         refreshControl={
           <RefreshControl
-            refreshing={isFetching && !isFetchingNextPage}
+            refreshing={isRefreshing}
             onRefresh={refetch}
           />
         }
         ListEmptyComponent={
-          <View style={{ padding: 24, alignItems: 'center' }}>
-            <Text style={{ color: '#6B7280' }}>Sin resultados</Text>
-          </View>
+          isInitialLoad ? (
+            <View style={{ flex: 1, padding: 24, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator />
+              <Text style={{ marginTop: 12, color: '#6B7280' }}>Cargando catálogo…</Text>
+            </View>
+          ) : (
+            <View style={{ padding: 24, alignItems: 'center' }}>
+              <Text style={{ color: '#6B7280' }}>Sin resultados</Text>
+            </View>
+          )
         }
         renderItem={({ item }) => {
           const qty = qtyInCart(item.id);
@@ -254,7 +276,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
             <ProductCard
               product={productForCard}
               quantity={qty}
-              stock={effectiveStock} // el card muestra "stock" si lo conoce
+              stock={effectiveStock} // el card calcula disponibilidad restante
               onAdd={() => { void handleAdd(); }}
               onInc={() => { void handleInc(); }}
               onDec={handleDec}

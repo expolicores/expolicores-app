@@ -60,7 +60,7 @@ export class WhatsAppService {
     }
   }
 
-  // === CONFIRMACIÓN PEDIDO (US10) ===
+  // === CONFIRMACION PEDIDO (US10) ===
   async sendOrderConfirmation(params: {
     toPhone: string;
     orderId: number;
@@ -89,16 +89,59 @@ export class WhatsAppService {
       return { ok: false };
     }
 
-    // === RUTA PRODUCCIÓN (plantillas a través de Content SID) ===
+    const addressDisplay = [params.addressLabel, params.addressLine].filter(Boolean).join(' - ');
+
+    const sendPlain = async () => {
+      const header = `*${params.tenant ?? 'Expolicores'}*\nConfirmacion de pedido #${params.orderId}`;
+      const lineItems = params.items.slice(0, 8).map((i) => `- ${i.quantity}x ${i.name}`);
+      const extra = params.items.length > 8 ? `-(+${params.items.length - 8} items)` : null;
+      const itemsBlock = [...lineItems, ...(extra ? [extra] : [])].join('\n');
+      const paymentLabel = params.paymentMethod === 'COD' ? 'Contraentrega' : params.paymentMethod;
+      const bodyLines = [
+        header,
+        itemsBlock,
+        '--------------',
+        `Subtotal: ${this.cop(params.subtotal)}`,
+        `Envio:    ${this.cop(params.shipping)}`,
+        `Total:    ${this.cop(params.total)}`,
+        `Pago: ${paymentLabel}`,
+        `Entrega a: ${addressDisplay || 'Direccion por defecto'}`,
+      ];
+      if (params.notes) {
+        bodyLines.push(`Notas: ${params.notes}`);
+      }
+      bodyLines.push('', 'Gracias por tu compra.', 'Consulta tus pedidos en la app: Perfil -> Mis pedidos');
+      const body = bodyLines.join('\n');
+
+      try {
+        const res = await this.client.messages.create({
+          from: this.cfg.from,
+          to,
+          body,
+        });
+        await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, true, res.sid);
+        return { ok: true, sid: res.sid };
+      } catch (e: any) {
+        await this.log(
+          params.orderId,
+          'ORDER_CONFIRMATION',
+          params.toPhone,
+          false,
+          undefined,
+          e?.message ?? String(e),
+        );
+        return { ok: false };
+      }
+    };
+
     if (this.cfg.useTemplates && this.cfg.confirmationContentSid) {
-      // Mapea variables de la plantilla (orden: {{1}}, {{2}}, …) tal como la definiste en Twilio Content
       const vars = {
         '1': String(params.orderId),
         '2': this.cop(params.subtotal),
         '3': this.cop(params.shipping),
         '4': this.cop(params.total),
         '5': params.paymentMethod === 'COD' ? 'Contraentrega' : params.paymentMethod,
-        '6': `${params.addressLabel ?? ''} — ${params.addressLine ?? ''}`.trim(),
+        '6': addressDisplay || 'Direccion registrada',
       };
 
       try {
@@ -111,41 +154,23 @@ export class WhatsAppService {
         await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, true, res.sid);
         return { ok: true, sid: res.sid };
       } catch (e: any) {
-        await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, e?.message ?? String(e));
-        return { ok: false };
+        const msg = e?.message ?? String(e);
+        this.logger.warn(
+          `WhatsApp template confirmation failed for order ${params.orderId}; falling back to plain text. ${msg}`,
+        );
+        await this.log(
+          params.orderId,
+          'ORDER_CONFIRMATION_TEMPLATE_FAIL',
+          params.toPhone,
+          false,
+          undefined,
+          msg,
+        );
+        return sendPlain();
       }
     }
 
-    // === RUTA SANDBOX (cuerpo libre) ===
-    const head = `*${params.tenant ?? 'Expolicores'}* ✅\nConfirmación de pedido #${params.orderId}`;
-    const lines = params.items.slice(0, 8).map((i) => `• ${i.quantity}× ${i.name}`);
-    const more = params.items.length > 8 ? `…(+${params.items.length - 8} ítems)` : '';
-    const addr = [params.addressLabel, params.addressLine].filter(Boolean).join(' — ');
-    const obs = params.notes ? `\n📝 Notas: ${params.notes}` : '';
-    const body = `${head}
-${lines.join('\n')} ${more}
-————————————
-Subtotal: ${this.cop(params.subtotal)}
-Envío:    ${this.cop(params.shipping)}
-Total:    ${this.cop(params.total)}
-Pago: ${params.paymentMethod === 'COD' ? 'Contraentrega' : params.paymentMethod}
-Entrega a: ${addr || 'Dirección por defecto'}${obs}
-
-¡Gracias por tu compra! 🥂
-Consulta tus pedidos en la app: *Perfil → Mis pedidos*`;
-
-    try {
-      const res = await this.client.messages.create({
-        from: this.cfg.from,
-        to,
-        body,
-      });
-      await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, true, res.sid);
-      return { ok: true, sid: res.sid };
-    } catch (e: any) {
-      await this.log(params.orderId, 'ORDER_CONFIRMATION', params.toPhone, false, undefined, e?.message ?? String(e));
-      return { ok: false };
-    }
+    return sendPlain();
   }
 
   // === CAMBIO DE ESTADO (US12) ===
@@ -170,7 +195,6 @@ Consulta tus pedidos en la app: *Perfil → Mis pedidos*`;
       return { ok: false };
     }
 
-    // Idempotencia: si ya existe un log para este estado, no reenvíes
     const type = `STATUS_${params.newStatus}`;
     const existing = await this.prisma.notificationLog.findUnique({
       where: { orderId_type: { orderId: params.orderId, type } },
@@ -180,12 +204,39 @@ Consulta tus pedidos en la app: *Perfil → Mis pedidos*`;
       return { ok: !!existing.ok, sid: existing.sid ?? undefined, skipped: true as const };
     }
 
-    // Producción con plantilla (si config disponible)
+    const sendPlain = async () => {
+      const statusText =
+        params.newStatus === 'EN_CAMINO'
+          ? 'Tu pedido va en camino.'
+          : params.newStatus === 'ENTREGADO'
+          ? 'Tu pedido fue entregado.'
+          : 'Tu pedido fue cancelado.';
+
+      const body = `*${params.tenant ?? 'Expolicores'}* - Pedido #${params.orderId}
+${statusText}
+Gracias por comprar con nosotros.`;
+
+      try {
+        const res = await this.client.messages.create({
+          from: this.cfg.from,
+          to,
+          body,
+        });
+        await this.logOnce(params.orderId, type, params.toPhone, res.sid, null);
+        return { ok: true, sid: res.sid };
+      } catch (e: any) {
+        await this.logOnce(params.orderId, type, params.toPhone, null, e?.message ?? String(e));
+        return { ok: false };
+      }
+    };
+
     if (this.cfg.useTemplates && this.cfg.statusContentSid) {
       const human =
-        params.newStatus === 'EN_CAMINO' ? 'En camino' :
-        params.newStatus === 'ENTREGADO' ? 'Entregado' :
-        'Cancelado';
+        params.newStatus === 'EN_CAMINO'
+          ? 'En camino'
+          : params.newStatus === 'ENTREGADO'
+          ? 'Entregado'
+          : 'Cancelado';
       const vars = { '1': String(params.orderId), '2': human };
 
       try {
@@ -198,34 +249,16 @@ Consulta tus pedidos en la app: *Perfil → Mis pedidos*`;
         await this.logOnce(params.orderId, type, params.toPhone, res.sid, null);
         return { ok: true, sid: res.sid };
       } catch (e: any) {
-        await this.logOnce(params.orderId, type, params.toPhone, null, e?.message ?? String(e));
-        return { ok: false };
+        const msg = e?.message ?? String(e);
+        this.logger.warn(
+          `WhatsApp status template failed for order ${params.orderId} (${params.newStatus}); falling back to plain text. ${msg}`,
+        );
+        await this.log(params.orderId, `${type}_TEMPLATE_FAIL`, params.toPhone, false, undefined, msg);
+        return sendPlain();
       }
     }
 
-    // Sandbox: texto libre
-    const statusText =
-      params.newStatus === 'EN_CAMINO'
-        ? '🚚 Tu pedido va en camino.'
-        : params.newStatus === 'ENTREGADO'
-        ? '✅ Tu pedido fue entregado.'
-        : '❌ Tu pedido fue cancelado.';
-
-    const body = `*${params.tenant ?? 'Expolicores'}* – Pedido #${params.orderId}
-${statusText}
-Gracias por comprar con nosotros.`;
-
-    try {
-      const res = await this.client.messages.create({
-        from: this.cfg.from,
-        to,
-        body,
-      });
-      await this.logOnce(params.orderId, type, params.toPhone, res.sid, null);
-      return { ok: true, sid: res.sid };
-    } catch (e: any) {
-      await this.logOnce(params.orderId, type, params.toPhone, null, e?.message ?? String(e));
-      return { ok: false };
-    }
+    return sendPlain();
   }
 }
+

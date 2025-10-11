@@ -38,7 +38,15 @@ export class ProductsService {
   // ---------- Catálogo (público) ----------
   async listPublic() {
     return this.prisma.product.findMany({
-      select: { id: true, name: true, price: true, b2bPrice: true, imageUrl: true, category: true },
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        b2bPrice: true,
+        imageUrl: true,
+        category: true,
+        stock: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -111,9 +119,10 @@ export class ProductsService {
         b2bPrice: number;
         imageUrl: string | null;
         category: string | null;
+        stock: number;
       }[]
     >(Prisma.sql`
-      SELECT "id","name","price","b2bPrice","imageUrl","category"
+      SELECT "id","name","price","b2bPrice","imageUrl","category","stock"
       FROM "Product"
       ${where}
       ORDER BY ${orderBy}

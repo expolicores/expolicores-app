@@ -162,7 +162,9 @@ export default function ProductCard({
           {formatCurrency(product.price)}
         </Text>
         {typeof effectiveStock === 'number' && (
-          <Text style={styles.stockHint}>Stock: {effectiveStock}</Text>
+          <Text style={styles.stockHint}>
+            Stock: {Math.max(effectiveStock - effectiveQty, 0)} / {effectiveStock}
+          </Text>
         )}
       </Pressable>
 
