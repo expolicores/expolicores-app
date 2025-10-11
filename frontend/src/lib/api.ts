@@ -3,11 +3,9 @@ import axios, { type AxiosRequestHeaders } from 'axios';
 import { Platform } from 'react-native';
 import type { Product, AdminProduct } from '../types/product';
 import type { Address } from '../types/address';
-import type { CreateOrderDto, OrderSuccess, Order, OrderStatus} from '../types/order';
+import type { CreateOrderDto, OrderSuccess, Order, OrderStatus } from '../types/order';
 
-
-
-// ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================
+/* ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================ */
 const API_BASE_URL =
   (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim() ||
   // Fallbacks útiles en dev según simulador/emulador
@@ -15,7 +13,7 @@ const API_BASE_URL =
 
 console.log('[API] baseURL =', API_BASE_URL);
 
-// ============================== Axios instance ========================================
+/* ============================== Axios instance ======================================== */
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
@@ -29,33 +27,44 @@ export const api = axios.create({
   },
 });
 
-// —— anti-cache reforzado en GET (por si algún proxy ignora los defaults)
-api.interceptors.request.use((config) => {
-  if ((config.method || 'get').toLowerCase() === 'get') {
-    const h = (config.headers ?? {}) as AxiosRequestHeaders;
-    h['cache-control'] = 'no-cache';
-    h['pragma'] = 'no-cache';
-    h['expires'] = '0';
-    // Sonda para algunos proxies tercos (opcional; no afecta al backend)
-    h['if-modified-since'] = 'Mon, 26 Jul 1997 05:00:00 GMT';
-    config.headers = h;
+/* ============ Normalización de headers (minúscula) + anti-cache por request =========== */
+function toLowercaseHeaders(h?: any): AxiosRequestHeaders {
+  const out: AxiosRequestHeaders = {};
+  if (h && typeof h === 'object') {
+    for (const [k, v] of Object.entries(h)) {
+      out[String(k).toLowerCase()] = v as any;
+    }
   }
+  return out;
+}
+
+api.interceptors.request.use((config) => {
+  // Normaliza cualquier header preexistente (incluyendo de llamadas locales)
+  const normalized = toLowercaseHeaders(config.headers);
+  // Reforzamos anti-cache siempre
+  normalized['cache-control'] = 'no-cache';
+  normalized['pragma'] = 'no-cache';
+  normalized['expires'] = '0';
+
+  // Sonda para algunos proxies tercos (solo GET)
+  const method = (config.method || 'get').toLowerCase();
+  if (method === 'get') {
+    normalized['if-modified-since'] = 'Mon, 26 Jul 1997 05:00:00 GMT';
+  }
+
+  config.headers = normalized;
+  if (__DEV__) console.log('[API] ->', method, config.url, 'auth:', !!normalized['authorization']);
   return config;
 });
 
-// ============================ Auth header plumbing ====================================
-let _setAuthHeader: (token: string | null) => void = (t) => {
-  if (t) api.defaults.headers.common.Authorization = `Bearer ${t}`;
-  else delete api.defaults.headers.common.Authorization;
-};
-
-/** Permite que el AuthProvider reemplace el setter si lo desea */
-export function authHeaderSetter(fn?: (token: string | null) => void) {
-  if (fn) _setAuthHeader = fn;
-}
-
-export function setAuthToken(token: string | null) {
-  _setAuthHeader(token);
+/* ============================ Auth header plumbing ==================================== */
+/** Setea o limpia el token JWT en el cliente HTTP (en minúscula). */
+export function setAuthToken(token: string | null | undefined) {
+  if (token) {
+    api.defaults.headers.common['authorization'] = `Bearer ${token}`;
+  } else {
+    delete (api.defaults.headers.common as any)['authorization'];
+  }
 }
 
 /** Útil para debug: leer el baseURL actual desde la app */
@@ -63,7 +72,7 @@ export function getApiBaseUrl() {
   return (api.defaults as any).baseURL as string;
 }
 
-// =============================== Productos (paginación) ===============================
+/* =============================== Productos (paginación) =============================== */
 export type GetProductsParams = {
   q?: string;
   category?: string;
@@ -142,7 +151,7 @@ export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
   }
 }
 
-// ============================ Productos (Admin) =======================================
+/* ============================ Productos (Admin) ======================================= */
 export async function fetchAdminProducts(opts: RequestOpts = {}): Promise<AdminProduct[]> {
   const { data } = await api.get<AdminProduct[]>('/products/admin', {
     signal: opts.signal,
@@ -160,7 +169,24 @@ export async function updateProductPricing(
   return data;
 }
 
-// ============================ Orders (Admin / MyOrders) ===============================
+// ============================ Favoritos =============================================
+export async function fetchFavorites(opts: RequestOpts = {}): Promise<Product[]> {
+  const { data } = await api.get<Product[]>('/favorites', {
+    signal: opts.signal,
+  });
+  return Array.isArray(data) ? data : [];
+}
+
+export async function addFavorite(productId: number): Promise<Product> {
+  const { data } = await api.post<Product>(`/favorites/${productId}`);
+  return data;
+}
+
+export async function removeFavorite(productId: number): Promise<void> {
+  await api.delete(`/favorites/${productId}`);
+}
+
+/* ============================ Orders (Admin / MyOrders) =============================== */
 export type GetOrdersParams = {
   status?: 'RECIBIDO' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO';
   page?: number;   // 1-based
@@ -187,8 +213,7 @@ export async function updateOrderStatus(orderId: number, status: OrderStatus): P
   return data;
 }
 
-
-// ============================ US09 — Checkout helpers ================================
+/* ============================ US09 — Checkout helpers ================================ */
 /** Direcciones del usuario autenticado (el BE ya filtra por user) */
 export async function fetchAddresses(
   opts: RequestOpts = {}

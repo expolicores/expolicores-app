@@ -1,5 +1,5 @@
 // src/screens/ProductDetailScreen.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,10 @@ import {
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { useQuery } from "@tanstack/react-query";
 import api from "../lib/api";
+import { Ionicons } from "@expo/vector-icons";
+import { useFavorites } from "../hooks/useFavorites";
+import { formatCurrency } from "../lib/formatCurrency";
+import type { Product } from "../types/product";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -25,6 +29,7 @@ type ProductDetail = {
   stock: number;
   imageUrl?: string | null;
   category?: string | null;
+  isFavorite?: boolean;
 };
 
 async function fetchProduct(id: number, signal?: AbortSignal): Promise<ProductDetail> {
@@ -51,17 +56,18 @@ export default function ProductDetailScreen() {
     },
   });
 
-  // ⬇️ Mantenemos el MISMO hook (useCart) y solo leemos más campos
+  // Mantenemos el MISMO hook (useCart) y solo leemos mas campos
   const { items, add } = useCart();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
+  const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
   const [qty, setQty] = useState(1);
 
-  // ÚNICO useEffect (mantenemos el orden/contador de hooks)
+  // Unico useEffect (mantenemos el orden/contador de hooks)
   useEffect(() => {
     if (data?.name) navigation.setOptions({ title: "Detalle" });
-    // si cambia lo disponible, clamp de qty (evita pasar del límite)
-    // Nota: 'remaining' se calcula más abajo, por eso usamos un truco con setTimeout
-    // para esperar a que 'remaining' esté definido en el siguiente render.
+    // si cambia lo disponible, clamp de qty (evita pasar del limite)
+    // Nota: 'remaining' se calcula mas abajo, por eso usamos un truco con setTimeout
+    // para esperar a que 'remaining' este definido en el siguiente render.
     // Alternativamente, se puede hacer clamp en el onPress de "+" y en handleAdd.
   }, [data, navigation]);
 
@@ -83,7 +89,7 @@ export default function ProductDetailScreen() {
   // Error / 404
   if (isError) {
     const status = (error as any)?.response?.status;
-    const msg = status === 404 ? "Este producto ya no está disponible." : "No pudimos cargar el producto.";
+    const msg = status === 404 ? "Este producto ya no esta disponible." : "No pudimos cargar el producto.";
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
         <Text style={{ color: status === 404 ? "#6b7280" : "#c1121f", marginBottom: 12 }}>{msg}</Text>
@@ -96,6 +102,14 @@ export default function ProductDetailScreen() {
   const p = data!;
   const isB2B = user?.role === 'NEGOCIO' || user?.role === 'ADMIN';
   const unitPrice = isB2B ? (typeof p.b2bPrice === 'number' ? p.b2bPrice : p.price) : p.price;
+  const formattedPrice = formatCurrency(unitPrice);
+  const referencePrice = formatCurrency(p.price);
+  const isFavorite = favoriteIds.has(p.id) || p.isFavorite === true;
+  const productForToggle = useMemo<Product>(() => ({
+    ...p,
+    price: unitPrice,
+    isFavorite: true,
+  }), [p, unitPrice]);
   const stockTotal = p.stock ?? 0;
 
   // Cantidad ya reservada de ESTE producto en el carrito (no es un hook)
@@ -110,9 +124,16 @@ export default function ProductDetailScreen() {
     return Math.min(Math.max(1, q), remaining);
   };
 
+  const handleToggleFavorite = () => {
+    if (!isAuthenticated) {
+      navigation.navigate('Login', { message: 'Inicia sesion para guardar favoritos' });
+      return;
+    }
+    toggleFavorite(productForToggle);
+  };
   const handleAddToCart = () => {
     if (remaining <= 0) {
-      Alert.alert("Sin stock", "No hay más unidades disponibles para agregar.");
+      Alert.alert("Sin stock", "No hay mas unidades disponibles para agregar.");
       return;
     }
 
@@ -133,7 +154,7 @@ export default function ProductDetailScreen() {
 
     Alert.alert(
       "Agregado al carrito",
-      `${finalQty} × ${p.name}`,
+      `${finalQty} x ${p.name}`,
       [
         { text: "Seguir comprando", style: "cancel" },
         { text: "Ir al carrito", onPress: () => navigation.navigate("Cart") },
@@ -169,19 +190,36 @@ export default function ProductDetailScreen() {
 
         {/* Contenido */}
         <View style={{ padding: 16 }}>
-          <Text style={{ fontSize: 20, fontWeight: "700", marginBottom: 4 }}>{p.name}</Text>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+            <Text style={{ fontSize: 20, fontWeight: "700", flex: 1, marginBottom: 4 }} numberOfLines={2}>
+              {p.name}
+            </Text>
+            <Pressable
+              onPress={handleToggleFavorite}
+              accessibilityRole="button"
+              accessibilityLabel={isFavorite ? "Quitar de favoritos" : "Agregar a favoritos"}
+              hitSlop={8}
+              disabled={isMutating}
+              style={{ padding: 4, opacity: isMutating ? 0.6 : 1 }}
+            >
+              <Ionicons
+                name={isFavorite ? "heart" : "heart-outline"}
+                size={22}
+                color={isFavorite ? "#ef4444" : "#111"}
+              />
+            </Pressable>
+          </View>
           <Text style={{ fontSize: 18, color: "#111827", marginBottom: isB2B ? 4 : 12 }}>
-            ${unitPrice.toLocaleString("es-CO")}
+            {formattedPrice}
           </Text>
           {isB2B ? (
             <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
-              Precio cliente: ${p.price.toLocaleString("es-CO")}
+              Precio cliente: {referencePrice}
             </Text>
           ) : null}
+          {p.category ? <Text style={{ color: "#6b7280", marginBottom: 6 }}>Categoria: {p.category}</Text> : null}
 
-          {p.category ? <Text style={{ color: "#6b7280", marginBottom: 6 }}>Categoría: {p.category}</Text> : null}
-
-          <Text style={{ color: "#374151", lineHeight: 20 }}>{p.description || "Sin descripción."}</Text>
+          <Text style={{ color: "#374151", lineHeight: 20 }}>{p.description || "Sin descripcion."}</Text>
 
           {/* Estado de stock con desglose */}
           <Text
@@ -192,7 +230,7 @@ export default function ProductDetailScreen() {
             }}
           >
             {remaining > 0
-              ? `Stock total: ${stockTotal} · En carrito: ${inCartQty} · Disponible: ${remaining}`
+              ? `Stock total: ${stockTotal} - En carrito: ${inCartQty} - Disponible: ${remaining}`
               : `Sin stock disponible (en carrito: ${inCartQty} de ${stockTotal})`}
           </Text>
 
@@ -211,7 +249,7 @@ export default function ProductDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Disminuir cantidad"
               >
-                <Text style={{ fontSize: 18 }}>−</Text>
+                <Text style={{ fontSize: 18 }}>-</Text>
               </TouchableOpacity>
 
               <Text style={{ fontSize: 18, fontWeight: "600" }}>{qty}</Text>
@@ -228,12 +266,12 @@ export default function ProductDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Aumentar cantidad"
               >
-                <Text style={{ fontSize: 18 }}>＋</Text>
+                <Text style={{ fontSize: 18 }}>+</Text>
               </TouchableOpacity>
             </View>
           )}
 
-          {/* Botón Agregar al carrito */}
+          {/* Boton Agregar al carrito */}
           <TouchableOpacity
             onPress={handleAddToCart}
             disabled={remaining <= 0}

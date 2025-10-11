@@ -14,6 +14,7 @@ import { OrdersModule } from './orders/orders.module';
 
 // 🆕 Bodega (B2B) — solo NEGOCIO/ADMIN vía RolesGuard en su controller
 import { BodegaModule } from './bodega/bodega.module';
+import { FavoritesModule } from './favorites/favorites.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { BodegaModule } from './bodega/bodega.module';
 
     // 🆕 Registrar el módulo B2B
     BodegaModule,
+    FavoritesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

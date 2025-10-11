@@ -6,6 +6,8 @@ export type Product = {
   imageUrl?: string | null;
   category?: string | null;
   stock?: number | null;
+  description?: string | null;
+  isFavorite?: boolean;
 };
 
 export interface AdminProduct extends Product {

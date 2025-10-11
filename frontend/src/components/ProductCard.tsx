@@ -1,11 +1,13 @@
 // src/components/ProductCard.tsx
-import React, { useMemo, useState } from 'react';
-import { View, Text, Image, StyleSheet, Pressable, Alert } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, Image, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import type { Product } from '../types/product';
+import { useFavorites } from '../hooks/useFavorites';
+import { formatCurrency } from '../lib/formatCurrency';
 
 type Props = {
   product: Product;
@@ -27,7 +29,7 @@ const COLORS = {
   border: '#E5E7EB',
   bg: '#FFFFFF',
   imgBg: '#F3F4F6',
-  green: '#0E8A3A', // CTA Boyacá
+  green: '#0E8A3A', // CTA Boyaca
   greenLight: '#E8F3EC',
   grayText: '#6B7280',
   red: '#D32F2F',
@@ -45,10 +47,11 @@ export default function ProductCard({
   onOpenDetail,
 }: Props) {
   const navigation = useNavigation<any>();
-  const { user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const cart = useCart();
+  const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
 
-  // ===== MODO AUTÓNOMO (si no vienen handlers/cantidad desde el padre) =====
+  // ===== MODO AUTONOMO (si no vienen handlers/cantidad desde el padre) =====
   const autonomous = typeof quantity !== 'number' && !onAdd && !onInc && !onDec;
 
   const qtyFromCart = useMemo(() => {
@@ -59,7 +62,7 @@ export default function ProductCard({
   // Cantidad efectiva que se muestra
   const effectiveQty = autonomous ? qtyFromCart : quantity ?? 0;
 
-  // Stock efectivo: number -> limitado, null/undefined -> sin límite conocido
+  // Stock efectivo: number -> limitado, null/undefined -> sin limite conocido
   const productStock =
     (typeof stock === 'number' ? stock : (product as any).stock) as
       | number
@@ -73,10 +76,10 @@ export default function ProductCard({
 
   // ===== Handlers efectivos =====
   const addOne = () => {
-    if (atMax) return; // 🚫 no exceder stock
+    if (atMax) return; // no exceder stock
     if (!autonomous) return onAdd?.();
 
-    // Si tu CartContext tiene add(product) úsalo; si no, subimos qty con setQty
+    // Si tu CartContext tiene add(product) usalo; si no, subimos qty con setQty
     const existing = qtyFromCart;
     if (typeof cart.add === 'function') {
       // muchos proyectos definen add(product)
@@ -95,7 +98,7 @@ export default function ProductCard({
   };
 
   const incOne = () => {
-    if (atMax) return; // 🚫
+    if (atMax) return;
     if (!autonomous) return onInc?.();
 
     if (typeof cart.add === 'function') {
@@ -131,21 +134,13 @@ export default function ProductCard({
   };
 
   // ===== Favoritos (login-gate) =====
-  const [fav, setFav] = useState(false);
+  const isFavorite = (product.isFavorite ?? false) || favoriteIds.has(product.id);
   const handleFavorite = () => {
-    if (!user) {
-      Alert.alert(
-        'Inicia sesión',
-        'Necesitas estar logueado para guardar favoritos.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Ingresar', onPress: () => navigation.navigate('Login') },
-        ],
-      );
+    if (!isAuthenticated) {
+      navigation.navigate('Login', { message: 'Inicia sesion para guardar favoritos' });
       return;
     }
-    setFav((v) => !v);
-    // TODO: integrar /favorites
+    toggleFavorite(product);
   };
 
   const goToDetail = () => {
@@ -164,14 +159,14 @@ export default function ProductCard({
           {product.name}
         </Text>
         <Text style={styles.price}>
-          ${product.price.toLocaleString('es-CO')}
+          {formatCurrency(product.price)}
         </Text>
         {typeof effectiveStock === 'number' && (
           <Text style={styles.stockHint}>Stock: {effectiveStock}</Text>
         )}
       </Pressable>
 
-      {/* Acción principal: Agregar / Contador / Agotado */}
+      {/* Accion principal: Agregar / Contador / Agotado */}
       {effectiveQty > 0 ? (
         <>
           <View style={styles.counter}>
@@ -200,7 +195,7 @@ export default function ProductCard({
               <Ionicons name="add" size={18} color="#fff" />
             </Pressable>
           </View>
-          {atMax && <Text style={styles.stockNote}>Sin más stock</Text>}
+          {atMax && <Text style={styles.stockNote}>Sin mas stock</Text>}
         </>
       ) : isOutOfStock ? (
         <View style={[styles.addBtn, { backgroundColor: '#E5E7EB' }]}>
@@ -216,12 +211,14 @@ export default function ProductCard({
       {showFavorite && (
         <Pressable
           onPress={handleFavorite}
-          style={styles.favBtn}
+          style={[styles.favBtn, isMutating && { opacity: 0.6 }]}
           hitSlop={8}
-          accessibilityLabel="Agregar a favoritos"
+          accessibilityLabel={isFavorite ? "Quitar de favoritos" : "Agregar a favoritos"}
+          disabled={isMutating}
         >
-          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? '#EF4444' : '#111'} />
+          <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={20} color={isFavorite ? "#EF4444" : "#111"} />
         </Pressable>
+
       )}
     </View>
   );

@@ -71,7 +71,7 @@ export default function AddressListScreen({ navigation }: any) {
             <View style={{ flexDirection: 'row', marginTop: 10 }}>
               {/* Editar */}
               <TouchableOpacity
-                onPress={() => navigation.navigate('AddressForm', { addressId: item.id })}
+                onPress={() => navigation.navigate('AddressForm', { address: item })}
                 style={{ marginRight: 16 }}
               >
                 <Text style={{ color: '#2563eb' }}>Editar</Text>

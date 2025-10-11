@@ -34,17 +34,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Evita paralelizar /auth/me
   const inflightRef = useRef(false);
+  // Evita llamar signOut varias veces ante múltiples 401
+  const loggingOutRef = useRef(false);
 
   /** Trae el perfil actual del backend (si falla, deja user en null). */
   const refreshMe = useCallback(async () => {
     if (inflightRef.current) return;
     inflightRef.current = true;
     try {
+      // Si tu cliente ya normaliza anti-cache, no hace falta enviar headers aquí.
       const r = await api.get<Me>('/auth/me', {
         headers: {
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-          Expires: '0',
+          // minúsculas por compat con Axios v1
+          'cache-control': 'no-cache',
+          pragma: 'no-cache',
+          expires: '0',
         },
       });
       setUser(r.data);
@@ -61,9 +65,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const saved = await SecureStore.getItemAsync(TOKEN_KEY);
         if (saved) {
-          setToken(saved);
-          setAuthToken(saved);
-          await refreshMe(); // Perfil fresco (rol incluido)
+          setToken(saved);           // setAuthToken se aplica en el efecto de abajo
+          await refreshMe();         // Perfil fresco (rol incluido)
         }
       } finally {
         setBooting(false);
@@ -71,19 +74,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })();
   }, [refreshMe]);
 
-  // Interceptor 401 → logout limpio
+  // Asegura que SIEMPRE que cambie el token, se refleje en el cliente HTTP
+  useEffect(() => {
+    setAuthToken(token || undefined);
+  }, [token]);
+
+  // Interceptor 401 → logout limpio (con guard para no repetir)
   useEffect(() => {
     const id = api.interceptors.response.use(
       (r) => r,
       async (err) => {
-        if (err?.response?.status === 401) {
-          await signOut();
+        if (err?.response?.status === 401 && token && !loggingOutRef.current) {
+          try {
+            loggingOutRef.current = true;
+            await SecureStore.deleteItemAsync(TOKEN_KEY);
+            setToken(null);
+            setUser(null);
+            setAuthToken(undefined);
+          } finally {
+            loggingOutRef.current = false;
+          }
         }
         return Promise.reject(err);
       }
     );
     return () => api.interceptors.response.eject(id);
-  }, []);
+  }, [token]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     try {
@@ -95,9 +111,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Acepta access_token | accessToken | token
       const tok =
-        (data && (data.access_token ?? data.accessToken ?? data.token)) as
-          | string
-          | undefined;
+        (data && (data.access_token ?? data.accessToken ?? data.token)) as string | undefined;
 
       if (!tok) {
         console.log('[LOGIN] response sin token', data);
@@ -110,9 +124,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('[SecureStore] setItem error', err);
       }
 
-      setAuthToken(tok);
-      setToken(tok);
-      await refreshMe(); // Refleja rol de inmediato
+      setToken(tok);   // setAuthToken se aplica por el efecto [token]
+      await refreshMe();
     } catch (e: any) {
       console.log('LOGIN ERROR →', {
         message: e?.message,
@@ -132,10 +145,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshMe]);
 
   const signOut = useCallback(async () => {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
-    setToken(null);
-    setUser(null);
-    setAuthToken(null);
+    try {
+      await SecureStore.deleteItemAsync(TOKEN_KEY);
+    } finally {
+      setToken(null);
+      setUser(null);
+      setAuthToken(undefined);
+    }
   }, []);
 
   const value = useMemo<AuthCtx>(

@@ -28,6 +28,7 @@ import AdminPriceListB2BScreen from "../screens/AdminPriceListB2BScreen";
 import OrderTrackingScreen from "../screens/OrderTrackingScreen";
 import CheckoutScreen from "../screens/CheckoutScreen";
 import OrderSuccessScreen from "../screens/OrderSuccessScreen";
+import FavoritesScreen from "../screens/FavoritesScreen";
 
 // Screens (home / market / restaurantes placeholder)
 import HomeScreen from "../screens/HomeScreen";
@@ -35,17 +36,18 @@ import MarketScreen from "../screens/MarketScreen";
 import RestaurantsPlaceholderScreen from "../screens/RestaurantsPlaceholderScreen";
 import BodegaScreen from "../screens/BodegaScreen";
 
-// Botón con puntico de órdenes activas
+// Boton con puntico de ordenes activas
 import OrdersButton from "../components/OrdersButton";
+import FavoritesButton from "../components/FavoritesButton";
 
 /** ---------------- Feature flags ---------------- **/
 const RESTAURANTS_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_RESTAURANTS || "false") === "true";
 
-/** ---------------- Tipos de navegación ---------------- **/
+/** ---------------- Tipos de navegacion ---------------- **/
 export type AddressStackParamList = {
   AddressList: undefined;
-  AddressForm: { addressId?: number } | undefined;
+  AddressForm: { address?: any } | undefined;
 };
 
 export type RootStackParamList = {
@@ -53,10 +55,10 @@ export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
 
-  // Auth (Home + módulos)
+  // Auth (Home + modulos)
   Home: undefined;
   Market: undefined;
-  RestaurantsPlaceholder?: undefined; // se registrará solo con flag
+  RestaurantsPlaceholder?: undefined; // se registrara solo con flag
   Bodega: undefined;
 
   // Alias legacy (Catalog -> Market)
@@ -76,6 +78,7 @@ export type RootStackParamList = {
 
   // Pedidos
   MyOrders: undefined;
+  Favorites: undefined;
   AdminOrders: undefined;
   AdminPriceListB2C: undefined;
   AdminPriceListB2B: undefined;
@@ -151,7 +154,7 @@ function AddressesNavigator() {
       <AddressStack.Screen
         name="AddressForm"
         component={AddressFormScreen}
-        options={{ title: "Nueva dirección" }}
+        options={{ title: "Nueva direccion" }}
       />
     </AddressStack.Navigator>
   );
@@ -199,6 +202,7 @@ export default function AppNavigator() {
           </Pressable>
         </>
       ) : null}
+      <FavoritesButton />
       <OrdersButton />
       <HeaderCartButton onPress={() => navigation.navigate("Cart")} />
       <HeaderProfileButton onPress={() => navigation.navigate("Profile")} />
@@ -219,7 +223,7 @@ export default function AppNavigator() {
             })}
           />
 
-          {/* MARKET (catálogo nuevo) */}
+          {/* MARKET (catalogo nuevo) */}
           <RootStack.Screen
             name="Market"
             component={MarketScreen}
@@ -239,7 +243,7 @@ export default function AppNavigator() {
             })}
           />
 
-          {/* RESTAURANTES (registrar SOLO si el flag está ON) */}
+          {/* RESTAURANTES (registrar SOLO si el flag esta ON) */}
           {RESTAURANTS_ENABLED && (
             <RootStack.Screen
               name="RestaurantsPlaceholder"
@@ -293,6 +297,11 @@ export default function AppNavigator() {
             name="MyOrders"
             component={MyOrdersScreen}
             options={{ title: "Mis pedidos" }}
+          />
+          <RootStack.Screen
+            name="Favorites"
+            component={FavoritesScreen}
+            options={{ title: "Mis favoritos" }}
           />
           <RootStack.Screen
             name="AdminPriceListB2C"

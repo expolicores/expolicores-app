@@ -1,33 +1,34 @@
 // src/screens/ProfileScreen.tsx
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
-  View,
-  Text,
-  Button,
-  StyleSheet,
-  TextInput,
-  Alert,
   ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
+
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import type { Me } from '../types/auth';
 
-// --------- Validación ---------
+// --------- Validacion ---------
 const phoneSchema = z
   .string()
   .trim()
   .refine(
     (v) => {
-      const d = v.replace(/\D/g, '');
-      return d.length === 10 || /^\+57\d{10}$/.test(v);
+      const digits = v.replace(/\D/g, '');
+      return digits.length === 10 || /^\+57\d{10}$/.test(v);
     },
-    { message: 'Ingresa un celular válido (10 dígitos) o en formato +57XXXXXXXXXX' }
+    { message: 'Ingresa un celular valido (10 digitos) o en formato +57XXXXXXXXXX' }
   );
 
 const schema = z.object({
@@ -39,21 +40,19 @@ type FormValues = z.infer<typeof schema>;
 
 // Normaliza a +57XXXXXXXXXX
 function normalizeCoPhone(v: string) {
-  const d = (v || '').replace(/\D/g, '');
+  const digits = (v || '').replace(/\D/g, '');
   if (v?.startsWith('+')) return v;
-  if (d.startsWith('57') && d.length === 12) return `+${d}`;
-  if (d.length === 10) return `+57${d}`;
+  if (digits.startsWith('57') && digits.length === 12) return `+${digits}`;
+  if (digits.length === 10) return `+57${digits}`;
   return v;
 }
 
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
-  const qc = useQueryClient();
-
-  // 👇 Del contexto (evita el error de hooks: solo usamos el hook dentro del componente)
+  const queryClient = useQueryClient();
   const { user: ctxUser, refreshMe, signOut, booting } = useAuth();
 
-  // Si no hubiese user aún, traemos /auth/me (habilitado solo si ctxUser es null)
+  // Si no hubiese user aun, traemos /auth/me (habilitado solo si ctxUser es null)
   const {
     data: me,
     isFetching,
@@ -67,50 +66,77 @@ export default function ProfileScreen() {
 
   const user = ctxUser ?? me ?? null;
 
+  const initialValues = useMemo(
+    () => ({
+      name: user?.name ?? '',
+      phone: user?.phone ?? '',
+    }),
+    [user?.name, user?.phone]
+  );
+
   const {
     control,
     handleSubmit,
-    formState: { errors, isDirty },
     reset,
+    setValue,
+    formState: { errors, isDirty, isValid },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { name: user?.name ?? '', phone: user?.phone ?? '' },
+    defaultValues: initialValues,
+    mode: 'onChange',
+    reValidateMode: 'onChange',
   });
 
   // Rellena el formulario al recibir perfil
   useEffect(() => {
     if (user) {
-      reset({ name: user.name ?? '', phone: user.phone ?? '' });
+      reset(
+        {
+          name: user.name ?? '',
+          phone: user.phone ?? '',
+        },
+        { keepDirty: false, keepIsValid: true }
+      );
+      setValue('name', user.name ?? '', { shouldDirty: false, shouldValidate: false });
+      setValue('phone', user.phone ?? '', { shouldDirty: false, shouldValidate: false });
     }
-  }, [user, reset]);
+  }, [user, reset, setValue]);
 
-  // Actualización de perfil
+  // Actualizacion de perfil
   const { mutate: updateMe, isLoading: isSaving } = useMutation({
     mutationFn: async (values: FormValues) => {
       const payload = { ...values, phone: normalizeCoPhone(values.phone) };
-      // Ajusta la ruta si tu backend expone /users/:id en lugar de /users/me
       const res = await api.patch<Me>('/users/me', payload);
       return res.data;
     },
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['me'] });
+    onSuccess: async (updated) => {
+      reset(
+        {
+          name: updated?.name ?? '',
+          phone: updated?.phone ?? '',
+        },
+        { keepDirty: false, keepIsValid: true }
+      );
+      queryClient.setQueryData(['me'], updated);
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
       await refreshMe();
-      Alert.alert('Perfil actualizado', 'Tu información se guardó correctamente.');
+      Alert.alert('Perfil actualizado', 'Tu informacion se guardo correctamente.');
     },
-    onError: (e: any) => {
-      const msg = e?.response?.data?.message || e?.message || 'No se pudo actualizar el perfil.';
+    onError: (error: any) => {
+      const msg = error?.response?.data?.message || error?.message || 'No se pudo actualizar el perfil.';
       Alert.alert('Error', String(msg));
     },
   });
 
   const onSubmit = (values: FormValues) => updateMe(values);
+  const saveDisabled = isSaving || !isValid || !isDirty;
 
   // Estados de carga
   if (booting || (!user && isFetching)) {
     return (
       <View style={[styles.container, styles.center]}>
         <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Cargando perfil…</Text>
+        <Text style={{ marginTop: 8 }}>Cargando perfil...</Text>
       </View>
     );
   }
@@ -121,7 +147,9 @@ export default function ProfileScreen() {
         <Text style={styles.title}>Mi perfil</Text>
         <Text style={styles.muted}>No autenticado</Text>
         <View style={{ height: 12 }} />
-        <Button title="Reintentar" onPress={() => refetch()} />
+        <Pressable style={[styles.secondaryButton, styles.secondaryButtonBlue]} onPress={() => refetch()}>
+          <Text style={styles.secondaryButtonText}>Reintentar</Text>
+        </Pressable>
       </View>
     );
   }
@@ -130,76 +158,94 @@ export default function ProfileScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Mi perfil</Text>
 
-      {/* Email solo lectura */}
       <Text style={styles.label}>Email</Text>
       <View style={styles.readonly}>
-        <Text>{user.email}</Text>
+        <Text style={styles.readonlyText}>{user.email}</Text>
       </View>
 
-      {/* Nombre */}
       <Text style={styles.label}>Nombre</Text>
       <Controller
         control={control}
         name="name"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <TextInput
-            style={[styles.input, errors.name && styles.inputError]}
-            placeholder="Tu nombre"
-            onBlur={onBlur}
-            onChangeText={onChange}
-            value={value}
-            autoCapitalize="words"
-          />
-        )}
+        render={({ field: { onChange, onBlur, value } }) => {
+          return (
+            <TextInput
+              style={[styles.input, errors.name && styles.inputError]}
+              placeholder="Tu nombre"
+              placeholderTextColor="#9ca3af"
+              selectionColor="#111"
+              onBlur={onBlur}
+              onChangeText={onChange}
+              value={value}
+              autoCapitalize="words"
+            />
+          );
+        }}
       />
       {errors.name && <Text style={styles.error}>{errors.name.message}</Text>}
 
-      {/* Teléfono */}
-      <Text style={styles.label}>Teléfono (WhatsApp)</Text>
+      <Text style={styles.label}>Telefono (WhatsApp)</Text>
       <Controller
         control={control}
         name="phone"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <TextInput
-            style={[styles.input, errors.phone && styles.inputError]}
-            placeholder="3001234567 o +573001234567"
-            keyboardType="phone-pad"
-            onBlur={onBlur}
-            onChangeText={onChange}
-            value={value}
-          />
-        )}
+        render={({ field: { onChange, onBlur, value } }) => {
+          return (
+            <TextInput
+              style={[styles.input, errors.phone && styles.inputError]}
+              placeholder="3001234567 o +573001234567"
+              placeholderTextColor="#9ca3af"
+              selectionColor="#111"
+              keyboardType="phone-pad"
+              onBlur={onBlur}
+              onChangeText={onChange}
+              value={value}
+            />
+          );
+        }}
       />
       {errors.phone && <Text style={styles.error}>{errors.phone.message}</Text>}
       <Text style={styles.hint}>
-        Recomendado: 10 dígitos (p. ej. 3001234567). Se normaliza a +57 automáticamente.
+        Recomendado: 10 digitos (por ejemplo 3001234567). Se normaliza a +57 automaticamente.
       </Text>
 
       <View style={{ height: 16 }} />
 
-      <Button
-        title={isSaving ? 'Guardando…' : isFetching ? 'Actualizando…' : 'Guardar cambios'}
+      <Pressable
         onPress={handleSubmit(onSubmit)}
-        disabled={isSaving || (!isDirty && !isFetching)}
-      />
+        disabled={saveDisabled}
+        style={[
+          styles.saveButton,
+          saveDisabled ? styles.saveButtonDisabled : styles.saveButtonEnabled,
+        ]}
+      >
+        <Text style={styles.saveButtonText}>
+          {isSaving ? 'Guardando...' : 'Guardar cambios'}
+        </Text>
+      </Pressable>
 
       <View style={{ height: 16 }} />
 
-      <Button title="Mis direcciones" onPress={() => navigation.navigate('Addresses')} />
+      <Pressable
+        style={[styles.secondaryButton, styles.secondaryButtonBlue]}
+        onPress={() => navigation.navigate('Addresses')}
+      >
+        <Text style={styles.secondaryButtonText}>Mis direcciones</Text>
+      </Pressable>
 
       <View style={{ height: 8 }} />
 
-      <Button
-        title="Cerrar sesión"
-        color="#c0392b"
+      <Pressable
+        style={[styles.secondaryButton, styles.secondaryButtonRed]}
         onPress={async () => {
           try {
             await signOut();
-          } catch (e: any) {
-            Alert.alert('Error', e?.message ?? 'No se pudo cerrar sesión');
+          } catch (error: any) {
+            Alert.alert('Error', error?.message ?? 'No se pudo cerrar sesion');
           }
         }}
-      />
+      >
+        <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
+      </Pressable>
     </View>
   );
 }
@@ -214,17 +260,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 8,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#f3f4f6',
   },
+  readonlyText: { color: '#111' },
   input: {
     padding: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 8,
-    backgroundColor: 'white',
+    backgroundColor: '#f3f4f6',
+    color: '#111',
   },
   inputError: { borderColor: '#ef4444' },
   error: { marginTop: 4, color: '#ef4444' },
   hint: { marginTop: 6, color: '#6b7280', fontSize: 12 },
   muted: { color: '#6b7280' },
+  saveButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveButtonEnabled: {
+    backgroundColor: '#0E8A3A',
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#d1d5db',
+  },
+  saveButtonText: { color: '#fff', fontWeight: '700' },
+  secondaryButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryButtonBlue: {
+    backgroundColor: '#1D4ED8',
+  },
+  secondaryButtonRed: {
+    backgroundColor: '#c0392b',
+  },
+  secondaryButtonText: { color: '#fff', fontWeight: '700' },
 });

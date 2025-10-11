@@ -17,6 +17,7 @@ import { api } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import ProductCard from '../components/ProductCard';
 import type { Product } from '../types/product';
+import { useFavorites } from '../hooks/useFavorites';
 
 type Category = string;
 type Paged = { items: Product[]; nextPage?: number | null };
@@ -27,13 +28,14 @@ type MarketScreenProps = { variant?: 'B2C' | 'B2B' };
 // Tags virtuales (UI)
 const VIRTUAL_TAGS = [
   { key: 'oferta', label: 'Ofertas' },
-  { key: 'low_price', label: '≤ $16.000' },
+  { key: 'low_price', label: '<= $16.000' },
   { key: 'pack', label: 'Packs' },
 ];
 
 export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const navigation = useNavigation<any>();
   const { items: cartItems, add, setQty, remove } = useCart() as any;
+  const { favoriteIds } = useFavorites();
   const isB2B = variant === 'B2B';
 
   const [q, setQ] = useState('');
@@ -44,7 +46,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const stockCacheRef = useRef<Record<number, number | null>>({});
   const pendingRef = useRef<Record<number, boolean>>({}); // anti multi-tap
 
-  // ----- CATEGORÍAS -----
+  // ----- CATEGORAS -----
   const { data: categories } = useQuery<Category[]>({
     queryKey: ['categories'],
     queryFn: async () => {
@@ -84,11 +86,16 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
     refetchInterval: AUTO_REFRESH_INTERVAL,
     refetchIntervalInBackground: false,
   });
+  const favoriteKey = useMemo(() => Array.from(favoriteIds).join(","), [favoriteIds]);
 
-  const products = useMemo(
-    () => data?.pages.flatMap((p) => p.items) ?? [],
-    [data, variant],
-  );
+  const products = useMemo(() => {
+    const flat = data?.pages.flatMap((p) => p.items) ?? [];
+    return flat.map((item) => ({
+      ...item,
+      price: isB2B ? item.b2bPrice : item.price,
+      isFavorite: favoriteIds.has(item.id),
+    }));
+  }, [data, isB2B, favoriteKey]);
 
   const qtyInCart = (pid: number) =>
     cartItems.find((it: any) => it.productId === pid)?.qty ?? 0;
@@ -108,7 +115,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
         typeof r.data?.stock === 'number' ? r.data.stock : null;
       stockCacheRef.current[item.id] = s;
 
-      // Si ya hay qty y excede el stock recién conocido → clampeamos
+      // Si ya hay qty y excede el stock recin conocido  clampeamos
       const q = qtyInCart(item.id);
       if (typeof s === 'number' && q > s) setQty(item.id, s);
 
@@ -215,11 +222,11 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
                 name: item.name,
                 price: unitPrice,
                 imageUrl: item.imageUrl ?? null,
-                stock: s, // guardamos el stock real en la línea
+                stock: s, // guardamos el stock real en la lnea
                 category: item.category ?? null,
               });
             } else {
-              // Stock no disponible → no arriesgar sobreventa (conservador)
+              // Stock no disponible -> no arriesgar sobreventa (conservador)
               // (opcional: mostrar toast/alerta)
               return;
             }
@@ -233,7 +240,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
               if (qty >= s) return;
               setQty(item.id, Math.min(qty + 1, s));
             } else {
-              // sin stock conocido → no incrementamos (conservador)
+              // sin stock conocido -> no incrementamos (conservador)
               return;
             }
           };

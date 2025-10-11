@@ -27,12 +27,15 @@ enum OrderStatus {
 model User {
   id         Int       @id @default(autoincrement())
   email      String    @unique
+  emailAlt   String?   @unique
   password   String
   name       String
   phone      String    @default("0000000000")
   role       Role      @default(CLIENTE)
+  isEmailVerified Boolean @default(false)
   orders     Order[]
   addresses  Address[]
+  favorites  Favorite[]
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }
@@ -61,6 +64,7 @@ model Product {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   orderItems  OrderItem[]
+  favorites   Favorite[]
 
   @@index([category])
 }
@@ -112,6 +116,34 @@ model NotificationLog {
 
   @@index([orderId, createdAt])
   @@unique([orderId, type])       // <- evita duplicados del mismo tipo por orden
+}
+
+model Favorite {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  productId  Int
+  createdAt  DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId], name: "favorite_user_product_unique")
+  @@index([userId])
+  @@index([productId])
+}
+
+model EmailOtp {
+  id         String   @id @default(cuid())
+  email      String
+  code       String
+  expiresAt  DateTime
+  attempts   Int      @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+  requestIp  String?
+
+  @@index([email])
+  @@index([requestIp], map: "EmailOtp_requestIp_idx")
 }
 
 // ---------- Idempotencia ----------
