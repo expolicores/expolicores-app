@@ -1,26 +1,26 @@
 // frontend/src/lib/api.ts
-import axios, { type AxiosRequestHeaders } from 'axios';
+import axios, { AxiosError, type AxiosInstance, type AxiosRequestHeaders } from 'axios';
 import { Platform } from 'react-native';
+
+// Tipos existentes en tu repo
 import type { Product, AdminProduct } from '../types/product';
 import type { Address } from '../types/address';
 import type { CreateOrderDto, OrderSuccess, Order, OrderStatus } from '../types/order';
 
 /* ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================ */
-const API_BASE_URL =
+export const API_BASE_URL =
   (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim() ||
-  // Fallbacks útiles en dev según simulador/emulador
   (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');
 
 console.log('[API] baseURL =', API_BASE_URL);
 
 /* ============================== Axios instance ======================================== */
-export const api = axios.create({
+export const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
   headers: {
-    // Claves en minúsculas para Axios v1
     accept: 'application/json',
-    // Evita respuestas 304 del intermediario y fuerza respuesta fresca
+    'content-type': 'application/json',
     'cache-control': 'no-cache',
     pragma: 'no-cache',
     expires: '0',
@@ -39,14 +39,14 @@ function toLowercaseHeaders(h?: any): AxiosRequestHeaders {
 }
 
 api.interceptors.request.use((config) => {
-  // Normaliza cualquier header preexistente (incluyendo de llamadas locales)
   const normalized = toLowercaseHeaders(config.headers);
+
   // Reforzamos anti-cache siempre
   normalized['cache-control'] = 'no-cache';
   normalized['pragma'] = 'no-cache';
   normalized['expires'] = '0';
 
-  // Sonda para algunos proxies tercos (solo GET)
+  // Sonda anti 304 (solo GET)
   const method = (config.method || 'get').toLowerCase();
   if (method === 'get') {
     normalized['if-modified-since'] = 'Mon, 26 Jul 1997 05:00:00 GMT';
@@ -57,19 +57,124 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Normalización de errores en una forma consistente
+export type ApiErrorShape = {
+  status: number;
+  message: string;
+  details?: any;
+};
+
+api.interceptors.response.use(
+  (r) => r,
+  (err: AxiosError) => {
+    const status = err.response?.status ?? 0;
+    const data: any = err.response?.data ?? {};
+    const message =
+      (Array.isArray(data?.message) ? data.message.join(', ') : data?.message) ||
+      err.message ||
+      'Error de red';
+    const apiErr: ApiErrorShape = { status, message, details: data };
+    if (__DEV__) console.warn('[API ERROR]', apiErr);
+    return Promise.reject(apiErr);
+  }
+);
+
 /* ============================ Auth header plumbing ==================================== */
+let _token: string | null = null;
+
 /** Setea o limpia el token JWT en el cliente HTTP (en minúscula). */
 export function setAuthToken(token: string | null | undefined) {
-  if (token) {
-    api.defaults.headers.common['authorization'] = `Bearer ${token}`;
+  _token = token ?? null;
+  if (_token) {
+    api.defaults.headers.common['authorization'] = `Bearer ${_token}`;
   } else {
     delete (api.defaults.headers.common as any)['authorization'];
   }
 }
 
+/** Obtiene el token actual guardado por setAuthToken (útil para debug). */
+export function getAuthToken() {
+  return _token;
+}
+
 /** Útil para debug: leer el baseURL actual desde la app */
 export function getApiBaseUrl() {
   return (api.defaults as any).baseURL as string;
+}
+
+/* =================================== AUTH ============================================ */
+/** OTP-first */
+export type RequestOtpBody =
+  | { phone: string; channel?: 'sms' | 'whatsapp'; intent?: 'login' | 'register' }
+  | { email: string; intent?: 'login' | 'register' };
+
+export type RequestOtpResp = {
+  ok: boolean;
+  throttled?: boolean;
+  phoneMasked?: string;
+  devOtp?: string;
+  // UX hints del backend
+  cooldownSeconds?: number;   // p.ej. 60
+  remainingSeconds?: number;  // si responde throttled
+  expiresInSeconds?: number;  // p.ej. 600 (10 min)
+};
+
+export type VerifyOtpBody =
+  | { phone: string; code: string; name?: string; emailEnroll?: string }
+  | { email: string; code: string };
+
+export type VerifyOtpResp = {
+  access_token: string;
+  user: {
+    id: number;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    role: 'USER' | 'ADMIN' | 'BUSINESS';
+    isEmailVerified: boolean;
+    isPhoneVerified: boolean;
+  };
+};
+
+export async function requestOtp(body: RequestOtpBody): Promise<RequestOtpResp> {
+  const { data } = await api.post<RequestOtpResp>('/auth/request-otp', body);
+  return data;
+}
+
+/** Nombre explícito para usar desde AuthContext. */
+export async function verifyOtpApi(body: VerifyOtpBody): Promise<VerifyOtpResp> {
+  const { data } = await api.post<VerifyOtpResp>('/auth/verify-otp', body);
+  return data;
+}
+
+/** Alias de compatibilidad si en alguna parte se importaba `verifyOtp`. */
+export const verifyOtp = verifyOtpApi;
+
+export async function verifyEmail(token: string) {
+  const { data } = await api.post('/auth/verify-email', { token });
+  return data as { ok: boolean };
+}
+
+/** Perfil actual (JWT requerido) */
+export async function getMe(): Promise<VerifyOtpResp['user']> {
+  const { data } = await api.get('/auth/me');
+  return data;
+}
+
+/** Compat legado (hasta migrar todo a OTP-first) */
+export async function loginWithPassword(email: string, password: string): Promise<{ access_token: string }> {
+  const { data } = await api.post('/auth/login', { email, password });
+  return data;
+}
+export async function registerWithPassword(payload: { name: string; email: string; password: string; phone?: string }) {
+  const { data } = await api.post('/auth/register', payload);
+  return data;
+}
+
+/* ============================ Name / Perfil ========================================== */
+export async function updateMe(payload: { name?: string; email?: string }) {
+  const { data } = await api.patch('/users/me', payload);
+  return data;
 }
 
 /* =============================== Productos (paginación) =============================== */
@@ -102,12 +207,7 @@ export async function getProductsPaged(
   const resp = await api.get<Product[]>('/products', {
     params: { q, category, page, limit, sort },
     signal: opts.signal,
-    headers: {
-      // refuerzo no-cache por si hay CDNs intermedios (minúsculas)
-      'cache-control': 'no-cache',
-      pragma: 'no-cache',
-      expires: '0',
-    },
+    headers: { 'cache-control': 'no-cache', pragma: 'no-cache', expires: '0' },
   });
 
   return { items: resp.data ?? [], total: parseTotal(resp.headers as any) };
@@ -130,51 +230,26 @@ export function getNextPageParamFactory(pageSize = 20) {
   };
 }
 
-/** Compatibilidad: devuelve SOLO el array (ignora total). */
-export async function getProducts(
-  params?: GetProductsParams,
-  opts?: RequestOpts
-): Promise<Product[]> {
+/** Compat: devuelve SOLO el array (ignora total). */
+export async function getProducts(params?: GetProductsParams, opts?: RequestOpts): Promise<Product[]> {
   const { items } = await getProductsPaged(params ?? {}, opts ?? {});
   return items;
 }
 
 export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
-  try {
-    const { data } = await api.get<string[]>('/products/categories', {
-      signal: opts.signal,
-    });
-    return Array.isArray(data) ? data : [];
-  } catch (e: any) {
-    if (e?.response?.status === 404) return [];
-    throw e;
-  }
+  const { data } = await api.get<string[]>('/products/categories', { signal: opts.signal });
+  return data ?? [];
 }
 
-/* ============================ Productos (Admin) ======================================= */
-export async function fetchAdminProducts(opts: RequestOpts = {}): Promise<AdminProduct[]> {
-  const { data } = await api.get<AdminProduct[]>('/products/admin', {
-    signal: opts.signal,
-  });
-  return Array.isArray(data) ? data : [];
-}
-
-export type ProductPricePatch = Partial<Pick<AdminProduct, 'price' | 'b2bPrice'>>;
-
-export async function updateProductPricing(
-  productId: number,
-  payload: ProductPricePatch
-): Promise<AdminProduct> {
-  const { data } = await api.patch<AdminProduct>(`/products/${productId}`, payload);
+export async function getProductById(id: number, opts: RequestOpts = {}): Promise<Product> {
+  const { data } = await api.get<Product>(`/products/${id}`, { signal: opts.signal });
   return data;
 }
 
-// ============================ Favoritos =============================================
+/* ================================== Favoritos ========================================= */
 export async function fetchFavorites(opts: RequestOpts = {}): Promise<Product[]> {
-  const { data } = await api.get<Product[]>('/favorites', {
-    signal: opts.signal,
-  });
-  return Array.isArray(data) ? data : [];
+  const { data } = await api.get<Product[]>('/favorites', { signal: opts.signal });
+  return data ?? [];
 }
 
 export async function addFavorite(productId: number): Promise<Product> {
@@ -186,49 +261,63 @@ export async function removeFavorite(productId: number): Promise<void> {
   await api.delete(`/favorites/${productId}`);
 }
 
-/* ============================ Orders (Admin / MyOrders) =============================== */
-export type GetOrdersParams = {
-  status?: 'RECIBIDO' | 'EN_CAMINO' | 'ENTREGADO' | 'CANCELADO';
-  page?: number;   // 1-based
-  limit?: number;  // default 20
-  q?: string;      // id/teléfono si el BE lo soporta
-};
-
-/** Lista de órdenes (resumen) — tipa con tu `Order` si ya lo tienes definido */
-export async function fetchAllOrders(
-  params: GetOrdersParams = {},
-  opts: { signal?: AbortSignal } = {}
-): Promise<Order[]> {
-  const { data } = await api.get<Order[]>('/orders', {
-    params,
-    signal: opts.signal,
-  });
+/* ================================== Direcciones ======================================= */
+export async function getAddresses(opts: RequestOpts = {}): Promise<Address[]> {
+  const { data } = await api.get<Address[]>('/users/addresses', { signal: opts.signal });
   return data ?? [];
 }
 
-// Actualizar estado de una orden (Admin)
+export async function createAddress(payload: Omit<Address, 'id' | 'createdAt' | 'updatedAt'>): Promise<Address> {
+  const { data } = await api.post<Address>('/users/addresses', payload);
+  return data;
+}
+
+export async function updateAddress(
+  id: number,
+  payload: Partial<Omit<Address, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<Address> {
+  const { data } = await api.put<Address>(`/users/addresses/${id}`, payload);
+  return data;
+}
+
+export async function deleteAddress(id: number): Promise<{ ok: boolean }> {
+  const { data } = await api.delete<{ ok: boolean }>(`/users/addresses/${id}`);
+  return data;
+}
+
+/* ===================================== Órdenes ======================================== */
+export async function createOrder(dto: CreateOrderDto): Promise<OrderSuccess> {
+  const { data } = await api.post<OrderSuccess>('/orders', dto);
+  return data;
+}
+
+export async function getMyOrders(opts: RequestOpts = {}): Promise<Order[]> {
+  const { data } = await api.get<Order[]>('/orders/my', { signal: opts.signal });
+  return data ?? [];
+}
+
+export async function getOrderById(orderId: number, opts: RequestOpts = {}): Promise<Order> {
+  const { data } = await api.get<Order>(`/orders/${orderId}`, { signal: opts.signal });
+  return data;
+}
+
+/** Admin/Bodega: cambiar estado (protegido por rol en el backend) */
 export async function updateOrderStatus(orderId: number, status: OrderStatus): Promise<Order> {
-  // Ajusta la ruta si tu backend usa otra (p. ej. '/orders/:id' con body parcial)
   const { data } = await api.patch<Order>(`/orders/${orderId}/status`, { status });
   return data;
 }
 
-/* ============================ US09 — Checkout helpers ================================ */
-/** Direcciones del usuario autenticado (el BE ya filtra por user) */
-export async function fetchAddresses(
-  opts: RequestOpts = {}
-): Promise<Address[]> {
-  const { data } = await api.get<Address[]>('/addresses', {
-    signal: opts.signal,
-  });
-  return data ?? [];
+/* ================================== Admin Products ==================================== */
+export async function adminCreateProduct(payload: Omit<AdminProduct, 'id' | 'createdAt' | 'updatedAt'>) {
+  const { data } = await api.post('/products', payload);
+  return data;
 }
-
-/** Crear la orden en el backend (usa JWT ya configurado en `api`) */
-export async function createOrder(
-  payload: CreateOrderDto
-): Promise<OrderSuccess & { address?: Partial<Address> }> {
-  const { data } = await api.post('/orders', payload);
+export async function adminUpdateProduct(id: number, payload: Partial<AdminProduct>) {
+  const { data } = await api.put(`/products/${id}`, payload);
+  return data;
+}
+export async function adminDeleteProduct(id: number) {
+  const { data } = await api.delete(`/products/${id}`);
   return data;
 }
 

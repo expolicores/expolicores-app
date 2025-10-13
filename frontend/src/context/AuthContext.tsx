@@ -10,161 +10,338 @@ import React, {
 } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
-import { api, setAuthToken } from '../lib/api';
+
+import {
+  api,
+  setAuthToken,
+  getMe as apiGetMe,
+  requestOtp as apiRequestOtp,
+  verifyOtpApi,
+  loginWithPassword as apiLoginWithPassword,
+  type RequestOtpBody,
+  type RequestOtpResp,
+} from '../lib/api';
+
 import type { Me } from '../types/auth';
+
+/** ============================ Tipos del contexto ============================ */
+type OtpChannel = 'sms' | 'whatsapp';
 
 type AuthCtx = {
   booting: boolean;
   isAuthenticated: boolean;
   token: string | null;
-  user: Me | null;                 // Perfil con rol
-  refreshMe: () => Promise<void>;  // Forzar refetch de /auth/me
+  user: Me | null;
+
+  refreshMe: () => Promise<Me | null>;
+
+  // Legado (mientras migramos todo a OTP-first)
   signIn: (email: string, password: string) => Promise<void>;
+
+  // OTP-first
+  requestOtpByPhone: (
+    phone: string,
+    channel?: OtpChannel,
+    intent?: 'login' | 'register'
+  ) => Promise<Pick<RequestOtpResp, 'devOtp' | 'phoneMasked' | 'throttled'>>;
+
+  requestOtpByEmail: (
+    email: string
+  ) => Promise<Pick<RequestOtpResp, 'devOtp' | 'phoneMasked' | 'throttled'>>;
+
+  verifyOtp: (args: {
+    phone?: string;
+    email?: string;
+    code: string;
+    name?: string;
+    emailEnroll?: string;
+  }) => Promise<Me | null>;
+
+  lastPhone: string | null;
+  setLastPhone: (p: string | null) => Promise<void>;
+
+  // ➕ Nuevo: aplazar captura de email (para evitar loop)
+  emailDeferred: boolean;
+  deferEmailPrompt: (defer?: boolean) => Promise<void>;
+
   signOut: () => Promise<void>;
 };
 
+/** ============================ Constantes de storage ============================ */
 const TOKEN_KEY = 'expolicores_token';
+const LAST_PHONE_KEY = 'expolicores_last_phone';
+const emailDeferKey = (userId?: number | null) =>
+  `expolicores_email_deferred_${userId ?? 'anon'}`;
+
+/** ============================ Contexto ============================ */
 const AuthContext = createContext<AuthCtx>({} as any);
 export const useAuth = () => useContext(AuthContext);
 
+/** ============================ Provider ============================ */
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<Me | null>(null);
   const [booting, setBooting] = useState(true);
+  const [lastPhone, setLastPhoneState] = useState<string | null>(null);
 
-  // Evita paralelizar /auth/me
+  // ➕ Nuevo: estado de aplazamiento de email, por usuario
+  const [emailDeferred, setEmailDeferred] = useState<boolean>(false);
+
+  // Evita paralelizar /auth/me o logout múltiples
   const inflightRef = useRef(false);
-  // Evita llamar signOut varias veces ante múltiples 401
   const loggingOutRef = useRef(false);
 
-  /** Trae el perfil actual del backend (si falla, deja user en null). */
-  const refreshMe = useCallback(async () => {
-    if (inflightRef.current) return;
-    inflightRef.current = true;
+  /** ---------- Helpers de aplazamiento email ---------- */
+  const loadEmailDeferredFor = useCallback(async (u?: Me | null) => {
     try {
-      // Si tu cliente ya normaliza anti-cache, no hace falta enviar headers aquí.
-      const r = await api.get<Me>('/auth/me', {
-        headers: {
-          // minúsculas por compat con Axios v1
-          'cache-control': 'no-cache',
-          pragma: 'no-cache',
-          expires: '0',
-        },
-      });
-      setUser(r.data);
+      const raw = await SecureStore.getItemAsync(emailDeferKey(u?.id));
+      setEmailDeferred(raw === '1');
     } catch {
-      setUser(null);
-    } finally {
-      inflightRef.current = false;
+      setEmailDeferred(false);
     }
   }, []);
 
-  // Hidrata token guardado y levanta el perfil al arrancar la app
+  const deferEmailPrompt = useCallback(
+    async (defer: boolean = true) => {
+      setEmailDeferred(defer);
+      try {
+        await SecureStore.setItemAsync(emailDeferKey(user?.id), defer ? '1' : '0');
+      } catch {
+        // noop
+      }
+    },
+    [user?.id]
+  );
+
+  /** ---------- Perfil ---------- */
+  const refreshMe = useCallback(async (): Promise<Me | null> => {
+    if (inflightRef.current) return user ?? null;
+    inflightRef.current = true;
+    try {
+      const data = (await apiGetMe()) as Me;
+      setUser(data);
+      await loadEmailDeferredFor(data);
+      return data;
+    } catch {
+      setUser(null);
+      setEmailDeferred(false);
+      return null;
+    } finally {
+      inflightRef.current = false;
+    }
+  }, [loadEmailDeferredFor, user]);
+
+  /** ---------- Boot: hidratar token y perfil ---------- */
   useEffect(() => {
     (async () => {
       try {
-        const saved = await SecureStore.getItemAsync(TOKEN_KEY);
-        if (saved) {
-          setToken(saved);           // setAuthToken se aplica en el efecto de abajo
-          await refreshMe();         // Perfil fresco (rol incluido)
+        const [savedToken, savedPhone] = await Promise.all([
+          SecureStore.getItemAsync(TOKEN_KEY),
+          SecureStore.getItemAsync(LAST_PHONE_KEY),
+        ]);
+
+        if (savedToken) {
+          // 👇 Asegura header antes de pedir /auth/me
+          setAuthToken(savedToken);
+          setToken(savedToken);
+          await refreshMe();
         }
+        if (savedPhone) setLastPhoneState(savedPhone);
       } finally {
         setBooting(false);
       }
     })();
   }, [refreshMe]);
 
-  // Asegura que SIEMPRE que cambie el token, se refleje en el cliente HTTP
+  /** ---------- Reaplicar auth header cuando cambie el token ---------- */
   useEffect(() => {
     setAuthToken(token || undefined);
   }, [token]);
 
-  // Interceptor 401 → logout limpio (con guard para no repetir)
+  /** ---------- Interceptor 401 global → logout limpio ---------- */
   useEffect(() => {
     const id = api.interceptors.response.use(
       (r) => r,
-      async (err) => {
-        if (err?.response?.status === 401 && token && !loggingOutRef.current) {
+      async (error) => {
+        const status = error?.response?.status ?? 0;
+        if (status === 401 && token && !loggingOutRef.current) {
           try {
             loggingOutRef.current = true;
             await SecureStore.deleteItemAsync(TOKEN_KEY);
             setToken(null);
             setUser(null);
+            setEmailDeferred(false);
             setAuthToken(undefined);
           } finally {
             loggingOutRef.current = false;
           }
         }
-        return Promise.reject(err);
+        return Promise.reject(error);
       }
     );
     return () => api.interceptors.response.eject(id);
   }, [token]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
+  /** ---------- Helpers de persistencia ---------- */
+  const persistToken = useCallback(async (tok: string) => {
     try {
-      const payload = {
-        email: String(email ?? '').trim().toLowerCase(),
-        password: String(password ?? ''),
-      };
-      const { data } = await api.post('/auth/login', payload);
-
-      // Acepta access_token | accessToken | token
-      const tok =
-        (data && (data.access_token ?? data.accessToken ?? data.token)) as string | undefined;
-
-      if (!tok) {
-        console.log('[LOGIN] response sin token', data);
-        throw new Error('Respuesta de login inválida (sin access_token)');
-      }
-
-      try {
-        await SecureStore.setItemAsync(TOKEN_KEY, tok);
-      } catch (err) {
-        console.warn('[SecureStore] setItem error', err);
-      }
-
-      setToken(tok);   // setAuthToken se aplica por el efecto [token]
-      await refreshMe();
-    } catch (e: any) {
-      console.log('LOGIN ERROR →', {
-        message: e?.message,
-        status: e?.response?.status,
-        data: e?.response?.data,
-        baseURL: (api.defaults as any).baseURL,
-      });
-      const serverMsg = e?.response?.data?.message;
-      const msg = serverMsg
-        ? Array.isArray(serverMsg)
-          ? serverMsg.join('\n')
-          : String(serverMsg)
-        : e?.message ?? 'No se pudo iniciar sesión';
-      Alert.alert('Error', msg);
-      throw e;
+      await SecureStore.setItemAsync(TOKEN_KEY, tok);
+    } catch (err) {
+      console.warn('[SecureStore] setItem error', err);
     }
-  }, [refreshMe]);
+    setToken(tok);
+  }, []);
 
+  const setLastPhone = useCallback(async (p: string | null) => {
+    try {
+      if (p) {
+        await SecureStore.setItemAsync(LAST_PHONE_KEY, p);
+      } else {
+        await SecureStore.deleteItemAsync(LAST_PHONE_KEY);
+      }
+      setLastPhoneState(p);
+    } catch (err) {
+      console.warn('[SecureStore] last phone error', err);
+    }
+  }, []);
+
+  /** ---------- Login legado ---------- */
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      try {
+        const { access_token } = await apiLoginWithPassword(
+          String(email ?? '').trim().toLowerCase(),
+          String(password ?? '')
+        );
+        if (!access_token) throw new Error('Respuesta de login inválida (sin access_token)');
+        await persistToken(access_token);
+        await refreshMe();
+      } catch (e: any) {
+        const msg =
+          e?.message ||
+          (typeof e?.details?.message === 'string' ? e.details.message : 'No se pudo iniciar sesión');
+        Alert.alert('Error', msg);
+        throw e;
+      }
+    },
+    [persistToken, refreshMe]
+  );
+
+  /** ---------- OTP-first ---------- */
+  const requestOtpCore = useCallback(
+    async (body: RequestOtpBody): Promise<Pick<RequestOtpResp, 'devOtp' | 'phoneMasked' | 'throttled'>> => {
+      try {
+        const res = await apiRequestOtp(body);
+        if ((body as any).phone) await setLastPhone((body as any).phone);
+        return {
+          devOtp: res.devOtp,
+          phoneMasked: res.phoneMasked,
+          throttled: res.throttled,
+        };
+      } catch (e: any) {
+        const msg =
+          e?.message ||
+          (typeof e?.details?.message === 'string' ? e.details.message : null) ||
+          'No pudimos enviar el código. Intenta de nuevo.';
+        Alert.alert('Error', msg);
+        throw e;
+      }
+    },
+    [setLastPhone]
+  );
+
+  const requestOtpByPhone: AuthCtx['requestOtpByPhone'] = useCallback(
+    async (phone, channel = 'whatsapp', intent = 'login') => {
+      return requestOtpCore({ phone, channel, intent } as any);
+    },
+    [requestOtpCore]
+  );
+
+  const requestOtpByEmail: AuthCtx['requestOtpByEmail'] = useCallback(
+    async (email) => {
+      return requestOtpCore({ email, intent: 'login' } as any);
+    },
+    [requestOtpCore]
+  );
+
+  const verifyOtp: AuthCtx['verifyOtp'] = useCallback(
+    async (args) => {
+      try {
+        const { access_token, user: partial } = await verifyOtpApi(args);
+        if (!access_token) throw new Error('Respuesta inválida (sin access_token)');
+        await persistToken(access_token);
+
+        if (partial) {
+          setUser(partial as Me);
+          await loadEmailDeferredFor(partial as Me);
+          return partial as Me;
+        } else {
+          const me = await refreshMe();
+          return me;
+        }
+      } catch (e: any) {
+        const msg =
+          e?.message ||
+          (typeof e?.details?.message === 'string' ? e.details.message : null) ||
+          'Código inválido o expirado.';
+        Alert.alert('Error', msg);
+        throw e;
+      }
+    },
+    [persistToken, refreshMe, loadEmailDeferredFor]
+  );
+
+  /** ---------- Logout ---------- */
   const signOut = useCallback(async () => {
     try {
       await SecureStore.deleteItemAsync(TOKEN_KEY);
     } finally {
       setToken(null);
       setUser(null);
+      setEmailDeferred(false);
       setAuthToken(undefined);
     }
   }, []);
 
+  /** ---------- Value ---------- */
   const value = useMemo<AuthCtx>(
     () => ({
       booting,
       isAuthenticated: !!token,
       token,
       user,
+
       refreshMe,
+
       signIn,
+
+      requestOtpByPhone,
+      requestOtpByEmail,
+      verifyOtp,
+
+      lastPhone,
+      setLastPhone,
+
+      emailDeferred,
+      deferEmailPrompt,
+
       signOut,
     }),
-    [booting, token, user, refreshMe, signIn, signOut]
+    [
+      booting,
+      token,
+      user,
+      refreshMe,
+      signIn,
+      requestOtpByPhone,
+      requestOtpByEmail,
+      verifyOtp,
+      lastPhone,
+      setLastPhone,
+      emailDeferred,
+      deferEmailPrompt,
+      signOut,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

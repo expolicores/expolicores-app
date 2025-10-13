@@ -51,6 +51,7 @@ export function useFavorites() {
       });
 
       const productQueries = queryClient.getQueriesData({ queryKey: ['products'] });
+      const previousProducts = productQueries.map(([key, value]) => [key, value] as const);
       productQueries.forEach(([key, value]) => {
         if (!value) return;
         const data = value as InfiniteData<{ items: Product[]; nextPage?: number | null }>;
@@ -66,21 +67,27 @@ export function useFavorites() {
         queryClient.setQueryData(key, updated);
       });
 
+      const previousProductDetail = queryClient.getQueryData(['product', product.id]);
+
       queryClient.setQueryData(['product', product.id], (old: any) => {
         if (!old) return old;
         return { ...old, isFavorite: shouldAdd };
       });
 
-      return { previousFavorites };
+      return { previousFavorites, previousProducts, previousProductDetail, productId: product.id };
     },
     onError: (_err, _vars, context) => {
-      if (context?.previousFavorites) {
-        queryClient.setQueryData(['favorites'], context.previousFavorites);
+      if (!context) return;
+      queryClient.setQueryData(['favorites'], context.previousFavorites);
+      context.previousProducts.forEach(([key, value]) => {
+        queryClient.setQueryData(key, value);
+      });
+      if (context.previousProductDetail !== undefined && context.productId != null) {
+        queryClient.setQueryData(['product', context.productId], context.previousProductDetail);
       }
     },
     onSettled: (_res, _err, { product }) => {
       queryClient.invalidateQueries({ queryKey: ['favorites'] });
-      queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['product', product.id] });
     },
   });

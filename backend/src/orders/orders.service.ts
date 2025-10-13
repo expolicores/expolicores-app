@@ -51,7 +51,9 @@ export class OrdersService {
       },
     });
     if (!address) throw new NotFoundException('ADDRESS_NOT_FOUND');
-    if (address.lat == null || address.lng == null) throw new BadRequestException('ADDRESS_MISSING_GEO');
+    if (address.lat == null || address.lng == null) {
+      throw new BadRequestException('ADDRESS_MISSING_GEO');
+    }
 
     const km = haversineKm(
       { lat: this.shipping.store.lat, lng: this.shipping.store.lng },
@@ -70,7 +72,7 @@ export class OrdersService {
 
     const byId = new Map(products.map((p) => [p.id, p]));
     let subtotal = 0;
-    const usesB2B = user.role === Role.NEGOCIO || user.role === Role.ADMIN;
+    const usesB2B = user.role === Role.BUSINESS || user.role === Role.ADMIN; // 👈 reemplazo NEGOCIO→BUSINESS
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
       if (p.stock < it.quantity) throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
@@ -160,9 +162,7 @@ export class OrdersService {
       where: { id: { in: ids } },
       select: { id: true, price: true, b2bPrice: true },
     });
-    const priceMap = new Map(
-      products.map((p) => [p.id, useB2B ? p.b2bPrice : p.price]),
-    );
+    const priceMap = new Map(products.map((p) => [p.id, useB2B ? p.b2bPrice : p.price]));
     return items.reduce((sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
   }
 
@@ -171,11 +171,15 @@ export class OrdersService {
   }
 
   async findMine(userId: number) {
-    return this.prisma.order.findMany({ where: { userId }, orderBy: { id: 'desc' }, include: this.orderInclude });
+    return this.prisma.order.findMany({
+      where: { userId },
+      orderBy: { id: 'desc' },
+      include: this.orderInclude,
+    });
   }
 
   async findOneAs(id: number, user: { id: number; role: Role }) {
-    const where = user.role === 'ADMIN' ? { id } : { id, userId: user.id };
+    const where = user.role === Role.ADMIN ? { id } : { id, userId: user.id }; // 👈 usa enum Role
     const order = await this.prisma.order.findFirst({ where, include: this.orderInclude });
     if (!order) throw new NotFoundException('Order not found');
     return order;
@@ -208,7 +212,9 @@ export class OrdersService {
       select: { user: { select: { role: true } } },
     });
     if (!existing) throw new NotFoundException(`Order with ID ${id} not found`);
-    const usesB2B = existing.user?.role === Role.NEGOCIO || existing.user?.role === Role.ADMIN;
+
+    const usesB2B =
+      existing.user?.role === Role.BUSINESS || existing.user?.role === Role.ADMIN; // 👈 reemplazo NEGOCIO→BUSINESS
 
     let totalUpdate: number | undefined;
     if (items) {

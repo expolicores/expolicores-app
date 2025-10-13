@@ -1,6 +1,0 @@
-ALTER TABLE "Product" ADD COLUMN "b2bPrice" INTEGER;
-
-UPDATE "Product" SET "b2bPrice" = "price";
-
-ALTER TABLE "Product" ALTER COLUMN "b2bPrice" SET NOT NULL;
-ALTER TABLE "Product" ALTER COLUMN "b2bPrice" SET DEFAULT 0;
