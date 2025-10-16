@@ -79,6 +79,36 @@ model Order {
   notifications NotificationLog[]
 }
 
+model NotificationLog {
+  id         Int       @id @default(autoincrement())
+
+  // Relación con Order (opcional para callbacks “sueltos”)
+  orderId    Int?
+  order      Order?    @relation(fields: [orderId], references: [id])
+
+  // Datos de envío
+  type       String              // p.ej. "ORDER_CONFIRMATION", "STATUS_ENTREGADO", "STATUS_CALLBACK"
+  to         String?             // "whatsapp:+57..." o "+57..." si SMS
+  ok         Boolean   @default(false)
+  sid        String?
+  error      String?
+
+  // Trazabilidad Twilio
+  channel    String?             // "whatsapp" | "sms"
+  messageSid String?
+  errorCode  String?
+  payload    Json?
+
+  createdAt  DateTime  @default(now())
+
+  // Idempotencia por orden+tipo
+  @@unique([orderId, type], map: "orderId_type")
+
+  // Búsqueda por MessageSid
+  @@index([messageSid])
+}
+
+// (tu modelo Product puede quedar tal cual)
 model Product {
   id          Int      @id @default(autoincrement())
   name        String
@@ -91,8 +121,8 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  orderItems OrderItem[]
-  favorites  Favorite[]
+  orderItems  OrderItem[]
+  favorites   Favorite[]
 
   @@index([category])
 }
@@ -127,24 +157,6 @@ model Address {
   updatedAt    DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id])
-}
-
-model NotificationLog {
-  id      Int   @id @default(autoincrement())
-  orderId Int
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  channel String  @default("WHATSAPP") // por si luego agregas email/sms
-  type    String // "ORDER_CREATED" | "STATUS_EN_CAMINO" | "STATUS_ENTREGADO" | "STATUS_CANCELADO"
-  sid     String? // SID Twilio
-  ok      Boolean
-  error   String?
-  to      String? // E.164 destino
-
-  createdAt DateTime @default(now())
-
-  @@unique([orderId, type]) // evita duplicados del mismo tipo por orden
-  @@index([orderId, createdAt])
 }
 
 model Favorite {

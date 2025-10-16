@@ -1,5 +1,6 @@
 // src/screens/ProfileScreen.tsx
 import React, { useEffect, useMemo } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,

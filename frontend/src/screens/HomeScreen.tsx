@@ -1,10 +1,11 @@
 // src/screens/HomeScreen.tsx
 import React, { useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, Pressable, StyleSheet} from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 // Feature flag (futuro: Restaurantes)
 const RESTAURANTS_ENABLED =

@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { PrismaModule } from '../prisma/prisma.module';
 import { WhatsAppModule } from '../notifications/whatsapp.module';
+import { NotificationsModule } from '../notifications/notifications.module'; // ⬅️ agrega SmsService (exportado)
 
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -14,7 +15,7 @@ import { RolesGuard } from './guards/roles.guard';
 
 @Module({
   imports: [
-    // Carga .env a nivel global (si ya está en AppModule, puedes quitar este bloque aquí)
+    // Si ConfigModule ya es global en AppModule, puedes quitar este bloque.
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -23,6 +24,7 @@ import { RolesGuard } from './guards/roles.guard';
 
     PrismaModule,
     WhatsAppModule,
+    NotificationsModule, // ⬅️ necesario para inyectar SmsService en AuthService
 
     PassportModule.register({ defaultStrategy: 'jwt' }),
 

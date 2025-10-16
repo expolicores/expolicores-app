@@ -1,11 +1,13 @@
 ﻿// frontend/src/screens/OtpCodeScreen.tsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { ENV } from '../config/env';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Linking } from 'react-native';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Alert,
   ActivityIndicator,
@@ -44,7 +46,7 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
     if (phoneMasked) return `Enviado a ${phoneMasked}`;
     if (phone) return `Enviado a ${phone}`;
     if (email) return `Enviado al celular asociado a ${email}`;
-    return 'Ingresa el codigo recibido';
+    return 'Ingresa el código recibido';
   }, [phone, email, phoneMasked]);
 
   useEffect(() => {
@@ -68,9 +70,7 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
     isSubmittingRef.current = true;
     setLoading(true);
     try {
-      const me = await verifyOtp(
-        email ? { email, code } : { phone, code }
-      );
+      const me = await verifyOtp(email ? { email, code } : { phone, code });
 
       if (!me) throw new Error('No se pudo obtener el usuario');
 
@@ -83,12 +83,7 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
       if (intent === 'register' || !hasName) {
         navigation.reset({
           index: 0,
-          routes: [
-            {
-              name: 'Name' as never,
-              params: { phone, email } as never,
-            },
-          ],
+          routes: [{ name: 'Name' as never, params: { phone, email } as never }],
         });
         return;
       }
@@ -96,26 +91,28 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
       if (!hasEmail) {
         navigation.reset({
           index: 0,
-          routes: [{
-            name: 'EmailOptional' as never,
-            params: {
-              phone,
-              email,
-              name: normalizedName || undefined,
-              fromOtp: true,
-            } as never,
-          }],
+          routes: [
+            {
+              name: 'EmailOptional' as never,
+              params: {
+                phone,
+                email,
+                name: normalizedName || undefined,
+                fromOtp: true,
+              } as never,
+            },
+          ],
         });
         return;
       }
 
-      // Ruta feliz: a Home/Catalog/Market (elige la que uses)
+      // Ruta feliz
       navigation.reset({ index: 0, routes: [{ name: 'Home' as never }] });
     } catch (e: any) {
       const msg =
         e?.message ||
         (typeof e?.details?.message === 'string' ? e.details.message : null) ||
-        'codigo invalido o expirado.';
+        'Código inválido o expirado.';
       Alert.alert('Error', msg);
     } finally {
       setLoading(false);
@@ -123,11 +120,11 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
     }
   };
 
-  const onResend = async () => {
+  const onResend = async (channel: 'whatsapp' | 'sms' = 'whatsapp') => {
     if (cooldown > 0 || loading) return;
     setLoading(true);
     try {
-      const res: any = await requestOtp({ phone, email, intent });
+      const res: any = await requestOtp({ phone, email, intent, channel });
 
       if (isDev && res?.devOtp?.length === 6) setCode(res.devOtp);
 
@@ -142,11 +139,17 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
       const msg =
         e?.message ||
         (typeof e?.details?.message === 'string' ? e.details.message : null) ||
-        'No pudimos reenviar el codigo. Intenta de nuevo.';
+        'No pudimos reenviar el código. Intenta de nuevo.';
       Alert.alert('Error', msg);
     } finally {
       setLoading(false);
     }
+  };
+
+  const onOpenWhatsAppSupport = () => {
+    if (!ENV.WABA_NUMBER) return;
+    const waNum = ENV.WABA_NUMBER.replace('+', '');
+    Linking.openURL(`https://wa.me/${waNum}`);
   };
 
   const disabled = code.length !== 6 || loading;
@@ -160,12 +163,12 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
       >
         <View style={{ padding: 24, flex: 1 }}>
           <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 8 }}>
-            Ingresa el codigo de 6 digitos
+            Ingresa el código de 6 dígitos
           </Text>
 
           <Text style={{ color: '#6B7280', marginBottom: 4 }}>{destinationText}</Text>
           <Text style={{ color: '#9CA3AF', marginBottom: 16 }}>
-            El codigo expira en {Math.ceil(expiresInSeconds / 60)} min.
+            El código expira en {Math.ceil(expiresInSeconds / 60)} min.
           </Text>
 
           <TextInput
@@ -215,20 +218,45 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
             )}
           </TouchableOpacity>
 
+          {/* Reenviar por WhatsApp */}
           <TouchableOpacity
             disabled={cooldown > 0 || loading}
-            onPress={onResend}
+            onPress={() => onResend('whatsapp')}
             style={{ padding: 12 }}
           >
             <Text style={{ textAlign: 'center', color: cooldown > 0 ? '#9CA3AF' : '#2563EB' }}>
-              {cooldown > 0 ? `Reenviar codigo (${cooldown}s)` : 'Reenviar codigo'}
+              {cooldown > 0 ? `Reenviar código (${cooldown}s)` : 'Reenviar código'}
             </Text>
           </TouchableOpacity>
+
+          {/* Opcional: Reenviar por SMS si la feature está activa */}
+          {ENV.FEATURE_SMS && (
+            <TouchableOpacity
+              disabled={cooldown > 0 || loading}
+              onPress={() => onResend('sms')}
+              style={{ padding: 8 }}
+            >
+              <Text style={{ textAlign: 'center', color: cooldown > 0 ? '#9CA3AF' : '#2563EB' }}>
+                {cooldown > 0 ? `Recibir por SMS (${cooldown}s)` : 'Recibir el código por SMS'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Acción: abrir WhatsApp al WABA de soporte */}
+          {ENV.WABA_NUMBER ? (
+            <View style={{ marginTop: 12, alignItems: 'center' }}>
+              <TouchableOpacity onPress={onOpenWhatsAppSupport} style={{ paddingVertical: 8 }}>
+                <Text style={{ color: '#059669', fontWeight: '600' }}>
+                  ¿No te llegó? Escríbenos por WhatsApp
+                </Text>
+              </TouchableOpacity>
+              <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 4 }}>
+                Te atenderemos en {ENV.WABA_NUMBER}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-
-
-

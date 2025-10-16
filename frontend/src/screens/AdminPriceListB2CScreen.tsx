@@ -1,4 +1,5 @@
 import { createAdminPriceListScreen } from './AdminPriceListBase';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const AdminPriceListB2CScreen = createAdminPriceListScreen({
   priceKey: 'price',

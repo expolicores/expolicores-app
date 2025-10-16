@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { View, Text, FlatList, Button, TouchableOpacity } from 'react-native';
 import { listAddresses, updateAddress, deleteAddress } from '../lib/api.addresses';
 import type { Address } from '../types/address';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function AddressListScreen({ navigation }: any) {
   const [items, setItems] = useState<Address[]>([]);

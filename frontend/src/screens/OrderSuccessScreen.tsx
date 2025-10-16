@@ -2,6 +2,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();

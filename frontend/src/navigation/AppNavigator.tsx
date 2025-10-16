@@ -101,7 +101,7 @@ function AddressesNavigator() {
       <AddressStack.Screen
         name="AddressForm"
         component={AddressFormScreen}
-        options={{ title: 'Nueva direccion' }}
+        options={{ title: 'Nueva dirección' }}
       />
     </AddressStack.Navigator>
   );
@@ -155,13 +155,22 @@ export default function AppNavigator() {
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       {user?.role === 'ADMIN' ? (
         <>
-          <Pressable onPress={() => navigation.navigate('AdminPriceListB2C')} style={{ paddingHorizontal: 6 }}>
+          <Pressable
+            onPress={() => navigation.navigate('AdminPriceListB2C')}
+            style={{ paddingHorizontal: 6 }}
+          >
             <Ionicons name="pricetag-outline" size={22} color="#111" />
           </Pressable>
-          <Pressable onPress={() => navigation.navigate('AdminPriceListB2B')} style={{ paddingHorizontal: 6 }}>
+          <Pressable
+            onPress={() => navigation.navigate('AdminPriceListB2B')}
+            style={{ paddingHorizontal: 6 }}
+          >
             <Ionicons name="pricetags-outline" size={22} color="#111" />
           </Pressable>
-          <Pressable onPress={() => navigation.navigate('AdminOrders')} style={{ paddingHorizontal: 6 }}>
+          <Pressable
+            onPress={() => navigation.navigate('AdminOrders')}
+            style={{ paddingHorizontal: 6 }}
+          >
             <Ionicons name="clipboard-outline" size={22} color="#111" />
           </Pressable>
         </>
@@ -177,14 +186,22 @@ export default function AppNavigator() {
     <NavigationContainer>
       {isAuthenticated ? (
         <RootStack.Navigator
-          initialRouteName="Home" // ✅ Garantiza que pase por el Gate
-          screenOptions={{ headerBackTitle: 'Atras' }}
+          initialRouteName="Home" // <- pasa por el gate siempre
+          screenOptions={{ headerBackTitle: 'Atrás' }}
         >
           {/* Gate decide el onboarding pendiente */}
-          <RootStack.Screen name="Home" component={PostAuthGate} options={{ headerShown: false }} />
+          <RootStack.Screen
+            name="Home"
+            component={PostAuthGate}
+            options={{ headerShown: false }}
+          />
 
           {/* Onboarding post-OTP */}
-          <RootStack.Screen name="Name" component={NameScreen} options={{ headerShown: false }} />
+          <RootStack.Screen
+            name="Name"
+            component={NameScreen}
+            options={{ headerShown: false }}
+          />
           <RootStack.Screen
             name="EmailOptional"
             component={EmailOptionalScreen}
@@ -277,18 +294,24 @@ export default function AppNavigator() {
               headerRight: () => headerRightCommon(navigation),
             })}
           />
-          <RootStack.Screen name="OrderTracking" component={OrderTrackingScreen} options={{ title: 'Estado del pedido' }} />
+          <RootStack.Screen
+            name="OrderTracking"
+            component={OrderTrackingScreen}
+            options={{ title: 'Estado del pedido' }}
+          />
 
           {/* CHECKOUT */}
           <RootStack.Screen name="Checkout" component={CheckoutScreen} options={{ title: 'Checkout' }} />
           <RootStack.Screen name="OrderSuccess" component={OrderSuccessScreen} options={{ title: 'Pedido creado' }} />
         </RootStack.Navigator>
       ) : (
-        <RootStack.Navigator initialRouteName="AuthChooser" screenOptions={{ headerBackTitle: 'Atras' }}>
+        <RootStack.Navigator initialRouteName="AuthChooser" screenOptions={{ headerBackTitle: 'Atrás' }}>
           {/* Auth flow (celular primero) */}
           <RootStack.Screen name="AuthChooser" component={AuthChooserScreen} options={{ headerShown: false }} />
-          <RootStack.Screen name="PhoneEntry" component={PhoneEntryScreen} options={{ title: 'Ingresa tu numero' }} />
-          <RootStack.Screen name="OtpCode" component={OtpCodeScreen} options={{ title: 'Codigo de verificacion' }} />
+          <RootStack.Screen name="PhoneEntry" component={PhoneEntryScreen} options={{ title: 'Ingresa tu número' }} />
+          <RootStack.Screen name="OtpCode" component={OtpCodeScreen} options={{ title: 'Código de verificación' }} />
+          {/* También permitimos Name/EmailOptional en el stack de no autenticado
+              por si el flujo se rehidrata en medio del onboarding */}
           <RootStack.Screen name="Name" component={NameScreen} options={{ headerShown: false }} />
           <RootStack.Screen
             name="EmailOptional"

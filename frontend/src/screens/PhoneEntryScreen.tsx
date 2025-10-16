@@ -1,11 +1,11 @@
 ﻿// frontend/src/screens/PhoneEntryScreen.tsx
 import React, { useMemo, useRef, useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Alert,
 } from 'react-native';

@@ -19,6 +19,7 @@ import { statusLabel } from '../lib/orderStatus';
 import StatusBadge from '../components/StatusBadge';
 import type { AxiosError } from 'axios';
 import type { OrderStatus, OrderWithUser } from '../types/order';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
 

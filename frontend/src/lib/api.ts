@@ -1,23 +1,40 @@
 // frontend/src/lib/api.ts
-import axios, { AxiosError, type AxiosInstance, type AxiosRequestHeaders } from 'axios';
+import axios, {
+  AxiosError,
+  type AxiosInstance,
+  type AxiosRequestHeaders,
+} from 'axios';
 import { Platform } from 'react-native';
+import { ENV } from '../config/env';
 
 // Tipos existentes en tu repo
 import type { Product, AdminProduct } from '../types/product';
 import type { Address } from '../types/address';
-import type { CreateOrderDto, OrderSuccess, Order, OrderStatus } from '../types/order';
+import type {
+  CreateOrderDto,
+  OrderSuccess,
+  Order,
+  OrderStatus,
+} from '../types/order';
 
 /* ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================ */
-export const API_BASE_URL =
-  (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim() ||
+/**
+ * ENV.API_URL debe venir de EXPO_PUBLIC_API_URL (o BASE_URL en tu env.ts).
+ * Si por alguna razón no está definido, aplicamos un fallback útil de dev.
+ */
+const API_BASE_URL =
+  (ENV.API_URL as string | undefined)?.trim() ||
   (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');
 
-console.log('[API] baseURL =', API_BASE_URL);
+const API_TIMEOUT_MS = Number(ENV.API_TIMEOUT_MS ?? 15000);
+
+// Log inicial una sola vez para verificar baseURL/timeout
+console.log('[API] baseURL =', API_BASE_URL, 'timeout =', API_TIMEOUT_MS);
 
 /* ============================== Axios instance ======================================== */
 export const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: API_TIMEOUT_MS,
   headers: {
     accept: 'application/json',
     'content-type': 'application/json',
@@ -38,6 +55,26 @@ function toLowercaseHeaders(h?: any): AxiosRequestHeaders {
   return out;
 }
 
+/* =========================== Interceptor de REQUEST (saneado) ========================== */
+/**
+ * - Sigue reforzando anti-cache.
+ * - Dedupe de logs (evita spam de la misma ruta en una ventana corta).
+ * - Oculta rutas ruidosas como /auth/me salvo que el flag esté en "verbose".
+ * - Controlado por flags (EXPO_PUBLIC_DEBUG_HTTP, EXPO_PUBLIC_DEBUG_HTTP_LEVEL).
+ */
+const DEBUG_HTTP =
+  (ENV as any).DEBUG_HTTP ??
+  ((process.env.EXPO_PUBLIC_DEBUG_HTTP ?? 'false') === 'true');
+const DEBUG_HTTP_VERBOSITY =
+  (ENV as any).DEBUG_HTTP_VERBOSITY ??
+  String(process.env.EXPO_PUBLIC_DEBUG_HTTP_LEVEL ?? 'normal'); // "normal" | "verbose"
+
+const lastLogAt: Record<string, number> = {};
+const DEDUPE_MS = 800;
+
+// Rutas ruidosas que no queremos loguear en "normal"
+const NOISY_PATHS = [/^\/auth\/me$/, /^\/orders\/my$/];
+
 api.interceptors.request.use((config) => {
   const normalized = toLowercaseHeaders(config.headers);
 
@@ -53,10 +90,34 @@ api.interceptors.request.use((config) => {
   }
 
   config.headers = normalized;
-  if (__DEV__) console.log('[API] ->', method, config.url, 'auth:', !!normalized['authorization']);
+
+  // === Logging controlado y deduplicado ===
+  if (DEBUG_HTTP) {
+    const path = (config.url || '').split('?')[0];
+    const isNoisy = NOISY_PATHS.some((re) => re.test(path));
+    const now = Date.now();
+    const key = `${method} ${path}`;
+    const tooSoon = now - (lastLogAt[key] || 0) < DEDUPE_MS;
+
+    // En modo "normal" no logueamos rutas ruidosas; en "verbose" sí
+    if (!isNoisy || DEBUG_HTTP_VERBOSITY === 'verbose') {
+      if (!tooSoon) {
+        console.log(
+          '[API] ->',
+          method,
+          config.url,
+          'auth:',
+          !!normalized['authorization'],
+        );
+        lastLogAt[key] = now;
+      }
+    }
+  }
+
   return config;
 });
 
+/* =========================== Interceptor de RESPONSE (errores) ========================= */
 // Normalización de errores en una forma consistente
 export type ApiErrorShape = {
   status: number;
@@ -70,13 +131,15 @@ api.interceptors.response.use(
     const status = err.response?.status ?? 0;
     const data: any = err.response?.data ?? {};
     const message =
-      (Array.isArray(data?.message) ? data.message.join(', ') : data?.message) ||
+      (Array.isArray(data?.message)
+        ? data.message.join(', ')
+        : data?.message) ||
       err.message ||
       'Error de red';
     const apiErr: ApiErrorShape = { status, message, details: data };
     if (__DEV__) console.warn('[API ERROR]', apiErr);
     return Promise.reject(apiErr);
-  }
+  },
 );
 
 /* ============================ Auth header plumbing ==================================== */
@@ -105,7 +168,11 @@ export function getApiBaseUrl() {
 /* =================================== AUTH ============================================ */
 /** OTP-first */
 export type RequestOtpBody =
-  | { phone: string; channel?: 'sms' | 'whatsapp'; intent?: 'login' | 'register' }
+  | {
+      phone: string;
+      channel?: 'sms' | 'whatsapp';
+      intent?: 'login' | 'register';
+    }
   | { email: string; intent?: 'login' | 'register' };
 
 export type RequestOtpResp = {
@@ -114,9 +181,9 @@ export type RequestOtpResp = {
   phoneMasked?: string;
   devOtp?: string;
   // UX hints del backend
-  cooldownSeconds?: number;   // p.ej. 60
-  remainingSeconds?: number;  // si responde throttled
-  expiresInSeconds?: number;  // p.ej. 600 (10 min)
+  cooldownSeconds?: number; // p.ej. 60
+  remainingSeconds?: number; // si responde throttled
+  expiresInSeconds?: number; // p.ej. 600 (10 min)
 };
 
 export type VerifyOtpBody =
@@ -136,13 +203,17 @@ export type VerifyOtpResp = {
   };
 };
 
-export async function requestOtp(body: RequestOtpBody): Promise<RequestOtpResp> {
+export async function requestOtp(
+  body: RequestOtpBody,
+): Promise<RequestOtpResp> {
   const { data } = await api.post<RequestOtpResp>('/auth/request-otp', body);
   return data;
 }
 
 /** Nombre explícito para usar desde AuthContext. */
-export async function verifyOtpApi(body: VerifyOtpBody): Promise<VerifyOtpResp> {
+export async function verifyOtpApi(
+  body: VerifyOtpBody,
+): Promise<VerifyOtpResp> {
   const { data } = await api.post<VerifyOtpResp>('/auth/verify-otp', body);
   return data;
 }
@@ -162,11 +233,19 @@ export async function getMe(): Promise<VerifyOtpResp['user']> {
 }
 
 /** Compat legado (hasta migrar todo a OTP-first) */
-export async function loginWithPassword(email: string, password: string): Promise<{ access_token: string }> {
+export async function loginWithPassword(
+  email: string,
+  password: string,
+): Promise<{ access_token: string }> {
   const { data } = await api.post('/auth/login', { email, password });
   return data;
 }
-export async function registerWithPassword(payload: { name: string; email: string; password: string; phone?: string }) {
+export async function registerWithPassword(payload: {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+}) {
   const { data } = await api.post('/auth/register', payload);
   return data;
 }
@@ -200,7 +279,7 @@ type RequestOpts = { signal?: AbortSignal };
 /** Devuelve items + total (leído de X-Total-Count). Úsalo para infinite scroll. */
 export async function getProductsPaged(
   params: GetProductsParams = {},
-  opts: RequestOpts = {}
+  opts: RequestOpts = {},
 ): Promise<ProductList> {
   const { q, category, page = 1, limit = 20, sort = 'newest' } = params;
 
@@ -218,7 +297,7 @@ export function getNextPageParamFactory(pageSize = 20) {
   return (
     lastPage: ProductList,
     allPages: ProductList[],
-    lastPageParam?: number
+    lastPageParam?: number,
   ) => {
     const loaded = allPages.reduce((acc, p) => acc + p.items.length, 0);
     if (loaded < lastPage.total) {
@@ -231,24 +310,40 @@ export function getNextPageParamFactory(pageSize = 20) {
 }
 
 /** Compat: devuelve SOLO el array (ignora total). */
-export async function getProducts(params?: GetProductsParams, opts?: RequestOpts): Promise<Product[]> {
+export async function getProducts(
+  params?: GetProductsParams,
+  opts?: RequestOpts,
+): Promise<Product[]> {
   const { items } = await getProductsPaged(params ?? {}, opts ?? {});
   return items;
 }
 
-export async function getCategories(opts: RequestOpts = {}): Promise<string[]> {
-  const { data } = await api.get<string[]>('/products/categories', { signal: opts.signal });
+export async function getCategories(
+  opts: RequestOpts = {},
+): Promise<string[]> {
+  const { data } = await api.get<string[]>('/products/categories', {
+    signal: opts.signal,
+  });
   return data ?? [];
 }
 
-export async function getProductById(id: number, opts: RequestOpts = {}): Promise<Product> {
-  const { data } = await api.get<Product>(`/products/${id}`, { signal: opts.signal });
+export async function getProductById(
+  id: number,
+  opts: RequestOpts = {},
+): Promise<Product> {
+  const { data } = await api.get<Product>(`/products/${id}`, {
+    signal: opts.signal,
+  });
   return data;
 }
 
 /* ================================== Favoritos ========================================= */
-export async function fetchFavorites(opts: RequestOpts = {}): Promise<Product[]> {
-  const { data } = await api.get<Product[]>('/favorites', { signal: opts.signal });
+export async function fetchFavorites(
+  opts: RequestOpts = {},
+): Promise<Product[]> {
+  const { data } = await api.get<Product[]>('/favorites', {
+    signal: opts.signal,
+  });
   return data ?? [];
 }
 
@@ -262,57 +357,88 @@ export async function removeFavorite(productId: number): Promise<void> {
 }
 
 /* ================================== Direcciones ======================================= */
-export async function getAddresses(opts: RequestOpts = {}): Promise<Address[]> {
-  const { data } = await api.get<Address[]>('/users/addresses', { signal: opts.signal });
+export async function getAddresses(
+  opts: RequestOpts = {},
+): Promise<Address[]> {
+  const { data } = await api.get<Address[]>('/users/addresses', {
+    signal: opts.signal,
+  });
   return data ?? [];
 }
 
-export async function createAddress(payload: Omit<Address, 'id' | 'createdAt' | 'updatedAt'>): Promise<Address> {
+export async function createAddress(
+  payload: Omit<Address, 'id' | 'createdAt' | 'updatedAt'>,
+): Promise<Address> {
   const { data } = await api.post<Address>('/users/addresses', payload);
   return data;
 }
 
 export async function updateAddress(
   id: number,
-  payload: Partial<Omit<Address, 'id' | 'createdAt' | 'updatedAt'>>
+  payload: Partial<Omit<Address, 'id' | 'createdAt' | 'updatedAt'>>,
 ): Promise<Address> {
   const { data } = await api.put<Address>(`/users/addresses/${id}`, payload);
   return data;
 }
 
-export async function deleteAddress(id: number): Promise<{ ok: boolean }> {
-  const { data } = await api.delete<{ ok: boolean }>(`/users/addresses/${id}`);
+export async function deleteAddress(
+  id: number,
+): Promise<{ ok: boolean }> {
+  const { data } = await api.delete<{ ok: boolean }>(
+    `/users/addresses/${id}`,
+  );
   return data;
 }
 
 /* ===================================== Órdenes ======================================== */
-export async function createOrder(dto: CreateOrderDto): Promise<OrderSuccess> {
+export async function createOrder(
+  dto: CreateOrderDto,
+): Promise<OrderSuccess> {
   const { data } = await api.post<OrderSuccess>('/orders', dto);
   return data;
 }
 
-export async function getMyOrders(opts: RequestOpts = {}): Promise<Order[]> {
-  const { data } = await api.get<Order[]>('/orders/my', { signal: opts.signal });
+export async function getMyOrders(
+  opts: RequestOpts = {},
+): Promise<Order[]> {
+  const { data } = await api.get<Order[]>('/orders/my', {
+    signal: opts.signal,
+  });
   return data ?? [];
 }
 
-export async function getOrderById(orderId: number, opts: RequestOpts = {}): Promise<Order> {
-  const { data } = await api.get<Order>(`/orders/${orderId}`, { signal: opts.signal });
+export async function getOrderById(
+  orderId: number,
+  opts: RequestOpts = {},
+): Promise<Order> {
+  const { data } = await api.get<Order>(`/orders/${orderId}`, {
+    signal: opts.signal,
+  });
   return data;
 }
 
 /** Admin/Bodega: cambiar estado (protegido por rol en el backend) */
-export async function updateOrderStatus(orderId: number, status: OrderStatus): Promise<Order> {
-  const { data } = await api.patch<Order>(`/orders/${orderId}/status`, { status });
+export async function updateOrderStatus(
+  orderId: number,
+  status: OrderStatus,
+): Promise<Order> {
+  const { data } = await api.patch<Order>(`/orders/${orderId}/status`, {
+    status,
+  });
   return data;
 }
 
 /* ================================== Admin Products ==================================== */
-export async function adminCreateProduct(payload: Omit<AdminProduct, 'id' | 'createdAt' | 'updatedAt'>) {
+export async function adminCreateProduct(
+  payload: Omit<AdminProduct, 'id' | 'createdAt' | 'updatedAt'>,
+) {
   const { data } = await api.post('/products', payload);
   return data;
 }
-export async function adminUpdateProduct(id: number, payload: Partial<AdminProduct>) {
+export async function adminUpdateProduct(
+  id: number,
+  payload: Partial<AdminProduct>,
+) {
   const { data } = await api.put(`/products/${id}`, payload);
   return data;
 }

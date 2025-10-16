@@ -21,19 +21,17 @@ function onAppStateChange(status: string) {
   focusManager.setFocused(status === 'active');
 }
 
-/** QueryClient configurado para móvil */
+/** Crea un QueryClient único para toda la app */
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      staleTime: 30_000, // 30s
-      cacheTime: 5 * 60 * 1000, // 5min
+      staleTime: 30_000,       // 30s
+      gcTime: 5 * 60 * 1000,   // 5 min (v5; antes cacheTime)
       refetchOnReconnect: true,
-      refetchOnWindowFocus: true, // respeta focusManager (AppState)
+      refetchOnWindowFocus: true, // usa focusManager (AppState)
     },
-    mutations: {
-      retry: 0,
-    },
+    mutations: { retry: 0 },
   },
 });
 
@@ -58,6 +56,7 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'} />
+        {/* ⬇️ Provider necesario para usar useQuery / useMutation */}
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <CartProvider>

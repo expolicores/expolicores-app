@@ -3,6 +3,7 @@ import { View, Text, TextInput, Button, Switch, Alert } from 'react-native';
 import { useForm } from 'react-hook-form';
 import { createAddress, updateAddress } from '../lib/api.addresses';
 import type { Address } from '../types/address';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Form = {
   label: string;

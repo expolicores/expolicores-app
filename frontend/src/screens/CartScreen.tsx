@@ -1,12 +1,12 @@
 // src/screens/CartScreen.tsx
 import React, { useMemo } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
   Text,
   Image,
   FlatList,
   Pressable,
-  SafeAreaView,
   StyleSheet,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';

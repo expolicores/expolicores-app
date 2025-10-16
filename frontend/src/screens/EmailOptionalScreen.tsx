@@ -1,5 +1,6 @@
 ﻿// frontend/src/screens/EmailOptionalScreen.tsx
 import React, { useState, useEffect } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
   Text,
@@ -7,7 +8,6 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  SafeAreaView,
   StatusBar,
   Alert,
   ActivityIndicator,
@@ -16,6 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { requestOtp, verifyOtp, api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { ENV } from '../config/env';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
 
@@ -27,6 +28,18 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
 export default function EmailOptionalScreen({ route, navigation }: Props) {
   const { phone, email, mode } = route.params || {};
   const { refreshMe, deferEmailPrompt } = useAuth();
+
+  // 🔒 Gate por feature flag: si el feature está OFF y no es flujo loginByEmail, salir.
+  useEffect(() => {
+    if (!ENV.FEATURE_EMAIL_VERIFY && mode !== 'loginByEmail') {
+      navigation.reset({ index: 0, routes: [{ name: 'Home' as never }] });
+    }
+  }, [mode, navigation]);
+
+  if (!ENV.FEATURE_EMAIL_VERIFY && mode !== 'loginByEmail') {
+    // Evita parpadeos mientras navegamos fuera
+    return null;
+  }
 
   const [emailInput, setEmailInput] = useState<string>(email || '');
   const [showTerms, setShowTerms] = useState(false);

@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
@@ -17,31 +17,35 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 
 import { Role, User } from '@prisma/client';
 import { WhatsAppService } from '../notifications/whatsapp.service';
+import { SmsService } from '../notifications/sms.service';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
-  // Configurables por .env
-  private readonly OTP_COOLDOWN_SECONDS = Number(
-    process.env.OTP_COOLDOWN_SECONDS ?? 60,
-  );
-  private readonly OTP_TTL_SECONDS = Number(
-    process.env.OTP_TTL_SECONDS ?? 10 * 60, // 10 min
-  );
+  // ===== Config OTP (vía .env) =====
+  private readonly OTP_DIGITS = parseInt(process.env.OTP_LENGTH ?? '', 10) || 6;
+  private readonly OTP_TTL_MIN =
+    parseInt(process.env.OTP_TTL_MIN ?? '', 10) ||
+    Math.ceil((parseInt(process.env.OTP_TTL_SECONDS ?? '', 10) || 600) / 60); // compat con OTP_TTL_SECONDS
+  private readonly OTP_MIN_INTERVAL_SEC =
+    parseInt(process.env.OTP_MIN_INTERVAL_SEC ?? '', 10) ||
+    parseInt(process.env.OTP_COOLDOWN_SECONDS ?? '', 10) ||
+    45;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly whatsapp: WhatsAppService,
+    private readonly sms: SmsService,
   ) {}
 
-  // ========== Helpers ==========
+  // ========== Helpers de normalización ==========
   public normalizeEmail(email?: string | null) {
     return String(email ?? '').trim().toLowerCase();
   }
 
-  /** Normaliza a E.164 CO (+57...) desde formatos comunes. */
+  /** Normaliza a +57... en E.164 desde formatos comunes. */
   public normalizePhone(raw?: string | null) {
     const s = String(raw ?? '').replace(/[^\d+]/g, '');
     if (!s) return '';
@@ -51,27 +55,82 @@ export class AuthService {
     return `+57${digits}`;
   }
 
-  private generate6(): string {
-    const n = Math.floor(100000 + Math.random() * 900000);
+  // ========== OTP helpers ==========
+  private generateOtp(): string {
+    const min = Math.pow(10, this.OTP_DIGITS - 1);
+    const max = Math.pow(10, this.OTP_DIGITS) - 1;
+    const n = Math.floor(Math.random() * (max - min + 1)) + min;
     return String(n);
   }
 
-  /** Firma JWT — público para uso desde el controller. */
+  /** Devuelve "salt:hash" (sha256) para guardar en otpCodeHash. */
+  private hashOtpSha(otp: string) {
+    const salt = randomBytes(8).toString('hex');
+    const hash = createHash('sha256').update(`${salt}:${otp}`).digest('hex');
+    return `${salt}:${hash}`;
+  }
+
+  /** Verifica un OTP con compatibilidad: "salt:hash" (sha256) o bcrypt legacy. */
+  private async verifyOtpHash(candidate: string, stored: string): Promise<boolean> {
+    if (stored.includes(':')) {
+      const [salt, hash] = stored.split(':');
+      const cand = createHash('sha256').update(`${salt}:${candidate}`).digest('hex');
+      return cand === hash;
+    }
+    // Legacy bcrypt
+    try {
+      return await bcrypt.compare(candidate, stored);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Firma JWT — público para uso desde controller. */
   public async signToken(user: { id: number; email?: string | null; role: Role }) {
     const payload = { sub: user.id, email: user.email ?? '', role: user.role };
     const access_token = await this.jwt.signAsync(payload, { expiresIn: '7d' });
     return { access_token };
   }
 
-  /** Envío OTP por WA respetando flags. */
-  private async trySendOtp(toPhone: string, code: string) {
-    const FEATURE = process.env.FEATURE_WHATSAPP_NOTIFICATIONS === 'true';
-    const SEND = process.env.SEND_WHATSAPP_NOTIFS === 'true';
-    if (!FEATURE || !SEND) {
-      this.logger.debug(`[WA OFF] OTP a ${toPhone} (no enviado)`);
-      return;
+  // ===== Selección de canal (WA/SMS) =====
+  private chooseOtpChannel(prefer?: 'whatsapp' | 'sms'): 'whatsapp' | 'sms' {
+    const allowSms = (process.env.FEATURE_SMS_OTP ?? 'false') === 'true';
+    const canUseWa =
+      (process.env.FEATURE_WHATSAPP_NOTIFICATIONS ?? 'false') === 'true' &&
+      (process.env.SEND_WHATSAPP_NOTIFS ?? 'false') === 'true';
+
+    const defaultChoice = canUseWa ? 'whatsapp' : (allowSms ? 'sms' : 'whatsapp');
+    if (prefer === 'sms' && allowSms) return 'sms';
+    return defaultChoice;
+  }
+
+  /** Envío de OTP según canal (WA por plantilla/fallback o SMS). */
+  private async trySendOtp(
+    toPhoneE164: string,
+    code: string,
+    prefer?: 'whatsapp' | 'sms',
+  ) {
+    const channel = this.chooseOtpChannel(prefer);
+
+    if (channel === 'sms') {
+      try {
+        await this.sms.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
+        return { channel: 'sms' as const };
+      } catch (e: any) {
+        // Fallback a WhatsApp si SMS falla y WA está activo
+        this.logger.warn(`SMS OTP failed (${e?.message}). Trying WhatsApp fallback…`);
+        const waOn =
+          (process.env.FEATURE_WHATSAPP_NOTIFICATIONS ?? 'false') === 'true' &&
+          (process.env.SEND_WHATSAPP_NOTIFS ?? 'false') === 'true';
+        if (!waOn) throw e;
+        await this.whatsapp.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
+        return { channel: 'whatsapp' as const, fallback: 'from-sms' as const };
+      }
     }
-    await this.whatsapp.sendOtp(toPhone, code);
+
+    // default: WhatsApp
+    await this.whatsapp.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
+    return { channel: 'whatsapp' as const };
   }
 
   /** Genera y persiste token para verificación de email. */
@@ -125,29 +184,29 @@ export class AuthService {
       throw new BadRequestException('Debes enviar phone o email');
     }
 
-    // Cooldown por último envío
+    // Throttling por último envío
     const existing = await this.prisma.user.findUnique({ where: { phone } });
     if (existing?.lastOtpSentAt) {
-      const deltaMs = Date.now() - existing.lastOtpSentAt.getTime();
-      const cooldownMs = this.OTP_COOLDOWN_SECONDS * 1000;
-      if (deltaMs < cooldownMs) {
-        const remainingSeconds = Math.ceil((cooldownMs - deltaMs) / 1000);
+      const deltaSec = Math.floor((Date.now() - existing.lastOtpSentAt.getTime()) / 1000);
+      if (deltaSec < this.OTP_MIN_INTERVAL_SEC) {
+        const remainingSeconds = this.OTP_MIN_INTERVAL_SEC - deltaSec;
         this.logger.debug(`OTP throttled ${phone} (${remainingSeconds}s rem)`);
         return {
           ok: true,
           throttled: true,
           remainingSeconds,
           phoneMasked: this.maskPhone(phone),
-          cooldownSeconds: this.OTP_COOLDOWN_SECONDS,
-          expiresInSeconds: this.OTP_TTL_SECONDS,
+          cooldownSeconds: this.OTP_MIN_INTERVAL_SEC,
+          expiresInSeconds: this.OTP_TTL_MIN * 60,
         };
       }
     }
 
-    const code = this.generate6();
-    const otpCodeHash = await bcrypt.hash(code, 10);
+    // Generar y almacenar OTP (salt:hash)
+    const code = this.generateOtp();
+    const otpCodeHash = this.hashOtpSha(code);
     const now = new Date();
-    const otpExpiresAt = new Date(now.getTime() + this.OTP_TTL_SECONDS * 1000);
+    const otpExpiresAt = new Date(now.getTime() + this.OTP_TTL_MIN * 60 * 1000);
 
     await this.prisma.user.upsert({
       where: { phone },
@@ -168,15 +227,16 @@ export class AuthService {
       },
     });
 
-    await this.trySendOtp(phone, code);
+    // Enviar por canal seleccionado (respetando dto.channel si procede)
+    await this.trySendOtp(phone, code, dto.channel);
 
     if (isDevEcho) this.logger.log(`[DEV-OTP] phone=${phone} code=${code}`);
 
     return {
       ok: true,
       phoneMasked: this.maskPhone(phone),
-      cooldownSeconds: this.OTP_COOLDOWN_SECONDS,
-      expiresInSeconds: this.OTP_TTL_SECONDS,
+      cooldownSeconds: this.OTP_MIN_INTERVAL_SEC,
+      expiresInSeconds: this.OTP_TTL_MIN * 60,
       ...(isDevEcho ? { devOtp: code } : {}),
     };
   }
@@ -211,7 +271,7 @@ export class AuthService {
       throw new UnauthorizedException('OTP expirado');
     }
 
-    const ok = await bcrypt.compare(dto.code, user.otpCodeHash);
+    const ok = await this.verifyOtpHash(dto.code, user.otpCodeHash);
     if (!ok) throw new UnauthorizedException('OTP inválido');
 
     const updateData: any = {

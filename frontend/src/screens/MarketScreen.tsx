@@ -1,7 +1,7 @@
 // src/screens/MarketScreen.tsx
 import React, { useMemo, useRef, useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  SafeAreaView,
   View,
   Text,
   ActivityIndicator,

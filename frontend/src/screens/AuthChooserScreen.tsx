@@ -1,16 +1,18 @@
 ﻿// frontend/src/screens/AuthChooserScreen.tsx
 import React from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
   Text,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { useAuth } from '../context/AuthContext';
+import { ENV } from '../config/env';
+import { Linking } from 'react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AuthChooser'>;
 
@@ -18,11 +20,19 @@ export default function AuthChooserScreen({ navigation }: Props) {
   const { lastPhone } = useAuth();
 
   const goPhone = () => {
+    // OTP-first por WhatsApp (canal por defecto en backend)
     navigation.navigate('PhoneEntry', { intent: 'login' });
   };
 
   const goEmail = () => {
+    // Login por correo (envía OTP al celular verificado asociado)
     navigation.navigate('EmailOptional', { mode: 'loginByEmail' });
+  };
+
+  const openWhatsAppSupport = () => {
+    if (!ENV.WABA_NUMBER) return;
+    const waNum = ENV.WABA_NUMBER.replace('+', '');
+    Linking.openURL(`https://wa.me/${waNum}`);
   };
 
   return (
@@ -35,7 +45,7 @@ export default function AuthChooserScreen({ navigation }: Props) {
             Bienvenido a Expolicores
           </Text>
           <Text style={{ marginTop: 8, fontSize: 16, color: '#6B7280' }}>
-            Inicia rapido. Te enviaremos un codigo de verificacion.
+            Inicia rápido. Te enviaremos un código de verificación por WhatsApp.
           </Text>
         </View>
 
@@ -80,29 +90,40 @@ export default function AuthChooserScreen({ navigation }: Props) {
             </Text>
           </TouchableOpacity>
 
-          {/* Hint: recordar ultimo telefono usado (si existe) */}
+          {/* Hint: recordar último teléfono usado (si existe) */}
           {lastPhone ? (
             <Text
               style={{ marginTop: 10, textAlign: 'center', color: '#6B7280', fontSize: 13 }}
-              accessibilityLabel={`Ultimo numero usado ${lastPhone}`}
+              accessibilityLabel={`Último número usado ${lastPhone}`}
             >
-              Ultimo numero usado: <Text style={{ fontWeight: '700', color: '#374151' }}>{lastPhone}</Text>
+              Último número usado:{' '}
+              <Text style={{ fontWeight: '700', color: '#374151' }}>{lastPhone}</Text>
             </Text>
+          ) : null}
+
+          {/* Ayuda por WhatsApp al número WABA (si está configurado) */}
+          {ENV.WABA_NUMBER ? (
+            <TouchableOpacity
+              onPress={openWhatsAppSupport}
+              style={{ paddingVertical: 10, alignSelf: 'center' }}
+            >
+              <Text style={{ color: '#059669', fontWeight: '600' }}>
+                ¿Necesitas ayuda? Escríbenos por WhatsApp
+              </Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 12, textAlign: 'center', marginTop: 2 }}>
+                {ENV.WABA_NUMBER}
+              </Text>
+            </TouchableOpacity>
           ) : null}
         </View>
 
-        {/* Footer / terminos */}
+        {/* Footer / términos */}
         <View style={{ marginBottom: 4 }}>
           <Text style={{ textAlign: 'center', fontSize: 12, color: '#9CA3AF' }}>
-            Al continuar aceptas nuestros terminos y la politica de datos.
+            Al continuar aceptas nuestros términos y la política de datos.
           </Text>
         </View>
       </View>
     </SafeAreaView>
   );
 }
-
-
-
-
-

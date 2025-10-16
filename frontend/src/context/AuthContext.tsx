@@ -2,14 +2,20 @@
 import React, {
   createContext,
   useContext,
-  useEffect,
   useMemo,
   useState,
   useCallback,
   useRef,
+  useEffect,
 } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 
 import {
   api,
@@ -24,16 +30,17 @@ import {
 
 import type { Me } from '../types/auth';
 
-/** ============================ Tipos del contexto ============================ */
+/* ============================ Tipos del contexto ============================ */
 type OtpChannel = 'sms' | 'whatsapp';
 
 type AuthCtx = {
   booting: boolean;
   isAuthenticated: boolean;
   token: string | null;
-  user: Me | null;
+  me: Me | null;
+  isLoadingMe: boolean;
 
-  refreshMe: () => Promise<Me | null>;
+  refreshMe: () => Promise<void>;
 
   // Legado (mientras migramos todo a OTP-first)
   signIn: (email: string, password: string) => Promise<void>;
@@ -60,78 +67,41 @@ type AuthCtx = {
   lastPhone: string | null;
   setLastPhone: (p: string | null) => Promise<void>;
 
-  // ➕ Nuevo: aplazar captura de email (para evitar loop)
+  // Aplazar captura de email (para evitar loop post-OTP)
   emailDeferred: boolean;
   deferEmailPrompt: (defer?: boolean) => Promise<void>;
 
   signOut: () => Promise<void>;
 };
 
-/** ============================ Constantes de storage ============================ */
+/* ============================ Storage keys ============================ */
 const TOKEN_KEY = 'expolicores_token';
 const LAST_PHONE_KEY = 'expolicores_last_phone';
 const emailDeferKey = (userId?: number | null) =>
   `expolicores_email_deferred_${userId ?? 'anon'}`;
 
-/** ============================ Contexto ============================ */
-const AuthContext = createContext<AuthCtx>({} as any);
-export const useAuth = () => useContext(AuthContext);
+/* ============================ Query Client (único) ============================ */
+const qc = new QueryClient();
 
-/** ============================ Provider ============================ */
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<Me | null>(null);
+/* ============================ Contexto ============================ */
+const Ctx = createContext<AuthCtx | undefined>(undefined);
+export const useAuth = () => {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+};
+
+/* ============================ Hook interno: estado auth ============================ */
+function useAuthState() {
   const [booting, setBooting] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
   const [lastPhone, setLastPhoneState] = useState<string | null>(null);
-
-  // ➕ Nuevo: estado de aplazamiento de email, por usuario
   const [emailDeferred, setEmailDeferred] = useState<boolean>(false);
 
-  // Evita paralelizar /auth/me o logout múltiples
-  const inflightRef = useRef(false);
   const loggingOutRef = useRef(false);
+  const queryClient = useQueryClient();
 
-  /** ---------- Helpers de aplazamiento email ---------- */
-  const loadEmailDeferredFor = useCallback(async (u?: Me | null) => {
-    try {
-      const raw = await SecureStore.getItemAsync(emailDeferKey(u?.id));
-      setEmailDeferred(raw === '1');
-    } catch {
-      setEmailDeferred(false);
-    }
-  }, []);
-
-  const deferEmailPrompt = useCallback(
-    async (defer: boolean = true) => {
-      setEmailDeferred(defer);
-      try {
-        await SecureStore.setItemAsync(emailDeferKey(user?.id), defer ? '1' : '0');
-      } catch {
-        // noop
-      }
-    },
-    [user?.id]
-  );
-
-  /** ---------- Perfil ---------- */
-  const refreshMe = useCallback(async (): Promise<Me | null> => {
-    if (inflightRef.current) return user ?? null;
-    inflightRef.current = true;
-    try {
-      const data = (await apiGetMe()) as Me;
-      setUser(data);
-      await loadEmailDeferredFor(data);
-      return data;
-    } catch {
-      setUser(null);
-      setEmailDeferred(false);
-      return null;
-    } finally {
-      inflightRef.current = false;
-    }
-  }, [loadEmailDeferredFor, user]);
-
-  /** ---------- Boot: hidratar token y perfil ---------- */
+  // ---- Cargar token/lastPhone al iniciar y poblar header
   useEffect(() => {
     (async () => {
       try {
@@ -139,26 +109,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           SecureStore.getItemAsync(TOKEN_KEY),
           SecureStore.getItemAsync(LAST_PHONE_KEY),
         ]);
-
         if (savedToken) {
-          // 👇 Asegura header antes de pedir /auth/me
           setAuthToken(savedToken);
           setToken(savedToken);
-          await refreshMe();
         }
         if (savedPhone) setLastPhoneState(savedPhone);
       } finally {
         setBooting(false);
       }
     })();
-  }, [refreshMe]);
+  }, []);
 
-  /** ---------- Reaplicar auth header cuando cambie el token ---------- */
+  // ---- Reaplicar Authorization cuando cambie token
   useEffect(() => {
     setAuthToken(token || undefined);
   }, [token]);
 
-  /** ---------- Interceptor 401 global → logout limpio ---------- */
+  // ---- /auth/me con React Query (habilitado solo si hay token)
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: apiGetMe,
+    enabled: !!token,
+    staleTime: 5 * 60 * 1000, // 5 min sin refetch
+    gcTime: 10 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
+  // ---- Cargar flag de deferEmail para este usuario cuando cambie me
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await SecureStore.getItemAsync(emailDeferKey(meQuery.data?.id));
+        setEmailDeferred(raw === '1');
+      } catch {
+        setEmailDeferred(false);
+      }
+    })();
+  }, [meQuery.data?.id]);
+
+  // ---- Interceptor 401 global → logout limpio
   useEffect(() => {
     const id = api.interceptors.response.use(
       (r) => r,
@@ -169,9 +161,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             loggingOutRef.current = true;
             await SecureStore.deleteItemAsync(TOKEN_KEY);
             setToken(null);
-            setUser(null);
-            setEmailDeferred(false);
             setAuthToken(undefined);
+            setEmailDeferred(false);
+            // Limpia cache de usuario
+            queryClient.removeQueries({ queryKey: ['me'] });
           } finally {
             loggingOutRef.current = false;
           }
@@ -180,9 +173,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
     return () => api.interceptors.response.eject(id);
-  }, [token]);
+  }, [token, queryClient]);
 
-  /** ---------- Helpers de persistencia ---------- */
+  // ---- Helpers de persistencia
   const persistToken = useCallback(async (tok: string) => {
     try {
       await SecureStore.setItemAsync(TOKEN_KEY, tok);
@@ -205,7 +198,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  /** ---------- Login legado ---------- */
+  // ---- API público del contexto
+
+  const refreshMe = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['me'] });
+  }, [queryClient]);
+
   const signIn = useCallback(
     async (email: string, password: string) => {
       try {
@@ -227,7 +225,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [persistToken, refreshMe]
   );
 
-  /** ---------- OTP-first ---------- */
   const requestOtpCore = useCallback(
     async (body: RequestOtpBody): Promise<Pick<RequestOtpResp, 'devOtp' | 'phoneMasked' | 'throttled'>> => {
       try {
@@ -250,34 +247,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [setLastPhone]
   );
 
-  const requestOtpByPhone: AuthCtx['requestOtpByPhone'] = useCallback(
+  const requestOtpByPhone = useCallback<AuthCtx['requestOtpByPhone']>(
     async (phone, channel = 'whatsapp', intent = 'login') => {
       return requestOtpCore({ phone, channel, intent } as any);
     },
     [requestOtpCore]
   );
 
-  const requestOtpByEmail: AuthCtx['requestOtpByEmail'] = useCallback(
+  const requestOtpByEmail = useCallback<AuthCtx['requestOtpByEmail']>(
     async (email) => {
       return requestOtpCore({ email, intent: 'login' } as any);
     },
     [requestOtpCore]
   );
 
-  const verifyOtp: AuthCtx['verifyOtp'] = useCallback(
+  const verifyOtp = useCallback<AuthCtx['verifyOtp']>(
     async (args) => {
       try {
-        const { access_token, user: partial } = await verifyOtpApi(args);
+        const { access_token, user } = await verifyOtpApi(args);
         if (!access_token) throw new Error('Respuesta inválida (sin access_token)');
         await persistToken(access_token);
 
-        if (partial) {
-          setUser(partial as Me);
-          await loadEmailDeferredFor(partial as Me);
-          return partial as Me;
+        if (user) {
+          // Poblamos el cache de 'me' inmediatamente
+          queryClient.setQueryData(['me'], user as Me);
+          // Cargar defer flag para este usuario
+          try {
+            const raw = await SecureStore.getItemAsync(emailDeferKey((user as Me).id));
+            setEmailDeferred(raw === '1');
+          } catch {
+            setEmailDeferred(false);
+          }
+          return user as Me;
         } else {
-          const me = await refreshMe();
-          return me;
+          await refreshMe();
+          return queryClient.getQueryData(['me']) as Me | null;
         }
       } catch (e: any) {
         const msg =
@@ -288,33 +292,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw e;
       }
     },
-    [persistToken, refreshMe, loadEmailDeferredFor]
+    [persistToken, refreshMe, queryClient]
   );
 
-  /** ---------- Logout ---------- */
+  const deferEmailPrompt = useCallback(
+    async (defer: boolean = true) => {
+      setEmailDeferred(defer);
+      try {
+        const userId = (queryClient.getQueryData(['me']) as Me | undefined)?.id;
+        await SecureStore.setItemAsync(emailDeferKey(userId), defer ? '1' : '0');
+      } catch {
+        // noop
+      }
+    },
+    [queryClient]
+  );
+
   const signOut = useCallback(async () => {
     try {
       await SecureStore.deleteItemAsync(TOKEN_KEY);
     } finally {
       setToken(null);
-      setUser(null);
-      setEmailDeferred(false);
       setAuthToken(undefined);
+      setEmailDeferred(false);
+      queryClient.removeQueries({ queryKey: ['me'] });
     }
-  }, []);
+  }, [queryClient]);
 
-  /** ---------- Value ---------- */
-  const value = useMemo<AuthCtx>(
+  const value: AuthCtx = useMemo(
     () => ({
       booting,
       isAuthenticated: !!token,
       token,
-      user,
+      me: (meQuery.data as Me) ?? null,
+      isLoadingMe: !!token && (meQuery.isLoading || meQuery.isFetching),
 
       refreshMe,
 
+      // legado
       signIn,
 
+      // otp
       requestOtpByPhone,
       requestOtpByEmail,
       verifyOtp,
@@ -330,7 +348,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [
       booting,
       token,
-      user,
+      meQuery.data,
+      meQuery.isLoading,
+      meQuery.isFetching,
       refreshMe,
       signIn,
       requestOtpByPhone,
@@ -344,5 +364,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return value;
+}
+
+/* ============================ Provider ============================ */
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const value = useAuthState();
+
+  return (
+    <QueryClientProvider client={qc}>
+      <Ctx.Provider value={value}>{children}</Ctx.Provider>
+    </QueryClientProvider>
+  );
 };
