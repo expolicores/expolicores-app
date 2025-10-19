@@ -12,6 +12,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCart } from '../context/CartContext';
+import { resolveProductImageUri } from '../lib/image';
 
 export default function CartScreen() {
   const navigation = useNavigation<any>();
@@ -25,13 +26,11 @@ export default function CartScreen() {
 
   const renderItem = ({ item }: any) => {
     const isMin = (item.qty ?? 1) <= 1;
+    const imageUri = resolveProductImageUri(item.imageUrl);
+
     return (
       <View style={styles.card}>
-        {item.imageUrl ? (
-          <Image source={{ uri: item.imageUrl }} style={styles.image} />
-        ) : (
-          <View style={[styles.image, styles.imagePlaceholder]} />
-        )}
+        <Image source={{ uri: imageUri }} style={styles.image} />
 
         <View style={styles.info}>
           <Text style={styles.name} numberOfLines={2}>
@@ -162,7 +161,6 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   image: { width: 80, height: 80, borderRadius: 12 },
-  imagePlaceholder: { backgroundColor: COLORS.muted },
   info: { flex: 1, marginLeft: 12 },
   name: { color: COLORS.text, fontSize: 16, fontWeight: '600' },
   price: { color: COLORS.text, fontSize: 17, fontWeight: '800', marginTop: 6 },

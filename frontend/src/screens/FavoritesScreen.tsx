@@ -20,7 +20,7 @@ export default function FavoritesScreen() {
   const navigation = useNavigation<any>();
   const { isAuthenticated, user } = useAuth();
   const { favorites, isLoading, isFetching, refetch } = useFavorites();
-  const isB2B = user?.role === 'NEGOCIO' || user?.role === 'ADMIN';
+  const isB2B = user?.role === 'BUSINESS' || user?.role === 'ADMIN';
 
   const products = useMemo<Product[]>(() => {
     return (favorites ?? []).map((item) => ({

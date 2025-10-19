@@ -31,8 +31,7 @@ function sanitizeName(raw: string) {
  * Pide y persiste el nombre del usuario tras verificar OTP.
  * Requiere que el JWT ya esté configurado (setAuthToken se hace en verify-otp).
  */
-export default function NameScreen({ route, navigation }: Props) {
-  const { phone, email } = route.params || {};
+export default function NameScreen({ navigation }: Props) {
   const { refreshMe } = useAuth(); // refresca el perfil en contexto
 
   const [name, setName] = useState('');
@@ -56,12 +55,7 @@ export default function NameScreen({ route, navigation }: Props) {
       // Enrutamos al Gate para que decida (si falta email y no está diferido → EmailOptional; si no → Home)
       navigation.reset({
         index: 0,
-        routes: [
-          {
-            name: 'Gate' as never,
-            params: { phone, email } as never,
-          },
-        ],
+        routes: [{ name: 'Home' as never }],
       });
     } catch (e: any) {
       const msg =

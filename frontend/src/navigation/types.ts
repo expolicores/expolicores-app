@@ -25,6 +25,7 @@ export type RootStackParamList = {
 
   // Home/market & catálogo
   Home: undefined;                // wrapper opcional (tabs o stack principal)
+  Dashboard: undefined;           // vista inicial con accesos rápidos
   Market: undefined;              // landing principal
   Catalog: { category?: string } | undefined;
   RestaurantsPlaceholder: undefined; // si lo usas como sección futura

@@ -30,8 +30,8 @@ export default function HomeScreen() {
     console.log('[ME]', user);
   }, [user]);
 
-  // Bodega para NEGOCIO (y ADMIN si aplica)
-  const canSeeBodega = user?.role === 'NEGOCIO' || user?.role === 'ADMIN';
+  // Bodega para BUSINESS (y ADMIN si aplica)
+  const canSeeBodega = user?.role === 'BUSINESS' || user?.role === 'ADMIN';
 
   return (
     <SafeAreaView style={styles.container}>

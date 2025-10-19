@@ -9,7 +9,7 @@ import type { CreateOrderDto } from '../types/order';
 
 export default function CheckoutScreen() {
   const navigation = useNavigation<any>();
-  const { items: cartItems, subtotal, clear } = useCart();
+  const { items: cartItems, subtotal, clear, remove } = useCart();
 
   // Direcciones
   const { data: addresses, isLoading: loadingAddrs } = useQuery({
@@ -32,15 +32,37 @@ export default function CheckoutScreen() {
       navigation.replace('OrderSuccess', { orderId: order.id, total: order.total });
     },
     onError: (err: any) => {
-      const code = err?.response?.data?.code as string | undefined;
+      const payload = err?.response?.data ?? {};
+      const code =
+        typeof payload?.code === 'string'
+          ? payload.code
+          : typeof payload?.message === 'string'
+          ? payload.message
+          : undefined;
       if (code?.startsWith?.('OUT_OF_STOCK')) Alert.alert('Sin stock', 'Algún producto está sin stock.');
       else if (code === 'COVERAGE_OUT_OF_RANGE') Alert.alert('Fuera de cobertura', 'Cambia tu dirección.');
       else if (code === 'ADDRESS_MISSING_GEO') Alert.alert('Dirección', 'Faltan coordenadas (lat/lng).');
       else if (code === 'ADDRESS_NOT_FOUND') Alert.alert('Dirección', 'No encontramos tu dirección.');
       else if (code === 'EMPTY_CART') Alert.alert('Carrito', 'Tu carrito está vacío.');
+      else if (code === 'PRODUCT_NOT_FOUND') {
+        const missing = Array.isArray((payload as any)?.missing) ? (payload as any).missing : [];
+        if (missing.length) {
+          const missingNames = cartItems
+            .filter((it) => missing.includes(it.productId))
+            .map((it) => it.name);
+          missing.forEach((id: number) => remove(id));
+          const label = missingNames.length ? missingNames.join(', ') : 'Algunos productos';
+          Alert.alert(
+            'Producto no disponible',
+            `${label} ya no está disponible y fue removido de tu carrito.`,
+          );
+        } else {
+          Alert.alert('Producto no disponible', 'Un producto ya no está disponible.');
+        }
+      } else if (typeof payload?.message === 'string') Alert.alert('Error', payload.message);
       else Alert.alert('Error', 'No pudimos crear la orden.');
     },
-    onSettled: () => setIsSubmitting(false), // 👈 libera el botón pase lo que pase
+    onSettled: () => setIsSubmitting(false), // ?? libera el botón pase lo que pase
   });
 
   const confirmDisabled =

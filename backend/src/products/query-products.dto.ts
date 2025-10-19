@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 export type SortOption = 'newest' | 'price_asc' | 'price_desc' | 'name_asc' | 'name_desc';
+export type TagOption = 'oferta' | 'low_price' | 'pack';
 
 export class QueryProductsDto {
   @IsOptional()
@@ -26,4 +27,8 @@ export class QueryProductsDto {
   @IsOptional()
   @IsIn(['newest', 'price_asc', 'price_desc', 'name_asc', 'name_desc'])
   sort: SortOption = 'newest';
+
+  @IsOptional()
+  @IsIn(['oferta', 'low_price', 'pack'])
+  tag?: TagOption;
 }

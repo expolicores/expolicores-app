@@ -172,13 +172,16 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
             <Pressable
               onPress={() => {
                 if (item.type === 'tag') {
-                  setTag(item.key as string);
+                  setTag((prev) =>
+                    prev === item.key ? undefined : (item.key as string),
+                  );
                   setCategory(undefined);
                 } else {
-                  setCategory(item.key as string);
+                  setCategory((prev) =>
+                    prev === item.key ? undefined : (item.key as string),
+                  );
                   setTag(undefined);
                 }
-                refetch();
               }}
               style={[styles.chip, active && styles.chipActive]}
             >

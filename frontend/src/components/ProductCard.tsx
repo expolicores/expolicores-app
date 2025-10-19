@@ -8,6 +8,7 @@ import { useCart } from '../context/CartContext';
 import type { Product } from '../types/product';
 import { useFavorites } from '../hooks/useFavorites';
 import { formatCurrency } from '../lib/formatCurrency';
+import { resolveProductImageUri } from '../lib/image';
 
 type Props = {
   product: Product;
@@ -50,6 +51,10 @@ export default function ProductCard({
   const { isAuthenticated } = useAuth();
   const cart = useCart();
   const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
+  const productImageUri = useMemo(
+    () => resolveProductImageUri(product.imageUrl),
+    [product.imageUrl],
+  );
 
   // ===== MODO AUTONOMO (si no vienen handlers/cantidad desde el padre) =====
   const autonomous = typeof quantity !== 'number' && !onAdd && !onInc && !onDec;
@@ -87,7 +92,7 @@ export default function ProductCard({
         productId: product.id,
         name: product.name,
         price: product.price,
-        imageUrl: product.imageUrl ?? undefined,
+        imageUrl: productImageUri,
         stock: (product as any).stock ?? undefined,
         category: (product as any).category ?? null,
       });
@@ -106,7 +111,7 @@ export default function ProductCard({
         productId: product.id,
         name: product.name,
         price: product.price,
-        imageUrl: product.imageUrl ?? undefined,
+        imageUrl: productImageUri,
         stock: (product as any).stock ?? undefined,
         category: (product as any).category ?? null,
       });
@@ -152,7 +157,7 @@ export default function ProductCard({
     <View style={styles.card}>
       <Pressable style={{ flex: 1 }} onPress={goToDetail}>
         <Image
-          source={{ uri: product.imageUrl ?? 'https://via.placeholder.com/300' }}
+          source={{ uri: productImageUri }}
           style={styles.image}
         />
         <Text style={styles.name} numberOfLines={2}>

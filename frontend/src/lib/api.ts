@@ -15,6 +15,7 @@ import type {
   OrderSuccess,
   Order,
   OrderStatus,
+  OrderWithUser,
 } from '../types/order';
 
 /* ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================ */
@@ -428,7 +429,32 @@ export async function updateOrderStatus(
   return data;
 }
 
+export async function fetchAllOrders(
+  params: Record<string, unknown> = {},
+  opts: RequestOpts = {},
+): Promise<OrderWithUser[]> {
+  const { data } = await api.get<OrderWithUser[]>('/orders', {
+    params,
+    signal: opts.signal,
+  });
+  return data ?? [];
+}
+
 /* ================================== Admin Products ==================================== */
+export type ProductPricePatch = {
+  price?: number;
+  b2bPrice?: number;
+};
+
+export async function fetchAdminProducts(
+  opts: RequestOpts = {},
+): Promise<AdminProduct[]> {
+  const { data } = await api.get<AdminProduct[]>('/products/admin', {
+    signal: opts.signal,
+  });
+  return data ?? [];
+}
+
 export async function adminCreateProduct(
   payload: Omit<AdminProduct, 'id' | 'createdAt' | 'updatedAt'>,
 ) {
@@ -444,6 +470,17 @@ export async function adminUpdateProduct(
 }
 export async function adminDeleteProduct(id: number) {
   const { data } = await api.delete(`/products/${id}`);
+  return data;
+}
+
+export async function updateProductPricing(
+  productId: number,
+  payload: ProductPricePatch,
+): Promise<AdminProduct> {
+  const { data } = await api.patch<AdminProduct>(
+    `/products/${productId}`,
+    payload,
+  );
   return data;
 }
 

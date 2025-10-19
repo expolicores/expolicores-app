@@ -1,4 +1,4 @@
-export type Role = 'ADMIN' | 'CLIENTE' | 'NEGOCIO';
+export type Role = 'ADMIN' | 'USER' | 'BUSINESS';
 
 export interface User {
   id: number;

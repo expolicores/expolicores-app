@@ -36,6 +36,7 @@ import FavoritesScreen from '../screens/FavoritesScreen';
 import MarketScreen from '../screens/MarketScreen';
 import RestaurantsPlaceholderScreen from '../screens/RestaurantsPlaceholderScreen';
 import BodegaScreen from '../screens/BodegaScreen';
+import HomeScreen from '../screens/HomeScreen';
 
 /** ================= Buttons en header ================= */
 import OrdersButton from '../components/OrdersButton';
@@ -109,28 +110,31 @@ function AddressesNavigator() {
 
 /** ---------------- Gate post-auth: decide a dónde ir ---------------- **/
 function PostAuthGate({ navigation }: any) {
-  const { user, booting, emailDeferred } = useAuth();
+  const { user, booting, isLoadingMe, emailDeferred } = useAuth();
 
   useEffect(() => {
-    if (booting) return;
+    if (booting || isLoadingMe) return;
 
     // 1) Nombre primero
-    const hasName = !!(user?.name && String(user.name).trim().length >= 2);
+    const name = (user?.name ?? '').trim();
+    const hasName =
+      name.length >= 2 && !/^usuario$/i.test(name) && !/^cliente$/i.test(name);
     if (!hasName) {
       navigation.replace('Name');
       return;
     }
 
-    // 2) Email si no está y NO ha sido diferido
-    const hasEmail = !!(user?.email && String(user.email).includes('@'));
+    // 2) Email si no esta y NO ha sido diferido
+    const emailValue = (user?.email ?? '').trim();
+    const hasEmail = emailValue.length > 0;
     if (!hasEmail && !emailDeferred) {
       navigation.replace('EmailOptional');
       return;
     }
 
-    // 3) Ruta feliz -> catálogo
-    navigation.replace('Catalog');
-  }, [booting, user, emailDeferred, navigation]);
+    // 3) Ruta feliz -> Home (desde alli se llega a Mercado/Bodega)
+    navigation.replace('Dashboard');
+  }, [booting, isLoadingMe, user, emailDeferred, navigation]);
 
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -153,6 +157,13 @@ export default function AppNavigator() {
 
   const headerRightCommon = (navigation: any) => (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Pressable
+        onPress={() => navigation.navigate('Dashboard')}
+        style={{ paddingHorizontal: 6 }}
+        accessibilityLabel="Ir al inicio"
+      >
+        <Ionicons name="home-outline" size={22} color="#111" />
+      </Pressable>
       {user?.role === 'ADMIN' ? (
         <>
           <Pressable
@@ -206,6 +217,16 @@ export default function AppNavigator() {
             name="EmailOptional"
             component={EmailOptionalScreen}
             options={{ title: 'Agrega tu correo (opcional)' }}
+          />
+
+          {/* HOME */}
+          <RootStack.Screen
+            name="Dashboard"
+            component={HomeScreen}
+            options={({ navigation }) => ({
+              title: 'Inicio',
+              headerRight: () => headerRightCommon(navigation),
+            })}
           />
 
           {/* MARKET/CATÁLOGO */}

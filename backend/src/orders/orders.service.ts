@@ -51,15 +51,17 @@ export class OrdersService {
       },
     });
     if (!address) throw new NotFoundException('ADDRESS_NOT_FOUND');
-    if (address.lat == null || address.lng == null) {
-      throw new BadRequestException('ADDRESS_MISSING_GEO');
-    }
 
-    const km = haversineKm(
-      { lat: this.shipping.store.lat, lng: this.shipping.store.lng },
-      { lat: address.lat, lng: address.lng },
-    );
-    if (km > this.shipping.radiusKm) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
+    const hasGeo = typeof address.lat === 'number' && typeof address.lng === 'number';
+    let km = 0;
+
+    if (hasGeo) {
+      km = haversineKm(
+        { lat: this.shipping.store.lat, lng: this.shipping.store.lng },
+        { lat: address.lat as number, lng: address.lng as number },
+      );
+      if (km > this.shipping.radiusKm) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
+    }
 
     if (!dto.items || dto.items.length === 0) throw new BadRequestException('EMPTY_CART');
 
@@ -68,7 +70,15 @@ export class OrdersService {
       where: { id: { in: ids } },
       select: { id: true, name: true, price: true, b2bPrice: true, stock: true },
     });
-    if (products.length !== ids.length) throw new NotFoundException('PRODUCT_NOT_FOUND');
+    if (products.length !== ids.length) {
+      const foundIds = new Set(products.map((p) => p.id));
+      const missing = ids.filter((id) => !foundIds.has(id));
+      throw new NotFoundException({
+        code: 'PRODUCT_NOT_FOUND',
+        missing,
+        message: 'PRODUCT_NOT_FOUND',
+      });
+    }
 
     const byId = new Map(products.map((p) => [p.id, p]));
     let subtotal = 0;
@@ -80,7 +90,9 @@ export class OrdersService {
       subtotal += unitPrice * it.quantity;
     }
 
-    const shipping = shippingForKm(km, this.shipping.base, this.shipping.perKm, this.shipping.min);
+    const shipping = hasGeo
+      ? shippingForKm(km, this.shipping.base, this.shipping.perKm, this.shipping.min)
+      : this.shipping.min;
     const total = subtotal + shipping;
 
     const created = await this.prisma.$transaction(async (tx) => {
@@ -117,7 +129,15 @@ export class OrdersService {
         price: linePrice,
       };
     });
-    const notes = dto.notes ?? address.notes ?? undefined;
+    const notesFromPayload = [dto.notes, address.notes];
+    if (!hasGeo) {
+      notesFromPayload.push('Atencion: validar cobertura, direccion sin coordenadas');
+    }
+    const notes =
+      notesFromPayload
+        .map((n) => (n ?? '').trim())
+        .filter((n) => n.length > 0)
+        .join(' | ') || undefined;
 
     const waRes = await this.whatsapp.sendOrderConfirmation({
       toPhone,

@@ -1,8 +1,9 @@
 // src/components/CartItem.tsx
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { formatCurrency } from '../lib/formatCurrency';
 import type { Product } from '../types/product';
+import { resolveProductImageUri } from '../lib/image';
 
 // Línea del carrito: producto + cantidad
 export type CartLine = {
@@ -28,14 +29,16 @@ function CartItemBase({
   canDec = true,
 }: Props) {
   const { product, quantity } = line;
+  const imageUri = useMemo(
+    () => resolveProductImageUri(product.imageUrl),
+    [product.imageUrl],
+  );
 
   return (
     <View style={styles.card}>
       <Image
         source={{
-          uri:
-            product.imageUrl ||
-            'https://via.placeholder.com/80x80.png?text=Img',
+          uri: imageUri,
         }}
         style={styles.image}
       />

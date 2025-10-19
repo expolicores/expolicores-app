@@ -37,10 +37,11 @@ type AuthCtx = {
   booting: boolean;
   isAuthenticated: boolean;
   token: string | null;
+  user: Me | null; // alias legacy
   me: Me | null;
   isLoadingMe: boolean;
 
-  refreshMe: () => Promise<void>;
+  refreshMe: () => Promise<Me | null>;
 
   // Legado (mientras migramos todo a OTP-first)
   signIn: (email: string, password: string) => Promise<void>;
@@ -200,9 +201,17 @@ function useAuthState() {
 
   // ---- API público del contexto
 
-  const refreshMe = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['me'] });
-  }, [queryClient]);
+  const refreshMe = useCallback(async (): Promise<Me | null> => {
+    if (!token) {
+      queryClient.removeQueries({ queryKey: ['me'] });
+      return null;
+    }
+    const data = await queryClient.fetchQuery<Me>({
+      queryKey: ['me'],
+      queryFn: apiGetMe,
+    });
+    return data ?? null;
+  }, [queryClient, token]);
 
   const signIn = useCallback(
     async (email: string, password: string) => {
@@ -319,12 +328,15 @@ function useAuthState() {
     }
   }, [queryClient]);
 
+  const currentUser = (meQuery.data as Me) ?? null;
+
   const value: AuthCtx = useMemo(
     () => ({
       booting,
       isAuthenticated: !!token,
       token,
-      me: (meQuery.data as Me) ?? null,
+      user: currentUser,
+      me: currentUser,
       isLoadingMe: !!token && (meQuery.isLoading || meQuery.isFetching),
 
       refreshMe,
@@ -348,7 +360,7 @@ function useAuthState() {
     [
       booting,
       token,
-      meQuery.data,
+      currentUser,
       meQuery.isLoading,
       meQuery.isFetching,
       refreshMe,

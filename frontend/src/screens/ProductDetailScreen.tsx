@@ -1,6 +1,5 @@
 // src/screens/ProductDetailScreen.tsx
 import React, { useEffect, useState } from "react";
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +17,7 @@ import api from "../lib/api";
 import { Ionicons } from "@expo/vector-icons";
 import { useFavorites } from "../hooks/useFavorites";
 import { formatCurrency } from "../lib/formatCurrency";
+import { resolveProductImageUri } from "../lib/image";
 import type { Product } from "../types/product";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
@@ -96,7 +96,7 @@ export default function ProductDetailScreen() {
 
   // UI principal
   const p = data!;
-  const isB2B = user?.role === "NEGOCIO" || user?.role === "ADMIN";
+  const isB2B = user?.role === "BUSINESS" || user?.role === "ADMIN";
   const unitPrice = isB2B ? (typeof p.b2bPrice === "number" ? p.b2bPrice : p.price) : p.price;
   const formattedPrice = formatCurrency(unitPrice);
   const referencePrice = formatCurrency(p.price);
@@ -117,6 +117,7 @@ export default function ProductDetailScreen() {
   // Disponible (UI)
   const remaining = Math.max(0, stockTotal - inCartQty);
   const remainingAfterSelection = Math.max(0, remaining - qty);
+  const productImageUri = resolveProductImageUri(p.imageUrl);
 
   const clampQty = (q: number) => {
     if (remaining <= 0) return 1;
@@ -143,7 +144,7 @@ export default function ProductDetailScreen() {
         productId: p.id,
         name: p.name,
         price: unitPrice,
-        imageUrl: p.imageUrl ?? undefined,
+        imageUrl: productImageUri,
         stock: stockTotal || 99,
         category: p.category ?? null,
       },
@@ -182,11 +183,11 @@ export default function ProductDetailScreen() {
         }}
       >
         {/* Imagen */}
-        {p.imageUrl ? (
-          <Image source={{ uri: p.imageUrl }} style={{ width: "100%", aspectRatio: 16 / 9 }} resizeMode="cover" />
-        ) : (
-          <View style={{ width: "100%", aspectRatio: 16 / 9, backgroundColor: "#e5e7eb" }} />
-        )}
+        <Image
+          source={{ uri: productImageUri }}
+          style={{ width: "100%", aspectRatio: 16 / 9 }}
+          resizeMode="cover"
+        />
 
         {/* Contenido */}
         <View style={{ padding: 16 }}>

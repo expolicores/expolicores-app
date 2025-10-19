@@ -38,7 +38,12 @@ export class WhatsAppService {
     this.sendStatusUpdates = this.bool(this.cfg.get('WHATSAPP_SEND_STATUS_UPDATES'));
 
     this.fromProd   = this.sanitizeWhatsAppAddr(this.cfg.get<string>('TWILIO_WHATSAPP_FROM_PROD'));
-    this.msid       = this.cfg.get<string>('TWILIO_MESSAGING_SERVICE_SID') || null;
+
+    // Preferimos MSID específico de WA; compat: caer al genérico si existe
+    const msWa = this.cfg.get<string>('TWILIO_MESSAGING_SERVICE_SID_WA');
+    const msAny = this.cfg.get<string>('TWILIO_MESSAGING_SERVICE_SID');
+    this.msid       = (msWa || msAny) ?? null;
+
     this.toOverride = this.sanitizeWhatsAppAddr(this.cfg.get<string>('TWILIO_WHATSAPP_TO_OVERRIDE'));
 
     // Instancia Twilio
@@ -59,7 +64,7 @@ export class WhatsAppService {
 
     if (!this.twilioClient) this.logger.warn('Twilio client no inicializado (SID/TOKEN faltantes).');
     if (!this.msid && !this.fromProd) {
-      this.logger.warn('No hay ni TWILIO_MESSAGING_SERVICE_SID (MG…) ni TWILIO_WHATSAPP_FROM_PROD configurados.');
+      this.logger.warn('No hay ni TWILIO_MESSAGING_SERVICE_SID_WA (o genérico) ni TWILIO_WHATSAPP_FROM_PROD configurados.');
     }
   }
 
@@ -109,6 +114,12 @@ export class WhatsAppService {
     return `$${Math.round(n).toLocaleString('es-CO')}`;
   }
 
+  /** Extrae código Twilio si existe */
+  private errorCode(err: any): string | undefined {
+    const c = err?.code ?? err?.moreInfo ?? err?.status;
+    return c != null ? String(c) : undefined;
+  }
+
   // ========== Persistencia de logs ==========
 
   private async log(
@@ -155,6 +166,22 @@ export class WhatsAppService {
     return {} as const;
   }
 
+  /** Manejo unificado de error 63051 */
+  private handleWaError(context: string, err: any) {
+    const code = this.errorCode(err);
+    const msg = err?.message ?? String(err);
+    if (code === '63051') {
+      // WABA bloqueada/restringida
+      this.logger.warn(`[${context}] WABA_RESTRICTED (63051): ${msg}`);
+      const e = new Error('WABA_RESTRICTED');
+      // @ts-ignore
+      (e as any).code = 63051;
+      throw e;
+    }
+    // Otros errores, relanzo tal cual
+    throw err;
+  }
+
   // =============== API PÚBLICA ===============
 
   /** Enviar texto libre por WhatsApp (prod) */
@@ -178,11 +205,16 @@ export class WhatsAppService {
       const res = await this.twilioClient.messages.create({ ...this.baseParams(), to, body });
       this.logger.log(`WhatsApp enviado OK sid=${res.sid} to=${to}`);
     } catch (err: any) {
-      this.logger.error(`WhatsApp error to=${to}: ${err?.message || String(err)}`);
+      try {
+        this.handleWaError('sendMessage', err);
+      } catch (e) {
+        this.logger.error(`WhatsApp error to=${to}: ${err?.message || String(err)}`);
+        throw e;
+      }
     }
   }
 
-  /** Envío de OTP (plantilla + fallback) */
+  /** Envío de OTP (plantilla → texto dentro de WA) */
   async sendOtp(toPhone: string, code: string, ttlMin = 10): Promise<void> {
     if (!this.featureOn || !this.sendOn) {
       this.logger.debug(`[WA OFF][OTP] -> ${toPhone}: ${code}`);
@@ -218,22 +250,28 @@ export class WhatsAppService {
         });
         this.logger.log(`OTP WA template sent: ${res.sid}`);
         return;
-      } catch (e: any) {
-        this.logger.warn(`OTP WA template failed; fallback a texto. ${e?.message ?? e}`);
+      } catch (err: any) {
+        try {
+          this.handleWaError('sendOtp/template', err);
+        } catch (e) {
+          // si es 63051 no seguimos con texto; propagamos
+          if ((e as any)?.code === 63051) throw e;
+          this.logger.warn(`OTP WA template failed; fallback a texto. ${(err?.message ?? err)}`);
+        }
       }
     }
 
-    // 2) Fallback texto
-    const text = `Tu código de Expolicores es *${code}*. Vence en ${ttlMin} minutos. No lo compartas.`;
+    // 2) Texto
+    const text = `Tu código es *${code}*. Vence en ${ttlMin} minutos. No lo compartas.`;
     try {
       const res = await this.twilioClient.messages.create({ ...this.baseParams(), to, body: text });
       this.logger.log(`OTP WA text sent: ${res.sid}`);
-    } catch (e: any) {
-      this.logger.error(`OTP WA text error: ${e?.message ?? e}`);
+    } catch (err: any) {
+      this.handleWaError('sendOtp/text', err);
     }
   }
 
-  /** Confirmación de pedido (plantilla + fallback) */
+  /** Confirmación de pedido (plantilla → texto) */
   async sendOrderConfirmation(params: {
     toPhone: string;
     orderId: number;
@@ -266,7 +304,7 @@ export class WhatsAppService {
     const paymentLabel = params.paymentMethod === 'COD' ? 'Contraentrega' : params.paymentMethod;
 
     const sendPlain = async () => {
-      const header = `*${params.tenant ?? 'Expolicores'}*\nConfirmación de pedido #${params.orderId}`;
+      const header = `*${params.tenant ?? 'Atención al cliente'}*\nConfirmación de pedido #${params.orderId}`;
       const lineItems = params.items.slice(0, 8).map((i) => `- ${i.quantity}x ${i.name}`);
       const extra = params.items.length > 8 ? `-(+${params.items.length - 8} items)` : null;
       const itemsBlock = [...lineItems, ...(extra ? [extra] : [])].join('\n');
@@ -292,9 +330,13 @@ export class WhatsAppService {
         const res = await this.twilioClient!.messages.create({ ...this.baseParams(), to, body });
         await this.log(params.orderId, 'ORDER_CONFIRMATION', to, true, res.sid);
         return { ok: true, sid: res.sid };
-      } catch (e: any) {
-        await this.log(params.orderId, 'ORDER_CONFIRMATION', to, false, undefined, e?.message ?? String(e));
-        return { ok: false };
+      } catch (err: any) {
+        try {
+          this.handleWaError('order/plain', err);
+        } catch (e: any) {
+          await this.log(params.orderId, 'ORDER_CONFIRMATION', to, false, undefined, err?.message ?? String(err));
+          return { ok: false };
+        }
       }
     };
 
@@ -306,7 +348,6 @@ export class WhatsAppService {
         '2': this.cop(params.total),
         '3': paymentLabel,
         '4': addressDisplay || 'Dirección registrada',
-        // si tu plantilla tuviera otros placeholders numéricos, Twilio ignorará los no usados
         total: this.cop(params.total),
         payment: paymentLabel,
         address: addressDisplay || 'Dirección registrada',
@@ -321,18 +362,25 @@ export class WhatsAppService {
         });
         await this.log(params.orderId, 'ORDER_CONFIRMATION', to, true, res.sid);
         return { ok: true, sid: res.sid };
-      } catch (e: any) {
-        const msg = e?.message ?? String(e);
-        this.logger.warn(`WA template confirmation failed; fallback a texto. ${msg}`);
-        await this.log(params.orderId, 'ORDER_CONFIRMATION_TEMPLATE_FAIL', to, false, undefined, msg);
-        return sendPlain();
+      } catch (err: any) {
+        try {
+          this.handleWaError('order/template', err);
+        } catch (e: any) {
+          if ((e as any)?.code === 63051) {
+            await this.log(params.orderId, 'ORDER_CONFIRMATION', to, false, undefined, 'WABA_RESTRICTED');
+            throw e; // no seguimos a texto si WABA está bloqueada
+          }
+          this.logger.warn(`WA template confirmation failed; fallback a texto. ${err?.message ?? err}`);
+          await this.log(params.orderId, 'ORDER_CONFIRMATION_TEMPLATE_FAIL', to, false, undefined, err?.message ?? String(err));
+          return sendPlain();
+        }
       }
     }
 
     return sendPlain();
   }
 
-  /** Cambio de estado (plantilla + fallback) — idempotente por tipo */
+  /** Cambio de estado (plantilla → texto) — idempotente por tipo */
   async sendStatusUpdate(params: {
     toPhone: string;
     orderId: number;
@@ -368,7 +416,7 @@ export class WhatsAppService {
         params.newStatus === 'EN_CAMINO' ? 'En camino' :
         params.newStatus === 'ENTREGADO' ? 'Entregado' : 'Cancelado';
 
-      const body = `*${params.tenant ?? 'Expolicores'}* - Pedido #${params.orderId}
+      const body = `*${params.tenant ?? 'Atención al cliente'}* - Pedido #${params.orderId}
 Estado: *${human}*.
 Gracias por comprar con nosotros.`;
 
@@ -376,9 +424,13 @@ Gracias por comprar con nosotros.`;
         const res = await this.twilioClient!.messages.create({ ...this.baseParams(), to, body });
         await this.logOnce(params.orderId, type, to, res.sid, null);
         return { ok: true, sid: res.sid };
-      } catch (e: any) {
-        await this.logOnce(params.orderId, type, to, null, e?.message ?? String(e));
-        return { ok: false };
+      } catch (err: any) {
+        try {
+          this.handleWaError('status/plain', err);
+        } catch (e: any) {
+          await this.logOnce(params.orderId, type, to, null, err?.message ?? String(err));
+          return { ok: false };
+        }
       }
     };
 
@@ -399,11 +451,18 @@ Gracias por comprar con nosotros.`;
         });
         await this.logOnce(params.orderId, type, to, res.sid, null);
         return { ok: true, sid: res.sid };
-      } catch (e: any) {
-        const msg = e?.message ?? String(e);
-        this.logger.warn(`WA status template failed; fallback a texto. ${msg}`);
-        await this.log(params.orderId, `${type}_TEMPLATE_FAIL`, to, false, undefined, msg);
-        return sendPlain();
+      } catch (err: any) {
+        try {
+          this.handleWaError('status/template', err);
+        } catch (e: any) {
+          if ((e as any)?.code === 63051) {
+            await this.logOnce(params.orderId, type, to, null, 'WABA_RESTRICTED');
+            throw e;
+          }
+          this.logger.warn(`WA status template failed; fallback a texto. ${err?.message ?? err}`);
+          await this.log(params.orderId, `${type}_TEMPLATE_FAIL`, to, false, undefined, err?.message ?? String(err));
+          return sendPlain();
+        }
       }
     }
 
