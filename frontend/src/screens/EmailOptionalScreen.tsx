@@ -76,8 +76,8 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
         await deferEmailPrompt(true);
       }
 
-      // Volvemos a Home; el PostAuthGate decide (Name/Email/Catalog)
-      navigation.reset({ index: 0, routes: [{ name: 'Home' as never }] });
+      // Navegamos directo al Dashboard (ya no rebotamos por el Gate)
+      navigation.reset({ index: 0, routes: [{ name: 'Dashboard' as never }] });
     } catch (e: any) {
       const msg =
         e?.response?.data?.message ||

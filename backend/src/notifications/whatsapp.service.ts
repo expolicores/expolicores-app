@@ -21,9 +21,9 @@ export class WhatsAppService {
   private readonly sendStatusUpdates: boolean;
 
   // Orígenes / destino
-  private readonly fromProd: string | null;     // whatsapp:+57...
-  private readonly msid: string | null;         // MG...
-  private readonly toOverride: string | null;   // whatsapp:+57... (solo dev)
+  private readonly fromProd: string | null;   // whatsapp:+57...
+  private readonly msid: string | null;       // MG...
+  private readonly toOverride: string | null; // whatsapp:+57... (solo dev)
 
   constructor(
     private readonly cfg: ConfigService,
@@ -37,13 +37,19 @@ export class WhatsAppService {
     this.useTemplates      = this.bool(this.cfg.get('WHATSAPP_USE_TEMPLATES'));
     this.sendStatusUpdates = this.bool(this.cfg.get('WHATSAPP_SEND_STATUS_UPDATES'));
 
-    this.fromProd   = this.sanitizeWhatsAppAddr(this.cfg.get<string>('TWILIO_WHATSAPP_FROM_PROD'));
+    this.fromProd = this.sanitizeWhatsAppAddr(this.cfg.get<string>('TWILIO_WHATSAPP_FROM_PROD'));
 
-    // Preferimos MSID específico de WA; compat: caer al genérico si existe
-    const msWa = this.cfg.get<string>('TWILIO_MESSAGING_SERVICE_SID_WA');
+    // ⚠️ Acepta ambos nombres de variable para MS de WA:
+    // - TWILIO_MESSAGING_SERVICE_SID_WA (convención anterior)
+    // - TWILIO_MS_SID_WA (tu .env actual)
+    // y opcionalmente un genérico TWILIO_MESSAGING_SERVICE_SID
+    const msWa =
+      this.cfg.get<string>('TWILIO_MESSAGING_SERVICE_SID_WA') ||
+      this.cfg.get<string>('TWILIO_MS_SID_WA');
     const msAny = this.cfg.get<string>('TWILIO_MESSAGING_SERVICE_SID');
-    this.msid       = (msWa || msAny) ?? null;
+    this.msid = (msWa || msAny) ?? null;
 
+    // Override (solo dev)
     this.toOverride = this.sanitizeWhatsAppAddr(this.cfg.get<string>('TWILIO_WHATSAPP_TO_OVERRIDE'));
 
     // Instancia Twilio
@@ -64,7 +70,9 @@ export class WhatsAppService {
 
     if (!this.twilioClient) this.logger.warn('Twilio client no inicializado (SID/TOKEN faltantes).');
     if (!this.msid && !this.fromProd) {
-      this.logger.warn('No hay ni TWILIO_MESSAGING_SERVICE_SID_WA (o genérico) ni TWILIO_WHATSAPP_FROM_PROD configurados.');
+      this.logger.warn(
+        'No hay ni TWILIO_MS_SID_WA / TWILIO_MESSAGING_SERVICE_SID_WA (o el genérico TWILIO_MESSAGING_SERVICE_SID) ni TWILIO_WHATSAPP_FROM_PROD configurados.'
+      );
     }
   }
 
@@ -231,7 +239,11 @@ export class WhatsAppService {
       return;
     }
 
-    const contentSid = this.cfg.get<string>('WHATSAPP_OTP_CONTENT_SID');
+    // Acepta alias para Content SID de OTP:
+    // WHATSAPP_OTP_CONTENT_SID (preferido) o TWILIO_HX_SID_WA (legacy)
+    const contentSid =
+      this.cfg.get<string>('WHATSAPP_OTP_CONTENT_SID') ||
+      this.cfg.get<string>('TWILIO_HX_SID_WA');
 
     // 1) Intento por plantilla
     if (this.useTemplates && contentSid) {

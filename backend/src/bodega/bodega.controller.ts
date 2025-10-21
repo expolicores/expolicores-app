@@ -7,7 +7,7 @@ import { Role } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 // Solo BUSINESS (antes NEGOCIO) y ADMIN pueden acceder a todo el controller
-@Roles(Role.BUSINESS, Role.ADMIN)
+@Roles(Role.B2B, Role.ADMIN)
 @Controller('bodega')
 export class BodegaController {
   @Get('ping')

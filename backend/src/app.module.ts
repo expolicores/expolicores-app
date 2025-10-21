@@ -11,30 +11,36 @@ import { UsersModule } from './users/users.module';
 import { AddressesModule } from './addresses/addresses.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
-
-// 🆕 Bodega (B2B) — solo NEGOCIO/ADMIN vía RolesGuard en su controller
-import { BodegaModule } from './bodega/bodega.module';
 import { FavoritesModule } from './favorites/favorites.module';
+import features from './config/features';
+
+// Bodega (B2B) — catálogo/operaciones para NEGOCIO/ADMIN
+import { BodegaModule } from './bodega/bodega.module';
+
+// Business — flujo “Soy negocio”: solicitudes, estados admin y verificación
+import { BusinessModule } from './business/business.module';
 
 @Module({
   imports: [
-    // Carga .env global (ConfigService disponible en toda la app)
+    // Config global (.env) + feature flags
     ConfigModule.forRoot({
       isGlobal: true,
+      load: [features],
       envFilePath: '.env',
     }),
 
-    // Módulos de dominio/infra
+    // Infra / dominio
     PrismaModule,
     AuthModule,
     UsersModule,
     AddressesModule,
     ProductsModule,
-    OrdersModule, // dentro de OrdersModule ya importas shippingConfig
-
-    // 🆕 Registrar el módulo B2B
-    BodegaModule,
+    OrdersModule,
     FavoritesModule,
+
+    // Módulos B2B
+    BodegaModule, // acceso real a Bodega Virtual (protegido por RolesGuard/B2BApprovedGuard)
+    BusinessModule, // gestión de solicitudes B2B (apply, admin list/approve/reject)
   ],
   controllers: [AppController],
   providers: [AppService],

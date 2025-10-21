@@ -15,7 +15,12 @@ import { LoginDto } from './dto/login.dto';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 
-import { Role, User } from '@prisma/client';
+import {
+  Role,
+  User,
+  BusinessVerificationStatus,
+  AdminProcessStatus,
+} from '@prisma/client';
 import { WhatsAppService } from '../notifications/whatsapp.service';
 import { SmsService } from '../notifications/sms.service';
 
@@ -24,14 +29,24 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   // ===== Config OTP (vía .env) =====
-  private readonly OTP_DIGITS = parseInt(process.env.OTP_LENGTH ?? '', 10) || 6;
+  private readonly OTP_DIGITS =
+    parseInt(process.env.OTP_LENGTH ?? '', 10) || 6;
+
   private readonly OTP_TTL_MIN =
     parseInt(process.env.OTP_TTL_MIN ?? '', 10) ||
     Math.ceil((parseInt(process.env.OTP_TTL_SECONDS ?? '', 10) || 600) / 60); // compat con OTP_TTL_SECONDS
+
   private readonly OTP_MIN_INTERVAL_SEC =
     parseInt(process.env.OTP_MIN_INTERVAL_SEC ?? '', 10) ||
     parseInt(process.env.OTP_COOLDOWN_SECONDS ?? '', 10) ||
     45;
+
+  // Flags de canal (sin fallback entre canales)
+  private readonly FEATURE_SMS_OTP =
+    (process.env.FEATURE_SMS_OTP ?? 'false') === 'true';
+  private readonly FEATURE_WA_OTP =
+    (process.env.FEATURE_WHATSAPP_NOTIFICATIONS ?? 'false') === 'true' &&
+    (process.env.SEND_WHATSAPP_NOTIFS ?? 'false') === 'true';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -92,43 +107,23 @@ export class AuthService {
     return { access_token };
   }
 
-  // ===== Selección de canal (WA/SMS) =====
-  private chooseOtpChannel(prefer?: 'whatsapp' | 'sms'): 'whatsapp' | 'sms' {
-    const allowSms = (process.env.FEATURE_SMS_OTP ?? 'false') === 'true';
-    const canUseWa =
-      (process.env.FEATURE_WHATSAPP_NOTIFICATIONS ?? 'false') === 'true' &&
-      (process.env.SEND_WHATSAPP_NOTIFS ?? 'false') === 'true';
-
-    const defaultChoice = canUseWa ? 'whatsapp' : (allowSms ? 'sms' : 'whatsapp');
-    if (prefer === 'sms' && allowSms) return 'sms';
-    return defaultChoice;
+  // ===== Envío de OTP (SIN fallback entre canales) =====
+  private ensureChannelAllowed(channel: 'whatsapp' | 'sms') {
+    if (channel === 'sms' && !this.FEATURE_SMS_OTP) {
+      throw new BadRequestException('Canal SMS deshabilitado');
+    }
+    if (channel === 'whatsapp' && !this.FEATURE_WA_OTP) {
+      throw new BadRequestException('Canal WhatsApp deshabilitado');
+    }
   }
 
-  /** Envío de OTP según canal (WA por plantilla/fallback o SMS). */
-  private async trySendOtp(
-    toPhoneE164: string,
-    code: string,
-    prefer?: 'whatsapp' | 'sms',
-  ) {
-    const channel = this.chooseOtpChannel(prefer);
-
+  /** Envío de OTP exactamente por el canal solicitado. Sin fallback. */
+  private async sendOtpExact(toPhoneE164: string, code: string, channel: 'whatsapp' | 'sms') {
+    this.ensureChannelAllowed(channel);
     if (channel === 'sms') {
-      try {
-        await this.sms.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
-        return { channel: 'sms' as const };
-      } catch (e: any) {
-        // Fallback a WhatsApp si SMS falla y WA está activo
-        this.logger.warn(`SMS OTP failed (${e?.message}). Trying WhatsApp fallback…`);
-        const waOn =
-          (process.env.FEATURE_WHATSAPP_NOTIFICATIONS ?? 'false') === 'true' &&
-          (process.env.SEND_WHATSAPP_NOTIFS ?? 'false') === 'true';
-        if (!waOn) throw e;
-        await this.whatsapp.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
-        return { channel: 'whatsapp' as const, fallback: 'from-sms' as const };
-      }
+      await this.sms.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
+      return { channel: 'sms' as const };
     }
-
-    // default: WhatsApp
     await this.whatsapp.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
     return { channel: 'whatsapp' as const };
   }
@@ -166,6 +161,13 @@ export class AuthService {
     const isDevEcho =
       process.env.NODE_ENV !== 'production' ||
       process.env.LOG_OTP_DEV === 'true';
+
+    // Validar canal explícito (sin fallback)
+    const channel = (dto.channel ?? '').toLowerCase();
+    if (channel !== 'whatsapp' && channel !== 'sms') {
+      throw new BadRequestException('Canal inválido (whatsapp|sms)');
+    }
+    this.ensureChannelAllowed(channel as 'whatsapp' | 'sms');
 
     let phone = '';
 
@@ -212,10 +214,14 @@ export class AuthService {
       where: { phone },
       create: {
         phone,
-        role: Role.USER,
-        name: 'Usuario',
+        role: Role.B2C, // rol por defecto retail
+        name: 'Cliente',
         isPhoneVerified: false,
         isEmailVerified: false,
+        // Estados B2B default (no solicitados)
+        businessVerificationStatus: BusinessVerificationStatus.NONE,
+        adminProcessStatus: AdminProcessStatus.PENDING,
+        // OTP
         otpCodeHash,
         otpExpiresAt,
         lastOtpSentAt: now,
@@ -227,10 +233,10 @@ export class AuthService {
       },
     });
 
-    // Enviar por canal seleccionado (respetando dto.channel si procede)
-    await this.trySendOtp(phone, code, dto.channel);
+    // Enviar por el canal solicitado (sin fallback)
+    await this.sendOtpExact(phone, code, channel as 'whatsapp' | 'sms');
 
-    if (isDevEcho) this.logger.log(`[DEV-OTP] phone=${phone} code=${code}`);
+    if (isDevEcho) this.logger.log(`[DEV-OTP] phone=${phone} code=${code} via=${channel}`);
 
     return {
       ok: true,
@@ -247,7 +253,15 @@ export class AuthService {
     access_token: string;
     user: Pick<
       User,
-      'id' | 'name' | 'email' | 'phone' | 'role' | 'isEmailVerified' | 'isPhoneVerified'
+      | 'id'
+      | 'name'
+      | 'email'
+      | 'phone'
+      | 'role'
+      | 'isEmailVerified'
+      | 'isPhoneVerified'
+      | 'businessVerificationStatus'
+      | 'adminProcessStatus'
     >;
   }> {
     let phone = '';
@@ -281,7 +295,7 @@ export class AuthService {
     };
 
     // Guardar nombre si llegó y el usuario no lo tenía
-    if (dto.name && !user.name) updateData.name = dto.name.trim();
+    if (dto.name && (!user.name || user.name === 'Cliente')) updateData.name = dto.name.trim();
 
     // Enrolar email opcional (si vino en verifyOtp)
     if (dto.emailEnroll) {
@@ -306,6 +320,8 @@ export class AuthService {
         role: true,
         isEmailVerified: true,
         isPhoneVerified: true,
+        businessVerificationStatus: true,
+        adminProcessStatus: true,
       },
     });
 
@@ -340,7 +356,6 @@ export class AuthService {
   }
 
   // ========== Enrolar email (usado por /auth/enroll-email y/o /users/me) ==========
-
   async enrollEmail(userId: number, rawEmail: string) {
     const email = this.normalizeEmail(rawEmail);
     if (!email) throw new BadRequestException('Email requerido');
@@ -362,7 +377,6 @@ export class AuthService {
   }
 
   // ========== Legacy (compat email+password) ==========
-
   async validateUser(email: string, password: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: this.normalizeEmail(email) },
@@ -389,13 +403,15 @@ export class AuthService {
     const password = await bcrypt.hash(dto.password, 10);
     const created = await this.prisma.user.create({
       data: {
-        name: dto.name,
+        name: dto.name || 'Cliente',
         email,
         password,
         phone: dto.phone ? this.normalizePhone(dto.phone) : undefined,
-        role: Role.USER,
+        role: Role.B2C, // por defecto retail
         isPhoneVerified: false,
         isEmailVerified: false,
+        businessVerificationStatus: BusinessVerificationStatus.NONE,
+        adminProcessStatus: AdminProcessStatus.PENDING,
       },
     });
 

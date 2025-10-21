@@ -1,9 +1,10 @@
 // src/screens/ProfileScreen.tsx
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -19,6 +20,10 @@ import { Controller, useForm } from 'react-hook-form';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import type { Me } from '../types/auth';
+
+// === Nuevos helpers B2B ===
+import { FEATURES } from '../lib/flags';
+import { businessApply } from '../lib/api';
 
 // --------- Validacion ---------
 const phoneSchema = z
@@ -48,6 +53,11 @@ function normalizeCoPhone(v: string) {
   return v;
 }
 
+// Tipos de apoyo (no obligamos a cambiar tu tipo Me)
+type Role = 'ADMIN' | 'B2C' | 'B2B';
+type BusinessVerificationStatus = 'NONE' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
+type AdminProcessStatus = 'PENDING' | 'IN_PROGRESS' | 'ATTENDED';
+
 export default function ProfileScreen() {
   const navigation = useNavigation<any>();
   const queryClient = useQueryClient();
@@ -66,6 +76,11 @@ export default function ProfileScreen() {
   });
 
   const user = ctxUser ?? me ?? null;
+
+  // Extrae campos B2B de forma segura (sin forzar tu tipo Me)
+  const role = (user as any)?.role as Role | undefined;
+  const businessVerificationStatus = (user as any)?.businessVerificationStatus as BusinessVerificationStatus | undefined;
+  const adminProcessStatus = (user as any)?.adminProcessStatus as AdminProcessStatus | undefined;
 
   const initialValues = useMemo(
     () => ({
@@ -129,8 +144,34 @@ export default function ProfileScreen() {
     },
   });
 
+  // Solicitud B2B (“Soy negocio”)
+  const [openB2BModal, setOpenB2BModal] = useState(false);
+  const { mutate: applyB2B, isLoading: isApplyingB2B } = useMutation({
+    mutationFn: async () => {
+      const res = await businessApply();
+      return res;
+    },
+    onSuccess: async () => {
+      setOpenB2BModal(false);
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
+      await refreshMe();
+      Alert.alert('Solicitud enviada', 'Revisaremos tu solicitud de negocio.');
+    },
+    onError: (error: any) => {
+      const msg = error?.response?.data?.message || error?.message || 'No se pudo enviar la solicitud.';
+      Alert.alert('Error', String(msg));
+    },
+  });
+
   const onSubmit = (values: FormValues) => updateMe(values);
   const saveDisabled = isSaving || !isValid || !isDirty;
+
+  // Lógica para mostrar botón “Soy negocio”
+  const canShowB2BButton =
+    FEATURES.B2B &&
+    role !== 'B2B' &&
+    businessVerificationStatus !== 'SUBMITTED' &&
+    businessVerificationStatus !== 'APPROVED';
 
   // Estados de carga
   if (booting || (!user && isFetching)) {
@@ -155,13 +196,60 @@ export default function ProfileScreen() {
     );
   }
 
+  // Helpers de UI para estados B2B
+  const adminBadgeColor =
+    adminProcessStatus === 'PENDING'
+      ? '#ef4444'
+      : adminProcessStatus === 'IN_PROGRESS'
+      ? '#f59e0b'
+      : '#10b981';
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Mi perfil</Text>
 
+      {/* Banners B2B */}
+      {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
+        <View style={[styles.banner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+          <Text style={[styles.bannerTitle, { color: '#1D4ED8' }]}>Solicitud B2B en revisión</Text>
+          <Text style={[styles.bannerText, { color: '#1E3A8A' }]}>
+            Te contactaremos por WhatsApp o teléfono para completar el proceso.
+          </Text>
+          {!!adminProcessStatus && (
+            <View style={[styles.badge, { backgroundColor: adminBadgeColor }]}>
+              <Text style={styles.badgeText}>
+                {adminProcessStatus === 'PENDING'
+                  ? 'Pendiente'
+                  : adminProcessStatus === 'IN_PROGRESS'
+                  ? 'En proceso'
+                  : 'Atendida'}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {FEATURES.B2B && role === 'B2B' && businessVerificationStatus === 'APPROVED' && (
+        <View style={[styles.banner, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+          <Text style={[styles.bannerTitle, { color: '#065F46' }]}>Cuenta de negocio activa</Text>
+          <Text style={[styles.bannerText, { color: '#065F46' }]}>
+            Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
+          </Text>
+        </View>
+      )}
+
+      {FEATURES.B2B && businessVerificationStatus === 'REJECTED' && (
+        <View style={[styles.banner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
+          <Text style={[styles.bannerTitle, { color: '#991B1B' }]}>Solicitud rechazada</Text>
+          <Text style={[styles.bannerText, { color: '#991B1B' }]}>
+            Si crees que es un error, contáctanos para revisar tu caso.
+          </Text>
+        </View>
+      )}
+
       <Text style={styles.label}>Email</Text>
       <View style={styles.readonly}>
-        <Text style={styles.readonlyText}>{user.email}</Text>
+        <Text style={styles.readonlyText}>{user.email ?? '-'}</Text>
       </View>
 
       <Text style={styles.label}>Nombre</Text>
@@ -224,6 +312,46 @@ export default function ProfileScreen() {
         </Text>
       </Pressable>
 
+      {/* Botón Soy negocio (solo si aplica) */}
+      {canShowB2BButton && (
+        <>
+          <View style={{ height: 16 }} />
+          <Pressable
+            style={[styles.secondaryButton, styles.secondaryButtonBlack]}
+            onPress={() => setOpenB2BModal(true)}
+          >
+            <Text style={styles.secondaryButtonText}>Soy negocio</Text>
+          </Pressable>
+
+          <Modal
+            visible={openB2BModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setOpenB2BModal(false)}
+          >
+            <View style={styles.modalBackdrop}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>Condiciones B2B</Text>
+                <Text style={styles.modalText}>
+                  Los precios y beneficios B2B aplican solo tras verificación manual (RUT y datos
+                  fiscales). Podemos contactarte por WhatsApp o teléfono para validar información.
+                </Text>
+                <View style={styles.modalActions}>
+                  <Pressable onPress={() => setOpenB2BModal(false)}>
+                    <Text style={styles.modalCancel}>Cancelar</Text>
+                  </Pressable>
+                  <Pressable onPress={() => applyB2B()} disabled={isApplyingB2B}>
+                    <Text style={styles.modalAccept}>
+                      {isApplyingB2B ? 'Enviando…' : 'Aceptar y solicitar'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        </>
+      )}
+
       <View style={{ height: 16 }} />
 
       <Pressable
@@ -276,30 +404,63 @@ const styles = StyleSheet.create({
   error: { marginTop: 4, color: '#ef4444' },
   hint: { marginTop: 6, color: '#6b7280', fontSize: 12 },
   muted: { color: '#6b7280' },
+
   saveButton: {
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveButtonEnabled: {
-    backgroundColor: '#0E8A3A',
-  },
-  saveButtonDisabled: {
-    backgroundColor: '#d1d5db',
-  },
+  saveButtonEnabled: { backgroundColor: '#0E8A3A' },
+  saveButtonDisabled: { backgroundColor: '#d1d5db' },
   saveButtonText: { color: '#fff', fontWeight: '700' },
+
   secondaryButton: {
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  secondaryButtonBlue: {
-    backgroundColor: '#1D4ED8',
-  },
-  secondaryButtonRed: {
-    backgroundColor: '#c0392b',
-  },
+  secondaryButtonBlue: { backgroundColor: '#1D4ED8' },
+  secondaryButtonBlack: { backgroundColor: '#111827' },
+  secondaryButtonRed: { backgroundColor: '#c0392b' },
   secondaryButtonText: { color: '#fff', fontWeight: '700' },
+
+  // Banners
+  banner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  bannerTitle: { fontWeight: '700', marginBottom: 4 },
+  bannerText: { fontSize: 12 },
+
+  // Badge
+  badge: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+
+  // Modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 24,
+    justifyContent: 'center',
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8, color: '#111' },
+  modalText: { color: '#374151', marginBottom: 12 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 16 },
+  modalCancel: { color: '#111' },
+  modalAccept: { color: '#0ea5e9', fontWeight: '700' },
 });

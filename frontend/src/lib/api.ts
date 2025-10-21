@@ -18,13 +18,16 @@ import type {
   OrderWithUser,
 } from '../types/order';
 
-/* ================= Base URL (Expo: EXPO_PUBLIC_* disponible en runtime) ================ */
-/**
- * ENV.API_URL debe venir de EXPO_PUBLIC_API_URL (o BASE_URL en tu env.ts).
- * Si por alguna razón no está definido, aplicamos un fallback útil de dev.
- */
+/* =======================================================================================
+ * Base URL (Expo: EXPO_PUBLIC_* disponible en runtime)
+ * Lee múltiples variantes por compatibilidad: ENV.API_URL, ENV.API_BASE_URL,
+ * EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_API_URL. Fallback útil para emulador.
+ * ===================================================================================== */
 const API_BASE_URL =
   (ENV.API_URL as string | undefined)?.trim() ||
+  (ENV.API_BASE_URL as string | undefined)?.trim() ||
+  (process.env.EXPO_PUBLIC_API_BASE_URL as string | undefined)?.trim() ||
+  (process.env.EXPO_PUBLIC_API_URL as string | undefined)?.trim() ||
   (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');
 
 const API_TIMEOUT_MS = Number(ENV.API_TIMEOUT_MS ?? 15000);
@@ -58,10 +61,9 @@ function toLowercaseHeaders(h?: any): AxiosRequestHeaders {
 
 /* =========================== Interceptor de REQUEST (saneado) ========================== */
 /**
- * - Sigue reforzando anti-cache.
- * - Dedupe de logs (evita spam de la misma ruta en una ventana corta).
+ * - Refuerza anti-cache.
+ * - Dedupe de logs (evita spam en una ventana corta).
  * - Oculta rutas ruidosas como /auth/me salvo que el flag esté en "verbose".
- * - Controlado por flags (EXPO_PUBLIC_DEBUG_HTTP, EXPO_PUBLIC_DEBUG_HTTP_LEVEL).
  */
 const DEBUG_HTTP =
   (ENV as any).DEBUG_HTTP ??
@@ -100,7 +102,6 @@ api.interceptors.request.use((config) => {
     const key = `${method} ${path}`;
     const tooSoon = now - (lastLogAt[key] || 0) < DEDUPE_MS;
 
-    // En modo "normal" no logueamos rutas ruidosas; en "verbose" sí
     if (!isNoisy || DEBUG_HTTP_VERBOSITY === 'verbose') {
       if (!tooSoon) {
         console.log(
@@ -176,16 +177,21 @@ export type RequestOtpBody =
     }
   | { email: string; intent?: 'login' | 'register' };
 
+// Campos extra de UX que puede devolver el backend
 export type RequestOtpResp = {
   ok: boolean;
   throttled?: boolean;
   phoneMasked?: string;
   devOtp?: string;
-  // UX hints del backend
   cooldownSeconds?: number; // p.ej. 60
   remainingSeconds?: number; // si responde throttled
   expiresInSeconds?: number; // p.ej. 600 (10 min)
 };
+
+// === Tipos actualizados para roles y B2B ===
+export type Role = 'ADMIN' | 'B2C' | 'B2B';
+export type BusinessVerificationStatus = 'NONE' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
+export type AdminProcessStatus = 'PENDING' | 'IN_PROGRESS' | 'ATTENDED';
 
 export type VerifyOtpBody =
   | { phone: string; code: string; name?: string; emailEnroll?: string }
@@ -198,9 +204,12 @@ export type VerifyOtpResp = {
     name: string | null;
     email: string | null;
     phone: string | null;
-    role: 'USER' | 'ADMIN' | 'BUSINESS';
+    role: Role; // <- actualizado (B2C/B2B/ADMIN)
     isEmailVerified: boolean;
     isPhoneVerified: boolean;
+    // Campos nuevos para reflejar estado B2B en el cliente
+    businessVerificationStatus: BusinessVerificationStatus;
+    adminProcessStatus: AdminProcessStatus;
   };
 };
 
@@ -481,6 +490,59 @@ export async function updateProductPricing(
     `/products/${productId}`,
     payload,
   );
+  return data;
+}
+
+/* ======================================= B2B ========================================== */
+/** Usuario: pulsar "Soy negocio" -> queda SUBMITTED + PENDING */
+export async function businessApply(): Promise<{ ok: boolean }> {
+  const { data } = await api.post<{ ok: boolean }>('/business/apply', {});
+  return data;
+}
+
+/** Snapshot de mi estado B2B (útil para banners/UX) */
+export type MeB2B = VerifyOtpResp['user'];
+export async function businessMe(): Promise<MeB2B> {
+  const { data } = await api.get<MeB2B>('/business/me');
+  return data;
+}
+
+/** Admin: listar solicitudes (status CSV opcional: SUBMITTED,APPROVED,REJECTED) */
+export async function adminListB2BApplications(status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const { data } = await api.get('/admin/business/applications' + qs);
+  return data as Array<{
+    id: number;
+    name?: string | null;
+    phone: string;
+    email?: string | null;
+    role: Role;
+    businessVerificationStatus: BusinessVerificationStatus;
+    adminProcessStatus: AdminProcessStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }>;
+}
+
+/** Admin: aprobar/rechazar verificación (esto cambia rol a B2B/B2C) */
+export async function adminSetB2BVerification(
+  userId: number,
+  status: 'APPROVED' | 'REJECTED',
+) {
+  const { data } = await api.patch(`/admin/business/${userId}/verification`, {
+    status,
+  });
+  return data;
+}
+
+/** Admin: cambiar semáforo interno (Pendiente/En Proceso/Atendida) */
+export async function adminSetB2BAdminProcess(
+  userId: number,
+  status: 'PENDING' | 'IN_PROGRESS' | 'ATTENDED',
+) {
+  const { data } = await api.patch(`/admin/business/${userId}/admin-process`, {
+    status,
+  });
   return data;
 }
 

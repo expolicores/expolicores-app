@@ -82,7 +82,7 @@ export class OrdersService {
 
     const byId = new Map(products.map((p) => [p.id, p]));
     let subtotal = 0;
-    const usesB2B = user.role === Role.BUSINESS || user.role === Role.ADMIN; // 👈 reemplazo NEGOCIO→BUSINESS
+    const usesB2B = user.role === Role.B2B || user.role === Role.ADMIN;// 👈 reemplazo NEGOCIO→BUSINESS
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
       if (p.stock < it.quantity) throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
@@ -234,7 +234,7 @@ export class OrdersService {
     if (!existing) throw new NotFoundException(`Order with ID ${id} not found`);
 
     const usesB2B =
-      existing.user?.role === Role.BUSINESS || existing.user?.role === Role.ADMIN; // 👈 reemplazo NEGOCIO→BUSINESS
+      existing.user?.role === Role.B2B || existing.user?.role === Role.ADMIN; // 👈 reemplazo NEGOCIO→BUSINESS
 
     let totalUpdate: number | undefined;
     if (items) {

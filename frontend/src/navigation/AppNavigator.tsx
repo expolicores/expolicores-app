@@ -38,6 +38,9 @@ import RestaurantsPlaceholderScreen from '../screens/RestaurantsPlaceholderScree
 import BodegaScreen from '../screens/BodegaScreen';
 import HomeScreen from '../screens/HomeScreen';
 
+/** ========== Admin — Solicitudes B2B (nuevo) ========== */
+import AdminBusinessApplicationsScreen from '../screens/AdminBusinessApplicationsScreen';
+
 /** ================= Buttons en header ================= */
 import OrdersButton from '../components/OrdersButton';
 import FavoritesButton from '../components/FavoritesButton';
@@ -45,6 +48,8 @@ import FavoritesButton from '../components/FavoritesButton';
 /** ---------------- Feature flags ---------------- **/
 const RESTAURANTS_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_RESTAURANTS || 'false') === 'true';
+const B2B_ENABLED =
+  (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
 
 /** ---------------- Stacks tipados ---------------- **/
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -110,10 +115,15 @@ function AddressesNavigator() {
 
 /** ---------------- Gate post-auth: decide a dónde ir ---------------- **/
 function PostAuthGate({ navigation }: any) {
-  const { user, booting, isLoadingMe, emailDeferred } = useAuth();
+  const { user, booting, isLoadingMe, emailDeferred, signOut } = useAuth();
 
   useEffect(() => {
     if (booting || isLoadingMe) return;
+
+    if (!user) {
+      signOut().catch(() => undefined);
+      return;
+    }
 
     // 1) Nombre primero
     const name = (user?.name ?? '').trim();
@@ -124,7 +134,7 @@ function PostAuthGate({ navigation }: any) {
       return;
     }
 
-    // 2) Email si no esta y NO ha sido diferido
+    // 2) Email si no está y NO ha sido diferido
     const emailValue = (user?.email ?? '').trim();
     const hasEmail = emailValue.length > 0;
     if (!hasEmail && !emailDeferred) {
@@ -132,9 +142,9 @@ function PostAuthGate({ navigation }: any) {
       return;
     }
 
-    // 3) Ruta feliz -> Home (desde alli se llega a Mercado/Bodega)
+    // 3) Ruta feliz -> Home (desde allí se llega a Mercado/Bodega)
     navigation.replace('Dashboard');
-  }, [booting, isLoadingMe, user, emailDeferred, navigation]);
+  }, [booting, isLoadingMe, user, emailDeferred, navigation, signOut]);
 
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -146,6 +156,18 @@ function PostAuthGate({ navigation }: any) {
 /** ---------------- App Navigator ---------------- **/
 export default function AppNavigator() {
   const { booting, isAuthenticated, user } = useAuth();
+
+  // Estado B2B del usuario (si el backend ya lo incluye en /auth/me)
+  const role = (user as any)?.role as 'ADMIN' | 'B2C' | 'B2B' | undefined;
+  const businessVerificationStatus = (user as any)?.businessVerificationStatus as
+    | 'NONE'
+    | 'SUBMITTED'
+    | 'APPROVED'
+    | 'REJECTED'
+    | undefined;
+
+  const canSeeBodegaVirtual =
+    B2B_ENABLED && role === 'B2B' && businessVerificationStatus === 'APPROVED';
 
   if (booting) {
     return (
@@ -164,8 +186,10 @@ export default function AppNavigator() {
       >
         <Ionicons name="home-outline" size={22} color="#111" />
       </Pressable>
+
       {user?.role === 'ADMIN' ? (
         <>
+          {/* Admin: listas de precio B2C/B2B */}
           <Pressable
             onPress={() => navigation.navigate('AdminPriceListB2C')}
             style={{ paddingHorizontal: 6 }}
@@ -178,14 +202,25 @@ export default function AppNavigator() {
           >
             <Ionicons name="pricetags-outline" size={22} color="#111" />
           </Pressable>
+          {/* Admin: pedidos */}
           <Pressable
             onPress={() => navigation.navigate('AdminOrders')}
             style={{ paddingHorizontal: 6 }}
           >
             <Ionicons name="clipboard-outline" size={22} color="#111" />
           </Pressable>
+          {/* Admin: solicitudes B2B (solo si el feature está activo) */}
+          {B2B_ENABLED && (
+            <Pressable
+              onPress={() => navigation.navigate('AdminBusinessApplications')}
+              style={{ paddingHorizontal: 6 }}
+            >
+              <Ionicons name="briefcase-outline" size={22} color="#111" />
+            </Pressable>
+          )}
         </>
       ) : null}
+
       <FavoritesButton />
       <OrdersButton />
       <HeaderCartButton onPress={() => navigation.navigate('Cart')} />
@@ -259,15 +294,17 @@ export default function AppNavigator() {
             />
           )}
 
-          {/* BODEGA VIRTUAL (B2B) */}
-          <RootStack.Screen
-            name="Bodega"
-            component={BodegaScreen}
-            options={({ navigation }) => ({
-              title: 'Bodega Virtual',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
+          {/* BODEGA VIRTUAL (B2B) — la ruta existe, pero su acceso UI se controla con canSeeBodegaVirtual */}
+          {B2B_ENABLED && (
+            <RootStack.Screen
+              name="Bodega"
+              component={BodegaScreen}
+              options={({ navigation }) => ({
+                title: 'Bodega Virtual',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+          )}
 
           {/* PRODUCTO / PERFIL / CARRITO */}
           <RootStack.Screen
@@ -315,6 +352,19 @@ export default function AppNavigator() {
               headerRight: () => headerRightCommon(navigation),
             })}
           />
+
+          {/* Admin: Solicitudes B2B (solo si feature activo) */}
+          {B2B_ENABLED && (
+            <RootStack.Screen
+              name="AdminBusinessApplications"
+              component={AdminBusinessApplicationsScreen}
+              options={({ navigation }) => ({
+                title: 'Solicitudes B2B',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+          )}
+
           <RootStack.Screen
             name="OrderTracking"
             component={OrderTrackingScreen}

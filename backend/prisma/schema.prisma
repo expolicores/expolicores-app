@@ -11,9 +11,24 @@ datasource db {
 
 // ---------- Enums ----------
 enum Role {
-  USER
   ADMIN
-  BUSINESS
+  B2C
+  B2B
+}
+
+// Flujo B2B (verificación documental por fuera de la app)
+enum BusinessVerificationStatus {
+  NONE
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+// Estado operativo interno para gestión del admin (semáforo)
+enum AdminProcessStatus {
+  PENDING
+  IN_PROGRESS
+  ATTENDED
 }
 
 enum OrderStatus {
@@ -33,9 +48,12 @@ model User {
   phone    String? @unique
   password String?
 
-  role Role @default(USER)
+  // Rol y estados B2B
+  role                       Role                       @default(B2C)
+  businessVerificationStatus BusinessVerificationStatus @default(NONE)
+  adminProcessStatus         AdminProcessStatus         @default(PENDING)
 
-  // Verificación
+  // Verificación de contacto
   isPhoneVerified Boolean @default(false)
   isEmailVerified Boolean @default(false)
 
@@ -108,7 +126,7 @@ model NotificationLog {
   @@index([messageSid])
 }
 
-// (tu modelo Product puede quedar tal cual)
+// Catálogo
 model Product {
   id          Int      @id @default(autoincrement())
   name        String

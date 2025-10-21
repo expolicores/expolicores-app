@@ -1,4 +1,4 @@
-﻿// frontend/src/screens/NameScreen.tsx
+// frontend/src/screens/NameScreen.tsx
 import React, { useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -23,16 +23,16 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Name'>;
 function sanitizeName(raw: string) {
   return raw
     .replace(/\s+/g, ' ')
-    .replace(/[^\p{L}\p{M}\s'.-]/gu, '') // letras + acentos + espacio/apóstrofo/punto/guion
+    .replace(/[^\p{L}\p{M}\s'.-]/gu, '')
     .trim();
 }
 
 /**
  * Pide y persiste el nombre del usuario tras verificar OTP.
- * Requiere que el JWT ya esté configurado (setAuthToken se hace en verify-otp).
+ * Requiere que el JWT ya este configurado (setAuthToken se hace en verify-otp).
  */
 export default function NameScreen({ navigation }: Props) {
-  const { refreshMe } = useAuth(); // refresca el perfil en contexto
+  const { refreshMe, emailDeferred } = useAuth();
 
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -46,23 +46,29 @@ export default function NameScreen({ navigation }: Props) {
     isSubmittingRef.current = true;
     setLoading(true);
     try {
-      // Guarda nombre en backend
       await updateMe({ name: trimmed });
 
-      // Refresca perfil (muy importante para que el Gate no “rebote”)
-      await refreshMe?.();
+      const updated = await refreshMe?.();
+      const emailValue = (updated?.email ?? '').trim();
 
-      // Enrutamos al Gate para que decida (si falta email y no está diferido → EmailOptional; si no → Home)
+      if (!emailValue && !emailDeferred) {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'EmailOptional' as never }],
+        });
+        return;
+      }
+
       navigation.reset({
         index: 0,
-        routes: [{ name: 'Home' as never }],
+        routes: [{ name: 'Dashboard' as never }],
       });
     } catch (e: any) {
       const msg =
         e?.message ||
         (typeof e?.details?.message === 'string' ? e.details.message : null) ||
-        'No pudimos guardar tu nombre. Verifica tu conexión e intenta de nuevo.';
-      const extra = e?.status === 401 ? '\n\nVuelve a iniciar sesión para continuar.' : '';
+        'No pudimos guardar tu nombre. Verifica tu conexion e intenta de nuevo.';
+      const extra = e?.status === 401 ? '\n\nVuelve a iniciar sesion para continuar.' : '';
       Alert.alert('Error', msg + extra);
     } finally {
       setLoading(false);

@@ -15,6 +15,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { normalizePhoneCo } from '../lib/phone';
 import { requestOtp, type RequestOtpResp } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { ENV } from '../config/env';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PhoneEntry'>;
 
@@ -39,22 +40,29 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
   const phone = useMemo(() => normalizePhoneCo(raw), [raw]);
   const disabled = !phone || loading;
 
-  const onContinueWithPhone = async () => {
+  const onContinueWithPhone = async (channel: 'whatsapp' | 'sms' = 'whatsapp') => {
     if (!phone) return;
     if (sentRef.current || loading) return;
+    if (channel === 'sms' && !ENV.FEATURE_SMS) {
+      Alert.alert(
+        'No disponible',
+        'El env\u00edo por SMS no est\u00e1 habilitado en este entorno. Por favor, solicita el c\u00f3digo por WhatsApp.',
+      );
+      return;
+    }
 
     setLoading(true);
     setThrottledMsg(null);
 
     try {
-      // Llamada al backend
+      // Llamada al backend (canal explícito según botón)
       const res: RequestOtpResp = await requestOtp({
         phone,
-        channel: 'whatsapp',
+        channel,
         intent, // 'login' | 'register'
       });
 
-      // Cooldown/expiracion desde el server (fallbacks seguros)
+      // Cooldown/expiración desde el server (fallbacks seguros)
       const cooldown =
         res?.throttled && typeof res?.remainingSeconds === 'number'
           ? res.remainingSeconds
@@ -85,10 +93,31 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
       });
     } catch (e: any) {
       sentRef.current = false;
+
+      // Mensajes de error más claros para casos comunes
+      const known =
+        e?.message === 'SMS_DELIVERY_FAILED'
+          ? 'No pudimos enviar el SMS. Verifica tu numero o intenta mas tarde.'
+          : e?.message === 'WABA_RESTRICTED'
+          ? 'WhatsApp temporalmente restringido. Usa SMS por favor.'
+          : channel === 'sms' &&
+            [
+              'Canal SMS deshabilitado',
+              'SMS feature disabled (FEATURE_SMS_OTP=false)',
+              'SMS feature disabled',
+              'No SMS sender configured. Configure TWILIO_MS_SID_SMS/TWILIO_MESSAGING_SERVICE_SID_SMS or TWILIO_SMS_FROM',
+            ].includes(e?.message)
+          ? 'El env\u00edo por SMS no est\u00e1 disponible en este momento. Solicita el c\u00f3digo por WhatsApp.'
+          : channel === 'sms' && e?.message === 'Request failed with status code 400'
+          ? 'No pudimos enviar el SMS. Solicita el c\u00f3digo por WhatsApp.'
+          : null;
+
       const msg =
+        known ||
         e?.message ||
         (typeof e?.details?.message === 'string' ? e.details.message : null) ||
         'No pudimos enviar el codigo. Intenta de nuevo.';
+
       Alert.alert('Error', msg);
     } finally {
       setLoading(false);
@@ -108,6 +137,9 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
 
         <TextInput
           keyboardType="phone-pad"
+          textContentType="telephoneNumber"
+          autoCapitalize="none"
+          autoCorrect={false}
           value={raw}
           onChangeText={setRaw}
           placeholder="311 502 6310"
@@ -122,9 +154,10 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
           }}
         />
 
+        {/* Boton verde: WhatsApp */}
         <TouchableOpacity
           disabled={disabled}
-          onPress={onContinueWithPhone}
+          onPress={() => onContinueWithPhone('whatsapp')}
           style={{
             backgroundColor: '#10B981',
             padding: 16,
@@ -137,6 +170,7 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
           }}
           accessibilityRole="button"
           accessibilityLabel="Recibir codigo por WhatsApp"
+          testID="btn-wa-otp"
         >
           <Ionicons name="logo-whatsapp" size={20} color="#fff" style={{ marginRight: 8 }} />
           <Text
@@ -151,25 +185,42 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
           </Text>
         </TouchableOpacity>
 
-        {/* Si luego habilitamos SMS: descomenta y reutiliza onContinue con channel='sms' */}
-        {/* <TouchableOpacity
+        {/* Boton blanco: SMS */}
+        <TouchableOpacity
           disabled={disabled}
-          onPress={() => onContinue('sms')}
+          onPress={() => onContinueWithPhone('sms')}
           style={{
-            backgroundColor: '#111827',
+            backgroundColor: '#ffffff',
             padding: 16,
             borderRadius: 16,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
             opacity: disabled ? 0.6 : 1,
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'center',
           }}
+          accessibilityRole="button"
+          accessibilityLabel="Recibir codigo por SMS"
+          testID="btn-sms-otp"
         >
-          <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-          <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: '700' }}>
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={20}
+            color="#111827"
+            style={{ marginRight: 8 }}
+          />
+          <Text
+            style={{
+              color: '#111827',
+              textAlign: 'center',
+              fontSize: 16,
+              fontWeight: '700',
+            }}
+          >
             Recibir codigo por SMS
           </Text>
-        </TouchableOpacity> */}
+        </TouchableOpacity>
 
         {throttledMsg ? (
           <Text style={{ color: '#EF4444', marginTop: 12 }}>{throttledMsg}</Text>
@@ -177,7 +228,7 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
 
         {phone ? (
           <Text style={{ color: '#6B7280', marginTop: 12 }}>
-            Enviaremos el codigo a {' '}
+            Enviaremos el codigo a{' '}
             <Text style={{ color: '#111827', fontWeight: '700' }}>
               {maskPhoneE164(phone)}
             </Text>
@@ -187,5 +238,3 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
     </SafeAreaView>
   );
 }
-
-

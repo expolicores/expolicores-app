@@ -37,14 +37,14 @@ async function main() {
     where: { phone: '+573001112233' },
     update: {
       name: 'Licorera Don Pepe',
-      role: Role.BUSINESS,
+      role: Role.B2B,
       isPhoneVerified: true,
       email: 'negocio@expolicores.com',
     },
     create: {
       name: 'Licorera Don Pepe',
       phone: '+573001112233',
-      role: Role.BUSINESS,
+      role: Role.B2B,
       isPhoneVerified: true,
       isEmailVerified: false,
       email: 'negocio@expolicores.com',
@@ -56,7 +56,7 @@ async function main() {
     where: { phone: '+573115026310' },
     update: {
       name: 'Juan Cliente',
-      role: Role.USER,
+      role: Role.B2C,
       isPhoneVerified: true,
       email: 'expolicores@outlook.com',
       isEmailVerified: false,
@@ -64,7 +64,7 @@ async function main() {
     create: {
       name: 'Juan Cliente',
       phone: '+573115026310',
-      role: Role.USER,
+      role: Role.B2C,
       isPhoneVerified: true,
       isEmailVerified: false,
       email: 'expolicores@outlook.com',
