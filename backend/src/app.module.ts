@@ -20,6 +20,9 @@ import { BodegaModule } from './bodega/bodega.module';
 // Business — flujo “Soy negocio”: solicitudes, estados admin y verificación
 import { BusinessModule } from './business/business.module';
 
+// Geocoding / Cobertura — validación de radio y costos de envío
+import { GeoModule } from './geo/geo.module';
+
 @Module({
   imports: [
     // Config global (.env) + feature flags
@@ -39,8 +42,11 @@ import { BusinessModule } from './business/business.module';
     FavoritesModule,
 
     // Módulos B2B
-    BodegaModule, // acceso real a Bodega Virtual (protegido por RolesGuard/B2BApprovedGuard)
+    BodegaModule, // acceso a Bodega Virtual (protegido por Roles/B2BApproved)
     BusinessModule, // gestión de solicitudes B2B (apply, admin list/approve/reject)
+
+    // Geocoding / Cobertura
+    GeoModule, // expone POST /geo/validate — controlado por FEATURE_GEOCODING en runtime
   ],
   controllers: [AppController],
   providers: [AppService],
