@@ -11,10 +11,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './create-order.dto';
 import { UpdateOrderDto } from './update-order.dto';
 import { OrderStatus, Role } from '@prisma/client';
-import { haversineKm, shippingForKm } from '../common/geo';
 import shippingConfig from '../config/shipping';
 import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
+import { validateGeo } from '../common/geo'; // ← usa la misma lógica que /geo/validate
 
 @Injectable()
 export class OrdersService {
@@ -53,16 +53,8 @@ export class OrdersService {
     if (!address) throw new NotFoundException('ADDRESS_NOT_FOUND');
 
     const hasGeo = typeof address.lat === 'number' && typeof address.lng === 'number';
-    let km = 0;
 
-    if (hasGeo) {
-      km = haversineKm(
-        { lat: this.shipping.store.lat, lng: this.shipping.store.lng },
-        { lat: address.lat as number, lng: address.lng as number },
-      );
-      if (km > this.shipping.radiusKm) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
-    }
-
+    // ===== Productos y subtotal (respeta B2B/ADMIN) =====
     if (!dto.items || dto.items.length === 0) throw new BadRequestException('EMPTY_CART');
 
     const ids = dto.items.map((i) => i.productId);
@@ -81,8 +73,8 @@ export class OrdersService {
     }
 
     const byId = new Map(products.map((p) => [p.id, p]));
+    const usesB2B = user.role === Role.B2B || user.role === Role.ADMIN;
     let subtotal = 0;
-    const usesB2B = user.role === Role.B2B || user.role === Role.ADMIN;// 👈 reemplazo NEGOCIO→BUSINESS
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
       if (p.stock < it.quantity) throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
@@ -90,11 +82,18 @@ export class OrdersService {
       subtotal += unitPrice * it.quantity;
     }
 
-    const shipping = hasGeo
-      ? shippingForKm(km, this.shipping.base, this.shipping.perKm, this.shipping.min)
-      : this.shipping.min;
+    // ===== Envío (MISMA lógica que Checkout: validateGeo) =====
+    let shipping = this.shipping.min; // fallback sin geo
+    if (hasGeo) {
+      const geo = validateGeo({ lat: address.lat as number, lng: address.lng as number });
+      if (!geo.inCoverage) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
+      shipping = geo.shippingCost;
+      // Si necesitas auditar: geo.meta?.pricingMode, geo.distanceKm, etc.
+    }
+
     const total = subtotal + shipping;
 
+    // ===== Crear orden + descontar stock =====
     const created = await this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
@@ -117,22 +116,17 @@ export class OrdersService {
       return order;
     });
 
-    // --- WhatsApp confirmación (US10) ---
+    // ===== WhatsApp confirmación =====
     const toPhone = this.normalizeCoPhone(user.phone ?? created.user?.phone ?? '');
     const addressLabel = address.label ?? 'Dirección';
     const addressLine = [address.line1, address.neighborhood, address.city].filter(Boolean).join(', ');
     const waItems = created.items.map((i) => {
       const linePrice = usesB2B ? i.product.b2bPrice : i.product.price;
-      return {
-        name: i.product.name,
-        quantity: i.quantity,
-        price: linePrice,
-      };
+      return { name: i.product.name, quantity: i.quantity, price: linePrice };
     });
+
     const notesFromPayload = [dto.notes, address.notes];
-    if (!hasGeo) {
-      notesFromPayload.push('Atencion: validar cobertura, direccion sin coordenadas');
-    }
+    if (!hasGeo) notesFromPayload.push('Atención: validar cobertura, dirección sin coordenadas');
     const notes =
       notesFromPayload
         .map((n) => (n ?? '').trim())
@@ -173,6 +167,7 @@ export class OrdersService {
       },
     });
 
+    // Devuelve totales explícitos para OrderSuccessScreen
     return { ...created, subtotal, shipping, total, address };
   }
 
@@ -199,7 +194,7 @@ export class OrdersService {
   }
 
   async findOneAs(id: number, user: { id: number; role: Role }) {
-    const where = user.role === Role.ADMIN ? { id } : { id, userId: user.id }; // 👈 usa enum Role
+    const where = user.role === Role.ADMIN ? { id } : { id, userId: user.id };
     const order = await this.prisma.order.findFirst({ where, include: this.orderInclude });
     if (!order) throw new NotFoundException('Order not found');
     return order;
@@ -217,8 +212,6 @@ export class OrdersService {
       include: { items: { include: { product: true } }, user: true },
     });
     if (!order) throw new NotFoundException('Order not found');
-
-    // owner o admin
     if (user.role !== Role.ADMIN && order.userId !== user.id) {
       throw new ForbiddenException('You cannot access this order');
     }
@@ -233,8 +226,7 @@ export class OrdersService {
     });
     if (!existing) throw new NotFoundException(`Order with ID ${id} not found`);
 
-    const usesB2B =
-      existing.user?.role === Role.B2B || existing.user?.role === Role.ADMIN; // 👈 reemplazo NEGOCIO→BUSINESS
+    const usesB2B = existing.user?.role === Role.B2B || existing.user?.role === Role.ADMIN;
 
     let totalUpdate: number | undefined;
     if (items) {
@@ -255,7 +247,6 @@ export class OrdersService {
     return updated;
   }
 
-  // --- Cambio de estado + WhatsApp corto + log por estado (US12) ---
   async updateStatus(id: number, status: OrderStatus) {
     const order = await this.prisma.order.update({
       where: { id },
@@ -263,7 +254,6 @@ export class OrdersService {
       include: this.orderInclude,
     });
 
-    // Solo notificamos los estados de la HU
     if (status === 'EN_CAMINO' || status === 'ENTREGADO' || status === 'CANCELADO') {
       const toPhone = this.normalizeCoPhone(order.user?.phone ?? '');
       const res = await this.whatsapp.sendStatusUpdate({
@@ -273,7 +263,6 @@ export class OrdersService {
         tenant: 'Expolicores Villa de Leyva',
       });
 
-      // Log por estado idempotente (STATUS_EN_CAMINO | STATUS_ENTREGADO | STATUS_CANCELADO)
       await this.prisma.notificationLog.upsert({
         where: { orderId_type: { orderId: order.id, type: `STATUS_${status}` } },
         update: {

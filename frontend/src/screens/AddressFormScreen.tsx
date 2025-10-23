@@ -18,9 +18,12 @@ import {
 import { useForm } from 'react-hook-form';
 import type { Address } from '../types/address';
 import { createAddress, updateAddress } from '../lib/api.addresses';
+import { STORE, DEFAULT_RADIUS_M } from '../config/geo';
 import { getGooglePlacesKey } from '../lib/googleKey';
 import { useDebounce } from '../lib/useDebounce';
 import { validateGeo } from '../lib/api.geo';
+import { rankVillaLeyvaFirst } from '../lib/placesRank';
+import { getUserBiasOrNull } from '../services/locationBias';
 import type { NormalizedAddress } from '../types/geo';
 
 type Form = {
@@ -28,10 +31,14 @@ type Form = {
   recipient: string;
   phone: string;
   line1: string;      // formattedAddress o texto manual (fallback)
-  line2?: string;
+  line2?: string;     // se construye con detalles adicionales + apt/habitación
   isDefault?: boolean;
   lat?: number | null;
   lng?: number | null;
+
+  // NUEVOS en UI (no existen en backend; se consolidan en line2 al guardar)
+  additionalDetails?: string; // "Junto al Hotel Puente Piedra"
+  aptRoom?: string;          // Apto/Habitación (antes line2 directo)
 };
 
 type Suggestion = {
@@ -45,7 +52,7 @@ type Suggestion = {
 
 const FEATURE_GEOCODING = process.env.EXPO_PUBLIC_FEATURE_GEOCODING === 'true';
 
-// --- helpers ---
+// ===== helpers =====
 function newSessionToken() {
   return `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
@@ -81,7 +88,9 @@ export default function AddressFormScreen({ navigation, route }: any) {
     recipient: address?.recipient ?? '',
     phone: address?.phone ?? '',
     line1: address?.line1 ?? '',
-    line2: address?.line2 ?? '',
+    // line2 existente la separamos en 2 por si venía con texto
+    additionalDetails: '',
+    aptRoom: '',
     isDefault: address?.isDefault ?? true,
     lat: address?.lat ?? null,
     lng: address?.lng ?? null,
@@ -97,15 +106,27 @@ export default function AddressFormScreen({ navigation, route }: any) {
   const [latText, setLatText] = useState(address?.lat != null ? String(address.lat) : '');
   const [lngText, setLngText] = useState(address?.lng != null ? String(address.lng) : '');
 
+  // --- Bias (sesgo) ---
+  const [bias, setBias] = useState<{ lat: number; lng: number } | null>(null); // null = tienda
+  useEffect(() => {
+    // preparado para permisos futuros; hoy siempre null (usa tienda)
+    getUserBiasOrNull().then(setBias).catch(() => setBias(null));
+  }, []);
+
   // --- Autocomplete state ---
   const [query, setQuery] = useState('');
-  const debouncedQuery = useDebounce(query, 350); // respuesta más ágil
+  const debouncedQuery = useDebounce(query, 350);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [autoError, setAutoError] = useState<string | null>(null);
   const sessionRef = useRef<string | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const lastQueryRef = useRef<string>('');
+  const [hasSelectedSuggestion, setHasSelectedSuggestion] = useState(false);
+  const [autocompleteEnabled, setAutocompleteEnabled] = useState(false);
+
+  // Abort de autocomplete en curso (para botón X y limpiezas)
+  const autoAbortRef = useRef<AbortController | null>(null);
 
   // --- Cobertura ---
   const [coverage, setCoverage] = useState<{ inCoverage: boolean; distanceKm: number; shippingCost: number } | null>(null);
@@ -123,11 +144,28 @@ export default function AddressFormScreen({ navigation, route }: any) {
     }
   }, [query]);
 
-  // Autocomplete fetch con cancelación
+  // ===== helper para construir URL segun tipo =====
+  const buildAutocompleteUrl = (q: string, type: 'address' | 'establishment') => {
+    const center = bias ?? STORE;
+    const url = new URL('https://maps.googleapis.com/maps/api/place/autocomplete/json');
+    url.searchParams.set('input', q);
+    url.searchParams.set('key', GOOGLE_KEY);
+    url.searchParams.set('components', 'country:CO');
+    url.searchParams.set('types', type);
+    url.searchParams.set('location', `${center.lat},${center.lng}`);
+    url.searchParams.set('radius', String(DEFAULT_RADIUS_M));
+    if (!sessionRef.current) sessionRef.current = newSessionToken();
+    url.searchParams.set('sessiontoken', sessionRef.current);
+    return url.toString();
+  };
+
+  // Autocomplete fetch (address + establishment) con cancelación, merge y ranking
   useEffect(() => {
-    if (!FEATURE_GEOCODING) return;
+    if (!FEATURE_GEOCODING || !autocompleteEnabled) return;
     const q = debouncedQuery.trim();
     if (!q || q.length < 3) {
+      // limpiar sin disparar request
+      autoAbortRef.current?.abort();
       setSuggestions([]);
       setAutoError(null);
       return;
@@ -135,29 +173,37 @@ export default function AddressFormScreen({ navigation, route }: any) {
     if (q === lastQueryRef.current) return;
 
     const controller = new AbortController();
+    autoAbortRef.current = controller;
+
     (async () => {
       try {
         setLoadingAuto(true);
         setAutoError(null);
         lastQueryRef.current = q;
 
-        const url = new URL('https://maps.googleapis.com/maps/api/place/autocomplete/json');
-        url.searchParams.set('input', q);
-        url.searchParams.set('key', GOOGLE_KEY);
-        url.searchParams.set('components', 'country:CO');
-        url.searchParams.set('types', 'address');
-        url.searchParams.set('location', `${5.6369},${-73.5280}`);
-        url.searchParams.set('radius', '30000');
-        if (!sessionRef.current) sessionRef.current = newSessionToken();
-        url.searchParams.set('sessiontoken', sessionRef.current);
+        const [addrRes, estRes] = await Promise.all([
+          fetch(buildAutocompleteUrl(q, 'address'), { signal: controller.signal }),
+          fetch(buildAutocompleteUrl(q, 'establishment'), { signal: controller.signal }),
+        ]);
 
-        const res = await fetch(url.toString(), { signal: controller.signal });
-        const json = await res.json();
+        const addrJson = await addrRes.json();
+        const estJson = await estRes.json();
 
-        if (json.status !== 'OK' && json.status !== 'ZERO_RESULTS') {
-          throw new Error(json.error_message || json.status);
+        const ok = (js: any) => js.status === 'OK' || js.status === 'ZERO_RESULTS';
+        if (!ok(addrJson) || !ok(estJson)) {
+          throw new Error(addrJson.error_message || estJson.error_message || 'Autocomplete error');
         }
-        setSuggestions(json.predictions ?? []);
+
+        // Merge + dedupe por place_id
+        const merged: Suggestion[] = [
+          ...(addrJson.predictions ?? []),
+          ...(estJson.predictions ?? []),
+        ];
+        const seen = new Set<string>();
+        const dedup = merged.filter(p => (seen.has(p.place_id) ? false : (seen.add(p.place_id), true)));
+
+        const ranked = rankVillaLeyvaFirst(dedup);
+        setSuggestions(ranked);
       } catch (err: any) {
         if (err.name === 'AbortError') return;
         setAutoError(err?.message || 'No se pudo autocompletar');
@@ -168,13 +214,14 @@ export default function AddressFormScreen({ navigation, route }: any) {
     })();
 
     return () => controller.abort();
-  }, [debouncedQuery, GOOGLE_KEY]);
+  }, [debouncedQuery, GOOGLE_KEY, bias, autocompleteEnabled]);
 
   // Register fields
   useEffect(() => {
     register('label'); register('recipient'); register('phone');
     register('line1'); register('line2');
     register('isDefault'); register('lat'); register('lng');
+    register('additionalDetails'); register('aptRoom');
   }, [register]);
 
   // Reset al editar existente
@@ -182,13 +229,22 @@ export default function AddressFormScreen({ navigation, route }: any) {
     reset(initialValues, { keepDirty: false });
     setLatText(initialValues.lat != null ? String(initialValues.lat) : '');
     setLngText(initialValues.lng != null ? String(initialValues.lng) : '');
-  }, [initialValues, reset]);
+    // precargar query desde line1 cuando se edita
+    const preset = address?.line1 ?? '';
+    setQuery(preset);
+    setHasSelectedSuggestion(!!preset);
+    setAutocompleteEnabled(false);
+  }, [initialValues, reset, address?.line1]);
 
   const handlePickSuggestion = async (s: Suggestion) => {
     if (runningDetailsRef.current === s.place_id) return;
     runningDetailsRef.current = s.place_id;
 
     try {
+      autoAbortRef.current?.abort(); // detiene autocomplete en curso
+      autoAbortRef.current = null;
+      setHasSelectedSuggestion(true);
+      setAutocompleteEnabled(false);
       Keyboard.dismiss(); // cierra teclado al elegir
       setDetailsLoading(true);
       const placeId = s.place_id;
@@ -212,14 +268,20 @@ export default function AddressFormScreen({ navigation, route }: any) {
         throw new Error('Coordenadas no disponibles para esta dirección');
       }
 
-      // Guardar en form + inputs visibles
-      setValue('line1', formatted_address || s.description);
+      // 1) Mostrar la direccion elegida inmediatamente en el input
+      const displayAddress = formatted_address || s.description;
+      lastQueryRef.current = displayAddress; // evita re-consulta inmediata
+      setQuery(displayAddress);
+      setValue('line1', displayAddress);
+      setSuggestions([]);
+
+      // 2) Guardar coords en form + inputs visibles
       setLatText(String(lat));
       setLngText(String(lng));
       setValue('lat', lat);
       setValue('lng', lng);
 
-      // Normalización para backend
+      // Normalización para backend (si se envía en validate)
       const norm: NormalizedAddress = {
         placeId,
         formattedAddress: formatted_address,
@@ -228,7 +290,7 @@ export default function AddressFormScreen({ navigation, route }: any) {
         plusCode: plus_code?.global_code || plus_code?.compound_code,
       };
 
-      // Validar cobertura
+      // 3) Validar cobertura (badge)
       try {
         setCheckingCoverage(true);
         const resp = await validateGeo({ lat, lng, normalizedAddress: norm });
@@ -239,10 +301,14 @@ export default function AddressFormScreen({ navigation, route }: any) {
 
       // Fin de sesión de Places
       sessionRef.current = null;
-      setSuggestions([]);
-      setQuery(formatted_address || s.description);
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
+      const hasQuery = query.trim().length > 0;
+      if (err.name === 'AbortError') {
+        setHasSelectedSuggestion(false);
+        setAutocompleteEnabled(hasQuery);
+      } else {
+        setHasSelectedSuggestion(false);
+        setAutocompleteEnabled(hasQuery);
         Alert.alert('Error', err?.message ?? 'No se pudo obtener detalles del lugar.');
       }
     } finally {
@@ -271,9 +337,16 @@ export default function AddressFormScreen({ navigation, route }: any) {
       }
     }
 
+    // Consolidar Detalles Adicionales + Apto/Habitación en line2
+    const line2Composed = [data.additionalDetails?.trim(), data.aptRoom?.trim()]
+      .filter(Boolean)
+      .join(' - ') || undefined;
+
+    const { additionalDetails, aptRoom, ...rest } = data;
+
     const payload: Address = {
-      ...data,
-      line2: data.line2 || undefined,
+      ...rest,
+      line2: line2Composed ?? rest.line2,
       lat: lat ?? undefined,
       lng: lng ?? undefined,
     } as Address;
@@ -288,6 +361,22 @@ export default function AddressFormScreen({ navigation, route }: any) {
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.code ?? 'No se pudo guardar la dirección.');
     }
+  };
+
+  // Acción limpiar campo (botón X)
+  const clearAddressField = () => {
+    autoAbortRef.current?.abort();
+    setQuery('');
+    setSuggestions([]);
+    setCoverage(null);
+    setLatText('');
+    setLngText('');
+    setValue('line1', '');
+    setValue('lat', null);
+    setValue('lng', null);
+    setHasSelectedSuggestion(false);
+    setAutocompleteEnabled(false);
+    lastQueryRef.current = '';
   };
 
   return (
@@ -320,25 +409,61 @@ export default function AddressFormScreen({ navigation, route }: any) {
           <Text>Dirección</Text>
           {FEATURE_GEOCODING ? (
             <>
-              <TextInput
-                style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 }}
-                onChangeText={(t) => {
-                  setQuery(t);
-                  setValue('line1', t);
-                  // Si el usuario edita, limpiamos coords & cobertura
-                  setLatText('');
-                  setLngText('');
-                  setValue('lat', null);
-                  setValue('lng', null);
-                  setCoverage(null);
-                }}
-                value={query}
-                placeholder="Escribe tu dirección (CO)..."
-                autoCorrect={false}
-                autoCapitalize="none"
-                returnKeyType="search"
-                // no hacemos blur aquí (queremos ver sugerencias mientras escribe)
-              />
+              {/* contenedor para overlay del botón X */}
+              <View style={{ position: 'relative' }}>
+                <TextInput
+                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, paddingRight: 36 }}
+                  onChangeText={(t) => {
+                    setQuery(t);
+                    setValue('line1', t);
+                    setHasSelectedSuggestion(false);
+                    setAutocompleteEnabled(t.trim().length > 0);
+                    if (t.trim().length === 0) {
+                      lastQueryRef.current = '';
+                    } else if (hasSelectedSuggestion) {
+                      lastQueryRef.current = '';
+                    }
+                    // Si el usuario edita, limpiamos coords & cobertura
+                    setLatText('');
+                    setLngText('');
+                    setValue('lat', null);
+                    setValue('lng', null);
+                    setCoverage(null);
+                    if (!t.trim()) {
+                      // cancelar solicitudes en curso
+                      autoAbortRef.current?.abort();
+                      setSuggestions([]);
+                    }
+                  }}
+                  value={query}
+                  placeholder="Escribe tu dirección (CO)..."
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                  // iOS nativo
+                  clearButtonMode="never"
+                />
+                {/* Botón X (iOS/Android) */}
+                {query.length > 0 && (
+                  <Pressable
+                    onPress={clearAddressField}
+                    hitSlop={8}
+                    style={{
+                      position: 'absolute',
+                      right: 8,
+                      top: 8,
+                      height: 28,
+                      width: 28,
+                      borderRadius: 14,
+                      backgroundColor: '#eee',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 16 }}>✕</Text>
+                  </Pressable>
+                )}
+              </View>
 
               {loadingAuto && <ActivityIndicator style={{ marginVertical: 6 }} />}
 
@@ -348,47 +473,59 @@ export default function AddressFormScreen({ navigation, route }: any) {
                 </Text>
               ) : null}
 
-              <View style={{ maxHeight: 280, marginBottom: 8, zIndex: 10 }}>
-                <FlatList
-                  data={suggestions}
-                  keyExtractor={(item) => item.place_id}
-                  keyboardShouldPersistTaps="always"
-                  renderItem={({ item }) => (
-                    <Pressable
-                      onPress={() => handlePickSuggestion(item)}
-                      style={{
-                        paddingVertical: 10,
-                        paddingHorizontal: 12,
-                        borderBottomWidth: 1,
-                        borderBottomColor: '#eee',
-                        backgroundColor: 'white',
-                      }}
-                    >
-                      <Text style={{ fontWeight: '600' }}>
-                        {item.structured_formatting?.main_text ?? item.description}
-                      </Text>
-                      <Text style={{ color: '#666' }}>
-                        {item.structured_formatting?.secondary_text ?? ''}
-                      </Text>
-                    </Pressable>
-                  )}
-                  ListEmptyComponent={
-                    debouncedQuery && !loadingAuto ? (
-                      <Text style={{ color: '#888', paddingVertical: 6 }}>Sin resultados</Text>
-                    ) : null
-                  }
-                  style={{
-                    borderWidth: suggestions.length ? 1 : 0,
-                    borderColor: '#eee',
-                    borderRadius: 8,
-                    backgroundColor: 'white',
-                    shadowColor: '#000',
-                    shadowOpacity: 0.08,
-                    shadowRadius: 8,
-                    elevation: suggestions.length ? 2 : 0,
-                  }}
-                />
-              </View>
+              {(!hasSelectedSuggestion || suggestions.length > 0) && (
+                <View style={{ maxHeight: 280, marginBottom: 8, zIndex: 10 }}>
+                  <FlatList
+                    data={suggestions}
+                    keyExtractor={(item) => item.place_id}
+                    keyboardShouldPersistTaps="always"
+                    renderItem={({ item }) => (
+                      <Pressable
+                        onPress={() => handlePickSuggestion(item)}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#eee',
+                          backgroundColor: 'white',
+                        }}
+                      >
+                        <Text style={{ fontWeight: '600' }}>
+                          {item.structured_formatting?.main_text ?? item.description}
+                        </Text>
+                        <Text style={{ color: '#666' }}>
+                          {item.structured_formatting?.secondary_text ?? ''}
+                        </Text>
+                      </Pressable>
+                    )}
+                    ListEmptyComponent={
+                      !hasSelectedSuggestion && debouncedQuery && !loadingAuto ? (
+                        <Text style={{ color: '#888', paddingVertical: 6 }}>Sin resultados</Text>
+                      ) : null
+                    }
+                    style={{
+                      borderWidth: suggestions.length ? 1 : 0,
+                      borderColor: '#eee',
+                      borderRadius: 8,
+                      backgroundColor: 'white',
+                      shadowColor: '#000',
+                      shadowOpacity: 0.08,
+                      shadowRadius: 8,
+                      elevation: suggestions.length ? 2 : 0,
+                    }}
+                  />
+                </View>
+              )}
+
+              {/* NUEVO: Detalles adicionales */}
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginTop: 8 }}
+                onChangeText={(t) => setValue('additionalDetails', t)}
+                value={watch('additionalDetails') ?? ''}
+                placeholder="Detalles adicionales (ej. Junto al Hotel Puente Piedra)"
+                multiline
+                numberOfLines={2}
+              />
 
               {/* Badge de cobertura */}
               <View
@@ -420,13 +557,20 @@ export default function AddressFormScreen({ navigation, route }: any) {
                 placeholder="Cra/Cll # No"
                 returnKeyType="next"
               />
+              <TextInput
+                style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginTop: 8 }}
+                onChangeText={(t) => setValue('additionalDetails', t)}
+                value={watch('additionalDetails') ?? ''}
+                placeholder="Detalles adicionales (opcional)"
+              />
             </>
           )}
 
+          {/* Apto/Habitación (mantenemos este campo) */}
           <TextInput
             style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginTop: 8 }}
-            onChangeText={(t) => setValue('line2', t)}
-            value={watch('line2') ?? ''}
+            onChangeText={(t) => setValue('aptRoom', t)}
+            value={watch('aptRoom') ?? ''}
             placeholder="Apto/Habitación (opcional)"
             returnKeyType="next"
           />
