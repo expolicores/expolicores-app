@@ -38,6 +38,12 @@ enum OrderStatus {
   CANCELADO
 }
 
+// Plataforma para tokens push
+enum PushPlatform {
+  ios
+  android
+}
+
 // ---------- Modelos ----------
 model User {
   id   Int    @id @default(autoincrement())
@@ -62,11 +68,14 @@ model User {
   otpExpiresAt  DateTime?
   lastOtpSentAt DateTime?
 
+  // Notificaciones push
+  pushTokens UserPushToken[]                           // relación 1:N (multi-dispositivo)
+
   // Relaciones
   orders                  Order[]
   addresses               Address[]
   favorites               Favorite[]
-  emailVerificationTokens EmailVerificationToken[] // 👈 campo inverso requerido
+  emailVerificationTokens EmailVerificationToken[]     // inversa
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -216,4 +225,20 @@ model IdempotencyKey {
 
   @@index([createdAt])
   @@index([status, createdAt])
+}
+
+// ---------- Push Tokens (nuevo) ----------
+model UserPushToken {
+  id         String        @id @default(cuid())
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+
+  token      String        @unique       // Expo/FCM token
+  platform   PushPlatform
+  lastUsedAt DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([userId])
 }

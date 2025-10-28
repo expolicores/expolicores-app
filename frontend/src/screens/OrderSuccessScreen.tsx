@@ -1,11 +1,13 @@
 // frontend/src/screens/OrderSuccessScreen.tsx
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { useNotifications } from '../context/NotificationsContext';
 
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();
   const navigation = useNavigation<any>();
+  const { status, ensurePermission } = useNotifications();
 
   const orderId: number | undefined = params?.orderId;
   const rawTotal = typeof params?.total === 'number' ? params.total : 0;
@@ -19,6 +21,21 @@ export default function OrderSuccessScreen() {
   const total: number = rawTotal || subtotal + shipping;
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value || 0);
+
+  // Soft-ask de notificaciones: solo si aún no está concedido
+  useEffect(() => {
+    if (status === 'unknown' || status === 'denied') {
+      Alert.alert(
+        'Sigue tu pedido',
+        'Activa notificaciones para saber cuando esté en preparación y en camino.',
+        [
+          { text: 'Luego' },
+          { text: 'Activar', onPress: () => { void ensurePermission(); } },
+        ]
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // una sola vez al entrar a esta pantalla
 
   const openWhatsApp = async () => {
     const message = encodeURIComponent(`Hola, consulto por mi pedido #${orderId ?? ''}.`);
@@ -38,7 +55,7 @@ export default function OrderSuccessScreen() {
       <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>¡Pedido creado!</Text>
       <Text style={{ marginBottom: 16 }}>Orden #{orderId ?? '—'}</Text>
       <Text style={{ marginBottom: 24, color: '#6b7280', textAlign: 'center' }}>
-        Te enviamos la confirmación por WhatsApp al número de tu perfil.
+        Te enviaremos actualizaciones del estado de tu pedido aquí en la app.
       </Text>
 
       <View
@@ -59,7 +76,7 @@ export default function OrderSuccessScreen() {
           <Text style={{ fontWeight: '600' }}>{formatCurrency(subtotal)}</Text>
         </View>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-          <Text style={{ color: '#4b5563' }}>Env\u00EDo</Text>
+          <Text style={{ color: '#4b5563' }}>Envío</Text>
           <Text style={{ fontWeight: '600' }}>{formatCurrency(shipping)}</Text>
         </View>
         <View style={{ height: 1, backgroundColor: '#e5e7eb', marginVertical: 8 }} />
@@ -89,6 +106,10 @@ export default function OrderSuccessScreen() {
         </Text>
       </TouchableOpacity>
 
+      <TouchableOpacity onPress={() => ensurePermission()} style={{ marginTop: 12 }}>
+        <Text>Forzar registro notificaciones</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity
         onPress={openWhatsApp}
         style={{
@@ -107,8 +128,3 @@ export default function OrderSuccessScreen() {
     </View>
   );
 }
-
-
-
-
-

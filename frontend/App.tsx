@@ -14,6 +14,7 @@ import NetInfo from '@react-native-community/netinfo';
 
 import { AuthProvider } from './src/context/AuthContext';
 import { CartProvider } from './src/context/CartContext';
+import { NotificationsProvider } from './src/context/NotificationsContext';
 import AppNavigator from './src/navigation/AppNavigator';
 
 /** Mantiene react-query en sync con el foco de la app (foreground/background) */
@@ -58,10 +59,13 @@ export default function App() {
         <StatusBar barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'} />
         {/* ⬇️ Provider necesario para usar useQuery / useMutation */}
         <QueryClientProvider client={queryClient}>
+          {/* Mantener orden: Auth → Notifications (usa token de auth si registra push) → Cart */}
           <AuthProvider>
-            <CartProvider>
-              <AppNavigator />
-            </CartProvider>
+            <NotificationsProvider>
+              <CartProvider>
+                <AppNavigator />
+              </CartProvider>
+            </NotificationsProvider>
           </AuthProvider>
         </QueryClientProvider>
       </SafeAreaProvider>
