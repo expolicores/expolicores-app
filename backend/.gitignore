@@ -56,3 +56,6 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /generated/prisma
+
+#Firebase (google admin Keys)
+expressapp-dc7a1-firebase-adminsdk-fbsvc-5b55f21c14.json

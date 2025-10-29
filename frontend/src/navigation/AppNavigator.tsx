@@ -36,7 +36,8 @@ import FavoritesScreen from '../screens/FavoritesScreen';
 import MarketScreen from '../screens/MarketScreen';
 import RestaurantsPlaceholderScreen from '../screens/RestaurantsPlaceholderScreen';
 import BodegaScreen from '../screens/BodegaScreen';
-import HomeScreen from '../screens/HomeScreen';
+import HomeScreen from '../screens/HomeScreen';     // ← Home “viejo” (fallback)
+import FeedScreen from '../screens/FeedScreen';     // ← NUEVO feed como Home
 
 /** ========== Admin — Solicitudes B2B (nuevo) ========== */
 import AdminBusinessApplicationsScreen from '../screens/AdminBusinessApplicationsScreen';
@@ -50,6 +51,8 @@ const RESTAURANTS_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_RESTAURANTS || 'false') === 'true';
 const B2B_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
+const FEED_JSON_ENABLED =
+  (process.env.EXPO_PUBLIC_FEATURE_FEED_JSON || 'true') === 'true'; // ← por defecto ON
 
 /** ---------------- Stacks tipados ---------------- **/
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -142,7 +145,7 @@ function PostAuthGate({ navigation }: any) {
       return;
     }
 
-    // 3) Ruta feliz -> Home (desde allí se llega a Mercado/Bodega)
+    // 3) Ruta feliz -> Home (Dashboard)
     navigation.replace('Dashboard');
   }, [booting, isLoadingMe, user, emailDeferred, navigation, signOut]);
 
@@ -232,7 +235,7 @@ export default function AppNavigator() {
     <NavigationContainer>
       {isAuthenticated ? (
         <RootStack.Navigator
-          initialRouteName="Home" // <- pasa por el gate siempre
+          initialRouteName="Home" // pasa por el gate siempre
           screenOptions={{ headerBackTitle: 'Atrás' }}
         >
           {/* Gate decide el onboarding pendiente */}
@@ -254,13 +257,14 @@ export default function AppNavigator() {
             options={{ title: 'Agrega tu correo (opcional)' }}
           />
 
-          {/* HOME */}
+          {/* HOME (Dashboard) → FeedScreen si el flag está ON, si no HomeScreen */}
           <RootStack.Screen
             name="Dashboard"
-            component={HomeScreen}
+            component={FEED_JSON_ENABLED ? FeedScreen : HomeScreen}
             options={({ navigation }) => ({
               title: 'Inicio',
               headerRight: () => headerRightCommon(navigation),
+              headerShown: true,
             })}
           />
 
@@ -294,8 +298,8 @@ export default function AppNavigator() {
             />
           )}
 
-          {/* BODEGA VIRTUAL (B2B) — la ruta existe, pero su acceso UI se controla con canSeeBodegaVirtual */}
-          {B2B_ENABLED && (
+          {/* BODEGA VIRTUAL (B2B) — acceso UI controlado por canSeeBodegaVirtual */}
+          {B2B_ENABLED && canSeeBodegaVirtual && (
             <RootStack.Screen
               name="Bodega"
               component={BodegaScreen}
@@ -381,8 +385,7 @@ export default function AppNavigator() {
           <RootStack.Screen name="AuthChooser" component={AuthChooserScreen} options={{ headerShown: false }} />
           <RootStack.Screen name="PhoneEntry" component={PhoneEntryScreen} options={{ title: 'Ingresa tu número' }} />
           <RootStack.Screen name="OtpCode" component={OtpCodeScreen} options={{ title: 'Código de verificación' }} />
-          {/* También permitimos Name/EmailOptional en el stack de no autenticado
-              por si el flujo se rehidrata en medio del onboarding */}
+          {/* También permitimos Name/EmailOptional en el stack de no autenticado por si el flujo se rehidrata */}
           <RootStack.Screen name="Name" component={NameScreen} options={{ headerShown: false }} />
           <RootStack.Screen
             name="EmailOptional"

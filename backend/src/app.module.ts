@@ -23,6 +23,9 @@ import { BusinessModule } from './business/business.module';
 // Geocoding / Cobertura — validación de radio y costos de envío
 import { GeoModule } from './geo/geo.module';
 
+// Feed — contenido server-driven para Home (promos/combos por rol)
+import { FeedModule } from './feed/feed.module';
+
 @Module({
   imports: [
     // Config global (.env) + feature flags
@@ -47,6 +50,9 @@ import { GeoModule } from './geo/geo.module';
 
     // Geocoding / Cobertura
     GeoModule, // expone POST /geo/validate — controlado por FEATURE_GEOCODING en runtime
+
+    // Feed server-driven (JSON en Cloudflare R2 + filtro por rol/estatus)
+    FeedModule,
   ],
   controllers: [AppController],
   providers: [AppService],

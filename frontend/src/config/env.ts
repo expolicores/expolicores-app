@@ -12,7 +12,7 @@ export const ENV = {
   API_URL:
     process.env.EXPO_PUBLIC_API_URL ??
     process.env.EXPO_PUBLIC_API_BASE_URL ??
-    'http://192.168.1.31:3000',
+    'https://expolicores-app-production.up.railway.app',
 
   API_TIMEOUT_MS: Number(process.env.EXPO_PUBLIC_API_TIMEOUT_MS ?? 15000),
 

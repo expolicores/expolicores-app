@@ -23,17 +23,43 @@ import type {
  * Lee múltiples variantes por compatibilidad: ENV.API_URL, ENV.API_BASE_URL,
  * EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_API_URL. Fallback útil para emulador.
  * ===================================================================================== */
-const API_BASE_URL =
+
+/** Devuelve true si el string YA es un URL absoluto http(s). */
+function isAbsoluteHttpUrl(v?: string | null) {
+  if (!v) return false;
+  return /^https?:\/\//i.test(v.trim());
+}
+
+/** Normaliza una baseURL: agrega esquema si falta, remueve trailing slash. */
+function normalizeBaseUrl(input?: string | null): string | undefined {
+  if (!input) return undefined;
+  let v = input.trim();
+  if (!v) return undefined;
+  if (!isAbsoluteHttpUrl(v)) {
+    // Si vino sin esquema (p. ej. expolicores-app-production.up.railway.app), asumimos https
+    v = `https://${v}`;
+  }
+  // remover trailing slash
+  v = v.replace(/\/+$/, '');
+  return v;
+}
+
+const RAW_API_BASE_URL =
   (ENV.API_URL as string | undefined)?.trim() ||
   (ENV.API_BASE_URL as string | undefined)?.trim() ||
   (process.env.EXPO_PUBLIC_API_BASE_URL as string | undefined)?.trim() ||
-  (process.env.EXPO_PUBLIC_API_URL as string | undefined)?.trim() ||
+  (process.env.EXPO_PUBLIC_API_URL as string | undefined)?.trim();
+
+const API_BASE_URL =
+  normalizeBaseUrl(RAW_API_BASE_URL) ||
+  // Fallbacks locales: Android emulador y iOS/Metro
   (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');
 
 const API_TIMEOUT_MS = Number(ENV.API_TIMEOUT_MS ?? 15000);
 
 // Log inicial una sola vez para verificar baseURL/timeout
-console.log('[API] baseURL =', API_BASE_URL, 'timeout =', API_TIMEOUT_MS);
+// ⚠️ Esto ayuda a detectar cuando faltó el esquema (https://) en producción.
+console.log('[API] BASE_URL =>', API_BASE_URL, '| timeout =', API_TIMEOUT_MS, 'ms');
 
 /* ============================== Axios instance ======================================== */
 export const api: AxiosInstance = axios.create({
@@ -190,7 +216,11 @@ export type RequestOtpResp = {
 
 // === Tipos actualizados para roles y B2B ===
 export type Role = 'ADMIN' | 'B2C' | 'B2B';
-export type BusinessVerificationStatus = 'NONE' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
+export type BusinessVerificationStatus =
+  | 'NONE'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'REJECTED';
 export type AdminProcessStatus = 'PENDING' | 'IN_PROGRESS' | 'ATTENDED';
 
 export type VerifyOtpBody =
@@ -542,6 +572,73 @@ export async function adminSetB2BAdminProcess(
 ) {
   const { data } = await api.patch(`/admin/business/${userId}/admin-process`, {
     status,
+  });
+  return data;
+}
+
+/* ======================================= FEED ========================================= */
+/** Tipos del feed server-driven (v1) */
+export type PricingView =
+  | 'B2C_ONLY'
+  | 'B2B_DEFAULT'
+  | 'COMPARATIVE'
+  | 'PUBLIC_REFERENCE';
+export type SlotType = 'hero' | 'collection' | 'nav' | 'chips' | 'editorial';
+
+export interface FeedItem {
+  productId?: string;
+  title?: string;
+  subtitle?: string;
+  image?: string;
+  badges?: string[];
+  priceB2C?: number;
+  priceB2B?: number;
+}
+
+export interface FeedSlot {
+  id: string;
+  type: SlotType;
+  title?: string;
+  subtitle?: string;
+  image?: string;
+  layout?: 'grid' | 'carousel';
+  pricingView: PricingView;
+  items?: FeedItem[];
+  cta?: { label: string; deeplink?: string };
+}
+
+export interface FeedResponse {
+  version: string;
+  updatedAt?: string;
+  timezone?: string;
+  slots: FeedSlot[];
+}
+
+/** Flag opcional para rollout del feed JSON */
+export const FEATURE_FEED_JSON =
+  (ENV as any).FEATURE_FEED_JSON ??
+  (process.env.EXPO_PUBLIC_FEATURE_FEED_JSON ?? 'true') === 'true';
+
+/**
+ * Obtiene el feed para el usuario autenticado.
+ * - Soporta preview seguro (solo si envías `previewUrl` y `adminToken`).
+ * - Pasa `signal` para cancelar si cambias de pantalla.
+ */
+export async function fetchFeed(opts?: {
+  previewUrl?: string;
+  adminToken?: string;
+  signal?: AbortSignal;
+}): Promise<FeedResponse> {
+  const headers: Record<string, string> = {};
+  if (opts?.adminToken) headers['x-admin-token'] = opts.adminToken;
+
+  const params: Record<string, string> = {};
+  if (opts?.previewUrl) params.previewUrl = opts.previewUrl;
+
+  const { data } = await api.get<FeedResponse>('/feed', {
+    params,
+    headers,
+    signal: opts?.signal,
   });
   return data;
 }

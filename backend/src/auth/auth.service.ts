@@ -48,6 +48,15 @@ export class AuthService {
     (process.env.FEATURE_WHATSAPP_NOTIFICATIONS ?? 'false') === 'true' &&
     (process.env.SEND_WHATSAPP_NOTIFS ?? 'false') === 'true';
 
+  // Fallback de QA (devOtp)
+  private readonly FEATURE_DEV_OTP =
+    (process.env.FEATURE_DEV_OTP ?? 'false') === 'true';
+  private readonly ALLOWED_DEV_OTP_PHONES: string[] = (process.env.ALLOWED_DEV_OTP_PHONES ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // Nota: DEV_OTP_FIXED no se usa para cambiar el código guardado; siempre devolvemos el real para que verifique contra DB.
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -233,17 +242,38 @@ export class AuthService {
       },
     });
 
-    // Enviar por el canal solicitado (sin fallback)
-    await this.sendOtpExact(phone, code, channel as 'whatsapp' | 'sms');
+    // Enviar por el canal solicitado (sin fallback) con logs de diagnóstico
+    let devOtpToReturn: string | undefined;
+    try {
+      await this.sendOtpExact(phone, code, channel as 'whatsapp' | 'sms');
+      if (isDevEcho) {
+        this.logger.log(`[DEV-OTP] phone=${phone} code=${code} via=${channel}`);
+      }
+    } catch (e: any) {
+      // Registro detallado para ver exactamente qué responde el proveedor (Twilio u otro)
+      this.logger.error(
+        `OTP delivery FAIL phone=${phone} via=${channel} code=${e?.code ?? 'n/a'} status=${e?.status ?? 'n/a'} more=${e?.moreInfo ?? 'n/a'} msg=${e?.message ?? e}`,
+      );
 
-    if (isDevEcho) this.logger.log(`[DEV-OTP] phone=${phone} code=${code} via=${channel}`);
+      // Fallback QA: si FEATURE_DEV_OTP=true y el número está permitido (o la lista está vacía → permitir todos)
+      const allowAll = this.ALLOWED_DEV_OTP_PHONES.length === 0;
+      const isAllowed = allowAll || this.ALLOWED_DEV_OTP_PHONES.includes(phone);
+      if (this.FEATURE_DEV_OTP && isAllowed) {
+        this.logger.warn(`Fallback a devOtp para ${phone} (FEATURE_DEV_OTP=true${allowAll ? ', allowAll' : ''})`);
+        devOtpToReturn = code; // devolvemos el mismo que guardamos en DB para que verifique
+      } else {
+        // Sin fallback → error al cliente
+        throw new BadRequestException('SMS_DELIVERY_FAILED');
+      }
+    }
 
     return {
       ok: true,
       phoneMasked: this.maskPhone(phone),
       cooldownSeconds: this.OTP_MIN_INTERVAL_SEC,
       expiresInSeconds: this.OTP_TTL_MIN * 60,
-      ...(isDevEcho ? { devOtp: code } : {}),
+      ...(isDevEcho && devOtpToReturn ? { devOtp: devOtpToReturn } : {}),
+      ...(isDevEcho && !devOtpToReturn ? { devOtp: code } : {}), // si no falló, igual podemos devolver en dev
     };
   }
 

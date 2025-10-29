@@ -113,6 +113,7 @@ function useAuthState() {
         if (savedToken) {
           setAuthToken(savedToken);
           setToken(savedToken);
+          console.log('JWT (rehidratado) 👉', savedToken);
         }
         if (savedPhone) setLastPhoneState(savedPhone);
       } finally {
@@ -222,6 +223,7 @@ function useAuthState() {
         );
         if (!access_token) throw new Error('Respuesta de login inválida (sin access_token)');
         await persistToken(access_token);
+        console.log('JWT (password) 👉', access_token);
         await refreshMe();
       } catch (e: any) {
         const msg =
@@ -257,7 +259,8 @@ function useAuthState() {
   );
 
   const requestOtpByPhone = useCallback<AuthCtx['requestOtpByPhone']>(
-    async (phone, channel = 'whatsapp', intent = 'login') => {
+    async (phone, channel = 'sms', intent = 'login') => {
+      // default en sms para prod (WA bloqueado por WABA)
       return requestOtpCore({ phone, channel, intent } as any);
     },
     [requestOtpCore]
@@ -275,11 +278,22 @@ function useAuthState() {
       try {
         const { access_token, user } = await verifyOtpApi(args);
         if (!access_token) throw new Error('Respuesta inválida (sin access_token)');
+
+        // Persistimos y exponemos el JWT
         await persistToken(access_token);
+        console.log('JWT (OTP) 👉', access_token);
 
         if (user) {
           // Poblamos el cache de 'me' inmediatamente
           queryClient.setQueryData(['me'], user as Me);
+
+          // Log útil por si quieres copiarlo desde la consola de Metro
+          console.log('Usuario (me) actualizado 👉', {
+            id: (user as Me).id,
+            role: (user as Me).role,
+            businessVerificationStatus: (user as any)?.businessVerificationStatus,
+          });
+
           // Cargar defer flag para este usuario
           try {
             const raw = await SecureStore.getItemAsync(emailDeferKey((user as Me).id));
