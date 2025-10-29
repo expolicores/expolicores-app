@@ -2,6 +2,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import 'reflect-metadata';
 import { AppModule } from './app.module';
 import * as morgan from 'morgan';
 import * as bodyParser from 'body-parser';
