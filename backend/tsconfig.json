@@ -15,6 +15,7 @@
     "allowSyntheticDefaultImports": true,
 
     "strict": true,
+    "strictPropertyInitialization": false,   // 👈 agrega esto
     "skipLibCheck": true,
     "noImplicitAny": false,
     "types": ["node"],
