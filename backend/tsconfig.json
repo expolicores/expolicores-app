@@ -1,60 +1,20 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
     "module": "commonjs",
+    "target": "ES2021",
     "moduleResolution": "node",
-    "outDir": "./dist",
+    "resolveJsonModule": true,
     "rootDir": "./src",
-    "sourceMap": true,
-
+    "outDir": "./dist",
     "strict": true,
-    "noImplicitAny": false,
-
-    // 🔧 Claves para Twilio y amigos:
+    "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-
-    // Evita 500+ errores provenientes de node_modules/*.d.ts
-    "skipLibCheck": true,
-
-    "resolveJsonModule": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-
-    // opcional pero útil en CI: compila aunque haya types “no fatales”
-    // "noEmitOnError": false
-    "types": ["node"]
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
-}
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "sourceMap": true,
-
-    "strict": true,
     "noImplicitAny": false,
-
-    // 🔧 Claves para Twilio y amigos:
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-
-    // Evita 500+ errores provenientes de node_modules/*.d.ts
-    "skipLibCheck": true,
-
-    "resolveJsonModule": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-
-    // opcional pero útil en CI: compila aunque haya types “no fatales”
-    // "noEmitOnError": false
-    "types": ["node"]
+    "sourceMap": false,
+    "incremental": true,
+    "baseUrl": "."
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
