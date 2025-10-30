@@ -96,7 +96,8 @@ export default function ProductDetailScreen() {
 
   // UI principal
   const p = data!;
-  const isB2B = user?.role === "BUSINESS" || user?.role === "ADMIN";
+  const isB2B =
+    user?.role === "BUSINESS" || user?.role === "B2B" || user?.role === "ADMIN";
   const unitPrice = isB2B ? (typeof p.b2bPrice === "number" ? p.b2bPrice : p.price) : p.price;
   const formattedPrice = formatCurrency(unitPrice);
   const referencePrice = formatCurrency(p.price);

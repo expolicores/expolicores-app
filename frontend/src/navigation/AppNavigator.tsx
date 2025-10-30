@@ -1,6 +1,6 @@
 ﻿// frontend/src/navigation/AppNavigator.tsx
-import React, { useEffect } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,13 +38,13 @@ import RestaurantsPlaceholderScreen from '../screens/RestaurantsPlaceholderScree
 import BodegaScreen from '../screens/BodegaScreen';
 import HomeScreen from '../screens/HomeScreen';     // ← Home “viejo” (fallback)
 import FeedScreen from '../screens/FeedScreen';     // ← NUEVO feed como Home
+import BottomQuickActionsBar from '../components/BottomQuickActionsBar';
 
 /** ========== Admin — Solicitudes B2B (nuevo) ========== */
 import AdminBusinessApplicationsScreen from '../screens/AdminBusinessApplicationsScreen';
 
 /** ================= Buttons en header ================= */
-import OrdersButton from '../components/OrdersButton';
-import FavoritesButton from '../components/FavoritesButton';
+import HeaderAddress from '../components/HeaderAddress';
 
 /** ---------------- Feature flags ---------------- **/
 const RESTAURANTS_ENABLED =
@@ -53,6 +53,17 @@ const B2B_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
 const FEED_JSON_ENABLED =
   (process.env.EXPO_PUBLIC_FEATURE_FEED_JSON || 'true') === 'true'; // ← por defecto ON
+
+const QUICK_ACTION_ROUTES = new Set<string>([
+  'Dashboard',
+  'Favorites',
+  'MyOrders',
+  'Profile',
+  'AdminPriceListB2C',
+  'AdminPriceListB2B',
+  'AdminOrders',
+  'AdminBusinessApplications',
+]);
 
 /** ---------------- Stacks tipados ---------------- **/
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -86,14 +97,6 @@ function HeaderCartButton({ onPress }: { onPress: () => void }) {
           </View>
         )}
       </View>
-    </Pressable>
-  );
-}
-
-function HeaderProfileButton({ onPress }: { onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={{ paddingHorizontal: 6 }}>
-      <Ionicons name="person-circle-outline" size={24} color="#111" />
     </Pressable>
   );
 }
@@ -158,19 +161,32 @@ function PostAuthGate({ navigation }: any) {
 
 /** ---------------- App Navigator ---------------- **/
 export default function AppNavigator() {
+  const navigationRef = useNavigationContainerRef();
+  const [currentRouteName, setCurrentRouteName] = useState<string | undefined>(undefined);
   const { booting, isAuthenticated, user } = useAuth();
 
   // Estado B2B del usuario (si el backend ya lo incluye en /auth/me)
   const role = (user as any)?.role as 'ADMIN' | 'B2C' | 'B2B' | undefined;
-  const businessVerificationStatus = (user as any)?.businessVerificationStatus as
-    | 'NONE'
-    | 'SUBMITTED'
-    | 'APPROVED'
-    | 'REJECTED'
-    | undefined;
 
-  const canSeeBodegaVirtual =
-    B2B_ENABLED && role === 'B2B' && businessVerificationStatus === 'APPROVED';
+  const canSeeBodegaVirtual = B2B_ENABLED && (role === 'B2B' || role === 'ADMIN');
+
+  const handleReady = useCallback(() => {
+    const route = navigationRef.getCurrentRoute();
+    setCurrentRouteName(route?.name);
+  }, [navigationRef]);
+
+  const handleStateChange = useCallback(() => {
+    const route = navigationRef.getCurrentRoute();
+    setCurrentRouteName(route?.name);
+  }, [navigationRef]);
+
+  const shouldShowQuickActions = useMemo(
+    () =>
+      isAuthenticated && currentRouteName
+        ? QUICK_ACTION_ROUTES.has(currentRouteName)
+        : false,
+    [isAuthenticated, currentRouteName],
+  );
 
   if (booting) {
     return (
@@ -182,61 +198,21 @@ export default function AppNavigator() {
 
   const headerRightCommon = (navigation: any) => (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <Pressable
-        onPress={() => navigation.navigate('Dashboard')}
-        style={{ paddingHorizontal: 6 }}
-        accessibilityLabel="Ir al inicio"
-      >
-        <Ionicons name="home-outline" size={22} color="#111" />
-      </Pressable>
-
-      {user?.role === 'ADMIN' ? (
-        <>
-          {/* Admin: listas de precio B2C/B2B */}
-          <Pressable
-            onPress={() => navigation.navigate('AdminPriceListB2C')}
-            style={{ paddingHorizontal: 6 }}
-          >
-            <Ionicons name="pricetag-outline" size={22} color="#111" />
-          </Pressable>
-          <Pressable
-            onPress={() => navigation.navigate('AdminPriceListB2B')}
-            style={{ paddingHorizontal: 6 }}
-          >
-            <Ionicons name="pricetags-outline" size={22} color="#111" />
-          </Pressable>
-          {/* Admin: pedidos */}
-          <Pressable
-            onPress={() => navigation.navigate('AdminOrders')}
-            style={{ paddingHorizontal: 6 }}
-          >
-            <Ionicons name="clipboard-outline" size={22} color="#111" />
-          </Pressable>
-          {/* Admin: solicitudes B2B (solo si el feature está activo) */}
-          {B2B_ENABLED && (
-            <Pressable
-              onPress={() => navigation.navigate('AdminBusinessApplications')}
-              style={{ paddingHorizontal: 6 }}
-            >
-              <Ionicons name="briefcase-outline" size={22} color="#111" />
-            </Pressable>
-          )}
-        </>
-      ) : null}
-
-      <FavoritesButton />
-      <OrdersButton />
       <HeaderCartButton onPress={() => navigation.navigate('Cart')} />
-      <HeaderProfileButton onPress={() => navigation.navigate('Profile')} />
     </View>
   );
 
   return (
-    <NavigationContainer>
-      {isAuthenticated ? (
-        <RootStack.Navigator
-          initialRouteName="Home" // pasa por el gate siempre
-          screenOptions={{ headerBackTitle: 'Atrás' }}
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={handleReady}
+      onStateChange={handleStateChange}
+    >
+      <View style={{ flex: 1 }}>
+        {isAuthenticated ? (
+          <RootStack.Navigator
+            initialRouteName="Home" // pasa por el gate siempre
+            screenOptions={{ headerBackTitle: 'Atrás' }}
         >
           {/* Gate decide el onboarding pendiente */}
           <RootStack.Screen
@@ -262,7 +238,8 @@ export default function AppNavigator() {
             name="Dashboard"
             component={FEED_JSON_ENABLED ? FeedScreen : HomeScreen}
             options={({ navigation }) => ({
-              title: 'Inicio',
+              headerTitle: '',
+              headerLeft: () => <HeaderAddress compact />,
               headerRight: () => headerRightCommon(navigation),
               headerShown: true,
             })}
@@ -394,6 +371,8 @@ export default function AppNavigator() {
           />
         </RootStack.Navigator>
       )}
-    </NavigationContainer>
+      {shouldShowQuickActions ? <BottomQuickActionsBar /> : null}
+    </View>
+  </NavigationContainer>
   );
 }

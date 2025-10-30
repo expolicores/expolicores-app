@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,12 +15,16 @@ import { useAuth } from '../context/AuthContext';
 import ProductCard from '../components/ProductCard';
 import { useFavorites } from '../hooks/useFavorites';
 import type { Product } from '../types/product';
+import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 
 export default function FavoritesScreen() {
   const navigation = useNavigation<any>();
   const { isAuthenticated, user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
   const { favorites, isLoading, isFetching, refetch } = useFavorites();
-  const isB2B = user?.role === 'BUSINESS' || user?.role === 'ADMIN';
+  const isB2B =
+    user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN';
 
   const products = useMemo<Product[]>(() => {
     return (favorites ?? []).map((item) => ({
@@ -50,7 +54,7 @@ export default function FavoritesScreen() {
     return (
       <View style={[styles.container, styles.center]}>
         <ActivityIndicator />
-        <Text style={styles.subtitle}>Cargando favoritos...</Text>
+        <Text style={styles.subtitle}>Cargando favoritos…</Text>
       </View>
     );
   }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,7 @@ import {
 } from '../lib/api';
 import { formatCurrency } from '../lib/formatCurrency';
 import type { AdminProduct } from '../types/product';
+import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 
 type PriceKey = 'price' | 'b2bPrice';
 
@@ -56,6 +57,8 @@ export function createAdminPriceListScreen({
 
   return function AdminPriceListVariantScreen() {
     const navigation = useNavigation<any>();
+    const insets = useSafeAreaInsets();
+    const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
     const { user } = useAuth();
     const queryClient = useQueryClient();
     const isAdmin = user?.role === 'ADMIN';
@@ -182,30 +185,36 @@ export function createAdminPriceListScreen({
 
     if (!isAdmin) {
       return (
-        <View style={[styles.container, styles.center]}>
-          <Text style={styles.lockTitle}>Acceso restringido</Text>
-          <Text style={styles.lockText}>
-            Esta sección solo está disponible para administradores.
-          </Text>
-        </View>
+        <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
+          <View style={[styles.center, { flex: 1 }]}>
+            <Text style={styles.lockTitle}>Acceso restringido</Text>
+            <Text style={styles.lockText}>
+              Esta sección solo está disponible para administradores.
+            </Text>
+          </View>
+        </SafeAreaView>
       );
     }
 
     if (isLoading && !data) {
       return (
-        <View style={[styles.container, styles.center]}>
-          <ActivityIndicator />
-          <Text style={styles.muted}>Cargando productos...</Text>
-        </View>
+        <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
+          <View style={[styles.center, { flex: 1 }]}>
+            <ActivityIndicator />
+            <Text style={styles.muted}>Cargando productos...</Text>
+          </View>
+        </SafeAreaView>
       );
     }
 
     if (error) {
       return (
-        <View style={[styles.container, styles.center, styles.errorBox]}>
-          <Text style={styles.lockTitle}>No se pudo cargar la lista</Text>
-          <Text style={styles.lockText}>Desliza hacia abajo para reintentar.</Text>
-        </View>
+        <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
+          <View style={[styles.center, styles.errorBox, { flex: 1, justifyContent: "center" }]}>
+            <Text style={styles.lockTitle}>No se pudo cargar la lista</Text>
+            <Text style={styles.lockText}>Desliza hacia abajo para reintentar.</Text>
+          </View>
+        </SafeAreaView>
       );
     }
 
@@ -249,11 +258,11 @@ export function createAdminPriceListScreen({
     );
 
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
         <FlatList
           data={filtered}
           keyExtractor={(item) => String(item.id)}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: bottomPadding }]}
           ListHeaderComponent={listHeader}
           ListEmptyComponent={
             <View style={[styles.center, styles.empty]}>
@@ -343,7 +352,7 @@ export function createAdminPriceListScreen({
             );
           }}
         />
-      </View>
+      </SafeAreaView>
     );
   };
 }

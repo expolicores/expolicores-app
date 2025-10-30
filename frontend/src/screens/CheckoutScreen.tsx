@@ -19,16 +19,8 @@ import { useCart } from '../context/CartContext';
 import type { CreateOrderDto, OrderSuccess } from '../types/order';
 import { validateGeo } from '../lib/api.geo';
 import { useAuth } from '../context/AuthContext';
-
-type Address = {
-  id: number;
-  label?: string | null;
-  line1?: string | null;
-  city?: string | null;
-  isDefault?: boolean | null;
-  lat?: number | null;
-  lng?: number | null;
-};
+import { useSelectedAddress } from '../hooks/useSelectedAddress';
+import type { Address } from '../types/address';
 
 export default function CheckoutScreen() {
   const navigation = useNavigation<any>();
@@ -60,31 +52,9 @@ export default function CheckoutScreen() {
     queryFn: async () => (await api.get('/addresses')).data as Address[],
   });
 
-  const fallbackDefault = React.useMemo(
-    () => addresses?.find((a) => a.isDefault) ?? addresses?.[0],
-    [addresses]
-  );
-
-  // NUEVO: dirección seleccionada en Checkout (no toca isDefault)
-  const [selectedAddress, setSelectedAddress] = React.useState<Address | null>(null);
+  // Dirección seleccionada compartida con AddressList
+  const { selectedAddress, setSelectedAddress } = useSelectedAddress(addresses ?? []);
   const [pickerOpen, setPickerOpen] = React.useState(false);
-
-  // cuando cambien las direcciones, asegura una selección válida
-  React.useEffect(() => {
-    if (!addresses || addresses.length === 0) {
-      setSelectedAddress(null);
-      return;
-    }
-    if (!selectedAddress) {
-      setSelectedAddress(fallbackDefault ?? addresses[0]);
-      return;
-    }
-    // si la seleccionada ya no existe, cae al fallback
-    const stillExists = addresses.find((a) => a.id === selectedAddress.id);
-    if (!stillExists) {
-      setSelectedAddress(fallbackDefault ?? addresses[0]);
-    }
-  }, [addresses, fallbackDefault?.id]);
 
   // === Envío ===
   const [notes, setNotes] = React.useState('');

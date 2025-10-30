@@ -19,12 +19,15 @@ import { statusLabel } from '../lib/orderStatus';
 import StatusBadge from '../components/StatusBadge';
 import type { AxiosError } from 'axios';
 import type { OrderStatus, OrderWithUser } from '../types/order';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
 
 export default function AdminOrdersScreen() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
   const { user, signOut } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
   const queryClient = useQueryClient();

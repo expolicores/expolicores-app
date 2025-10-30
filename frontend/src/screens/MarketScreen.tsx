@@ -1,5 +1,5 @@
 // src/screens/MarketScreen.tsx
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -11,7 +11,7 @@ import {
   TextInput,
   RefreshControl,
 } from 'react-native';
-import { useNavigation, useIsFocused } from '@react-navigation/native';
+import { useNavigation, useIsFocused, useRoute } from '@react-navigation/native';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../lib/api';
@@ -35,12 +35,18 @@ const VIRTUAL_TAGS = [
 
 export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const isFocused = useIsFocused();
+  const listRef = useRef<FlatList<Product> | null>(null);
+  const lastSearchTokenRef = useRef<unknown>(null);
   const { items: cartItems, add, setQty, remove } = useCart() as any;
   const { favoriteIds } = useFavorites();
   const isB2B = variant === 'B2B';
 
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(() => {
+    const initial = route?.params?.initialQuery;
+    return typeof initial === 'string' ? initial : '';
+  });
   const [category, setCategory] = useState<Category | undefined>(undefined);
   const [tag, setTag] = useState<string | undefined>(undefined);
 
@@ -95,6 +101,26 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
     retry: 1,
     placeholderData: (prev) => prev,
   });
+
+  useEffect(() => {
+    const nextQueryParam = route?.params?.initialQuery;
+    const token = route?.params?.searchToken ?? nextQueryParam;
+
+    if (typeof nextQueryParam !== 'string') return;
+    const trimmed = nextQueryParam.trim();
+    if (!trimmed.length) return;
+
+    const tokenKey = token ?? trimmed;
+    if (lastSearchTokenRef.current === tokenKey) return;
+
+    lastSearchTokenRef.current = tokenKey;
+    setQ(trimmed);
+    setCategory(undefined);
+    setTag(undefined);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    refetch();
+  }, [route?.params?.initialQuery, route?.params?.searchToken, refetch]);
+
   const favoriteKey = useMemo(() => Array.from(favoriteIds).join(","), [favoriteIds]);
 
   const products = useMemo(() => {
@@ -199,6 +225,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
 
       {/* Grid de productos */}
       <FlatList
+        ref={listRef}
         data={isInitialLoad ? [] : products}
         keyExtractor={(p) => String(p.id)}
         numColumns={2}

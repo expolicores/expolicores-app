@@ -1,6 +1,6 @@
 // src/screens/ProfileScreen.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import type { Me } from '../types/auth';
+import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 
 // === Nuevos helpers B2B ===
 import { FEATURES } from '../lib/flags';
@@ -62,6 +63,8 @@ export default function ProfileScreen() {
   const navigation = useNavigation<any>();
   const queryClient = useQueryClient();
   const { user: ctxUser, refreshMe, signOut, booting } = useAuth();
+  const insets = useSafeAreaInsets();
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
 
   // Si no hubiese user aun, traemos /auth/me (habilitado solo si ctxUser es null)
   const {
@@ -176,23 +179,27 @@ export default function ProfileScreen() {
   // Estados de carga
   if (booting || (!user && isFetching)) {
     return (
-      <View style={[styles.container, styles.center]}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Cargando perfil...</Text>
-      </View>
+      <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
+        <View style={[styles.center, { flex: 1 }]}>
+          <ActivityIndicator />
+          <Text style={{ marginTop: 8 }}>Cargando perfil...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (!user) {
     return (
-      <View style={[styles.container, styles.center]}>
-        <Text style={styles.title}>Mi perfil</Text>
-        <Text style={styles.muted}>No autenticado</Text>
-        <View style={{ height: 12 }} />
-        <Pressable style={[styles.secondaryButton, styles.secondaryButtonBlue]} onPress={() => refetch()}>
-          <Text style={styles.secondaryButtonText}>Reintentar</Text>
-        </Pressable>
-      </View>
+      <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
+        <View style={[styles.center, { flex: 1 }]}>
+          <Text style={styles.title}>Mi perfil</Text>
+          <Text style={styles.muted}>No autenticado</Text>
+          <View style={{ height: 12 }} />
+          <Pressable style={[styles.secondaryButton, styles.secondaryButtonBlue]} onPress={() => refetch()}>
+            <Text style={styles.secondaryButtonText}>Reintentar</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -205,7 +212,7 @@ export default function ProfileScreen() {
       : '#10b981';
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
       <Text style={styles.title}>Mi perfil</Text>
 
       {/* Banners B2B */}
@@ -375,7 +382,7 @@ export default function ProfileScreen() {
       >
         <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
       </Pressable>
-    </View>
+    </SafeAreaView>
   );
 }
 

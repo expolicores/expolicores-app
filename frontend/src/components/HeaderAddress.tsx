@@ -1,21 +1,28 @@
 // src/components/HeaderAddress.tsx
-import React from "react";
+import React, { useMemo } from "react";
 import { Pressable, View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import { useDefaultAddress } from "../hooks/useDefaultAddress";
+import { useSelectedAddress } from "../hooks/useSelectedAddress";
 
 type Props = { compact?: boolean };
 
 export default function HeaderAddress({ compact = true }: Props) {
   const navigation = useNavigation<any>();
-  const { defaultAddress, isLoading } = useDefaultAddress();
+  const { defaultAddress, addresses, isLoading } = useDefaultAddress();
+  const { selectedAddress } = useSelectedAddress(addresses);
 
-  // Navega al stack anidado de Direcciones (Addresses -> AddressList)
+  const displayAddress = useMemo(() => {
+    if (selectedAddress) return selectedAddress;
+    return defaultAddress ?? null;
+  }, [selectedAddress, defaultAddress]);
+
+  // Navega al stack anidado de Direcciones (Addresses -> listado)
   const goToAddresses = () =>
-    navigation.navigate("Addresses", { screen: "AddressList" });
+    navigation.navigate("Addresses", { screen: "Addresses" });
 
-  if (isLoading) {
+  if (isLoading && !displayAddress) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="small" color="#16a34a" />
@@ -23,8 +30,8 @@ export default function HeaderAddress({ compact = true }: Props) {
     );
   }
 
-  const title = defaultAddress?.label ?? "Agregar dirección";
-  const line1 = defaultAddress?.line1 ?? "Toca para configurar";
+  const title = displayAddress?.label ?? "Agregar dirección";
+  const line1 = displayAddress?.line1 ?? "Toca para configurar";
 
   return (
     <Pressable

@@ -30,8 +30,9 @@ export default function HomeScreen() {
     console.log('[ME]', user);
   }, [user]);
 
-  // Bodega para BUSINESS (y ADMIN si aplica)
-  const canSeeBodega = user?.role === 'BUSINESS' || user?.role === 'ADMIN';
+  // Bodega para roles B2B (BUSINESS legacy) y ADMIN
+  const canSeeBodega =
+    user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN';
 
   return (
     <SafeAreaView style={styles.container}>

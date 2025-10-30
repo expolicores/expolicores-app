@@ -8,12 +8,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   adminListB2BApplications,
   adminSetB2BAdminProcess,
   adminSetB2BVerification,
 } from '../lib/api';
 import { AdminProcessStatus, BusinessVerificationStatus } from '../types/b2b';
+import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 
 type Item = {
   id: number;
@@ -54,6 +56,8 @@ const filters = [
 ];
 
 export default function AdminBusinessApplicationsScreen() {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
   const [items, setItems] = useState<Item[]>([]);
   const [filter, setFilter] = useState(filters[3].key);
   const [loading, setLoading] = useState(false);

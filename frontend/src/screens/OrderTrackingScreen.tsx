@@ -33,7 +33,8 @@ export default function OrderTrackingScreen() {
 
   const qc = useQueryClient();
   const { user } = useAuth();
-  const useB2BPrices = user?.role === "BUSINESS" || user?.role === "ADMIN";
+  const useB2BPrices =
+    user?.role === "BUSINESS" || user?.role === "B2B" || user?.role === "ADMIN";
 
   const {
     data,

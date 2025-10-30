@@ -6,7 +6,8 @@ import MarketScreen from './MarketScreen';
 
 export default function BodegaScreen() {
   const { user } = useAuth();
-  const allowed = user?.role === 'BUSINESS' || user?.role === 'ADMIN';
+  const allowed =
+    user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN';
 
   if (!allowed) {
     return (
