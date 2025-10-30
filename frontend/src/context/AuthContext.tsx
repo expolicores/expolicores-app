@@ -33,11 +33,19 @@ import type { Me } from '../types/auth';
 /* ============================ Tipos del contexto ============================ */
 type OtpChannel = 'sms' | 'whatsapp';
 
+// Extiende Me para permitir token embebido en user (sin romper lo demás)
+type MeWithToken = Me & { token?: string };
+
 type AuthCtx = {
-  booting: boolean;
+  /** true hasta que terminamos de rehidratar token/usuario */
+  isReady: boolean;
+
+  booting: boolean; // compat: alias de !isReady === booting
   isAuthenticated: boolean;
   token: string | null;
-  user: Me | null; // alias legacy
+
+  /** user incluye token (prop opcional) para pantallas que lo lean ahí */
+  user: MeWithToken | null; // alias legacy + token opcional
   me: Me | null;
   isLoadingMe: boolean;
 
@@ -102,7 +110,7 @@ function useAuthState() {
   const loggingOutRef = useRef(false);
   const queryClient = useQueryClient();
 
-  // ---- Cargar token/lastPhone al iniciar y poblar header
+  // ---- Cargar token/lastPhone al iniciar y poblar header + user
   useEffect(() => {
     (async () => {
       try {
@@ -110,22 +118,41 @@ function useAuthState() {
           SecureStore.getItemAsync(TOKEN_KEY),
           SecureStore.getItemAsync(LAST_PHONE_KEY),
         ]);
+
         if (savedToken) {
           setAuthToken(savedToken);
           setToken(savedToken);
           console.log('JWT (rehidratado) 👉', savedToken);
+          // Opcionalmente validar token y poblar user
+          try {
+            const me = await apiGetMe();
+            queryClient.setQueryData(['me'], me);
+            // embebe token en user para pantallas que lo lean ahí
+            queryClient.setQueryData(['user-with-token'], { ...me, token: savedToken } as MeWithToken);
+          } catch (err) {
+            // token inválido: limpiar
+            setAuthToken(undefined);
+            setToken(null);
+            await SecureStore.deleteItemAsync(TOKEN_KEY);
+          }
         }
         if (savedPhone) setLastPhoneState(savedPhone);
       } finally {
         setBooting(false);
       }
     })();
-  }, []);
+  }, [queryClient]);
 
   // ---- Reaplicar Authorization cuando cambie token
   useEffect(() => {
     setAuthToken(token || undefined);
-  }, [token]);
+    if (token) {
+      const me = queryClient.getQueryData(['me']) as Me | undefined;
+      if (me) queryClient.setQueryData(['user-with-token'], { ...me, token } as MeWithToken);
+    } else {
+      queryClient.removeQueries({ queryKey: ['user-with-token'] });
+    }
+  }, [token, queryClient]);
 
   // ---- /auth/me con React Query (habilitado solo si hay token)
   const meQuery = useQuery({
@@ -138,6 +165,10 @@ function useAuthState() {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
+    onSuccess: (me) => {
+      // mantiene user con token actualizado
+      queryClient.setQueryData(['user-with-token'], { ...me, token: token ?? undefined } as MeWithToken);
+    },
   });
 
   // ---- Cargar flag de deferEmail para este usuario cuando cambie me
@@ -165,8 +196,8 @@ function useAuthState() {
             setToken(null);
             setAuthToken(undefined);
             setEmailDeferred(false);
-            // Limpia cache de usuario
             queryClient.removeQueries({ queryKey: ['me'] });
+            queryClient.removeQueries({ queryKey: ['user-with-token'] });
           } finally {
             loggingOutRef.current = false;
           }
@@ -189,11 +220,8 @@ function useAuthState() {
 
   const setLastPhone = useCallback(async (p: string | null) => {
     try {
-      if (p) {
-        await SecureStore.setItemAsync(LAST_PHONE_KEY, p);
-      } else {
-        await SecureStore.deleteItemAsync(LAST_PHONE_KEY);
-      }
+      if (p) await SecureStore.setItemAsync(LAST_PHONE_KEY, p);
+      else await SecureStore.deleteItemAsync(LAST_PHONE_KEY);
       setLastPhoneState(p);
     } catch (err) {
       console.warn('[SecureStore] last phone error', err);
@@ -205,12 +233,15 @@ function useAuthState() {
   const refreshMe = useCallback(async (): Promise<Me | null> => {
     if (!token) {
       queryClient.removeQueries({ queryKey: ['me'] });
+      queryClient.removeQueries({ queryKey: ['user-with-token'] });
       return null;
     }
     const data = await queryClient.fetchQuery<Me>({
       queryKey: ['me'],
       queryFn: apiGetMe,
     });
+    // actualiza user con token
+    if (data) queryClient.setQueryData(['user-with-token'], { ...data, token } as MeWithToken);
     return data ?? null;
   }, [queryClient, token]);
 
@@ -224,7 +255,8 @@ function useAuthState() {
         if (!access_token) throw new Error('Respuesta de login inválida (sin access_token)');
         await persistToken(access_token);
         console.log('JWT (password) 👉', access_token);
-        await refreshMe();
+        const me = await refreshMe();
+        if (me) queryClient.setQueryData(['user-with-token'], { ...me, token: access_token } as MeWithToken);
       } catch (e: any) {
         const msg =
           e?.message ||
@@ -233,7 +265,7 @@ function useAuthState() {
         throw e;
       }
     },
-    [persistToken, refreshMe]
+    [persistToken, refreshMe, queryClient]
   );
 
   const requestOtpCore = useCallback(
@@ -260,7 +292,6 @@ function useAuthState() {
 
   const requestOtpByPhone = useCallback<AuthCtx['requestOtpByPhone']>(
     async (phone, channel = 'sms', intent = 'login') => {
-      // default en sms para prod (WA bloqueado por WABA)
       return requestOtpCore({ phone, channel, intent } as any);
     },
     [requestOtpCore]
@@ -284,10 +315,10 @@ function useAuthState() {
         console.log('JWT (OTP) 👉', access_token);
 
         if (user) {
-          // Poblamos el cache de 'me' inmediatamente
+          // Poblamos caches
           queryClient.setQueryData(['me'], user as Me);
+          queryClient.setQueryData(['user-with-token'], { ...(user as Me), token: access_token } as MeWithToken);
 
-          // Log útil por si quieres copiarlo desde la consola de Metro
           console.log('Usuario (me) actualizado 👉', {
             id: (user as Me).id,
             role: (user as Me).role,
@@ -303,8 +334,9 @@ function useAuthState() {
           }
           return user as Me;
         } else {
-          await refreshMe();
-          return queryClient.getQueryData(['me']) as Me | null;
+          const me = await refreshMe();
+          if (me) queryClient.setQueryData(['user-with-token'], { ...me, token: access_token } as MeWithToken);
+          return me;
         }
       } catch (e: any) {
         const msg =
@@ -339,18 +371,22 @@ function useAuthState() {
       setAuthToken(undefined);
       setEmailDeferred(false);
       queryClient.removeQueries({ queryKey: ['me'] });
+      queryClient.removeQueries({ queryKey: ['user-with-token'] });
     }
   }, [queryClient]);
 
-  const currentUser = (meQuery.data as Me) ?? null;
+  // Selección de datos expuestos
+  const currentMe = (meQuery.data as Me) ?? null;
+  const userWithToken = (queryClient.getQueryData(['user-with-token']) as MeWithToken | undefined) ?? (currentMe ? { ...currentMe, token: token ?? undefined } : null);
 
   const value: AuthCtx = useMemo(
     () => ({
+      isReady: !booting,
       booting,
       isAuthenticated: !!token,
       token,
-      user: currentUser,
-      me: currentUser,
+      user: userWithToken,
+      me: currentMe,
       isLoadingMe: !!token && (meQuery.isLoading || meQuery.isFetching),
 
       refreshMe,
@@ -374,7 +410,8 @@ function useAuthState() {
     [
       booting,
       token,
-      currentUser,
+      userWithToken,
+      currentMe,
       meQuery.isLoading,
       meQuery.isFetching,
       refreshMe,
