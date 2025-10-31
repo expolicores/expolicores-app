@@ -1,32 +1,58 @@
-import { IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+//create-Promotion.dto.ts
+// prettier-ignore
+import {
+  IsBoolean, IsDateString, IsEnum, IsInt, IsOptional, IsString, Min,
+  IsArray, ValidateNested, IsNumber
+} from 'class-validator';
+import { Type } from 'class-transformer';
 
-enum PromotionType {
+export enum PromotionType {
   PRICE_OVERRIDE = 'PRICE_OVERRIDE',
   PERCENT_OFF = 'PERCENT_OFF',
 }
-
-enum PromotionAudience {
+export enum PromotionAudience {
   ANY = 'ANY',
   B2C = 'B2C',
   B2B = 'B2B',
+}
+
+class PromotionProductInput {
+  @IsString() productId!: string;
+  @IsOptional() @IsInt() @Min(1) minQty?: number;
+}
+
+class BenefitsInput {
+  // Para PRICE_OVERRIDE
+  @IsOptional() @IsNumber() @Min(0) price?: number;
+  // Para PERCENT_OFF (0–100)
+  @IsOptional() @IsNumber() @Min(0.0001) percent?: number;
 }
 
 export class CreatePromotionDto {
   @IsString() name!: string;
   @IsEnum(PromotionType) type!: PromotionType;
   @IsEnum(PromotionAudience) @IsOptional() audience?: PromotionAudience = PromotionAudience.ANY;
+
   @IsBoolean() @IsOptional() active?: boolean = true;
   @IsBoolean() @IsOptional() stacking?: boolean = false;
   @IsInt() @Min(0) @IsOptional() priority?: number = 100;
+
   @IsDateString() startsAt!: string; // ISO
   @IsDateString() endsAt!: string; // ISO
 
-  // productos target de la promo
-  products?: Array<{ productId: string; minQty?: number }>; // validación en controller
+  // productos target
+  // prettier-ignore
+  @IsArray() @ValidateNested({ each: true }) @Type(() => PromotionProductInput)
+  @IsOptional()
+  products?: PromotionProductInput[];
 
-  // beneficios/condiciones específicas
-  // PRICE_OVERRIDE => { price: number }
-  // PERCENT_OFF => { percent: number [1..99] }
-  benefits?: any;
+  // payload de beneficios
+  @ValidateNested()
+  @Type(() => BenefitsInput)
+  @IsOptional()
+  benefits?: BenefitsInput;
+
+  // condiciones libres (si las usas más adelante)
+  @IsOptional()
   conditions?: any;
 }
