@@ -1,10 +1,11 @@
+//promotions.controller.ts
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { PromotionsService } from './promotions.service';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
 import { UpdatePromotionDto } from './dto/update-promotion.dto';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @Controller('admin/promotions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -17,6 +18,7 @@ export class PromotionsController {
     return this.service.create(dto);
   }
 
+  // prettier-ignore
   @Get()
   findAll(
     @Query('active') active?: string,
