@@ -242,3 +242,51 @@ model UserPushToken {
 
   @@index([userId])
 }
+
+// === Promotions (Fase 1) ===
+enum PromotionType {
+PRICE_OVERRIDE
+PERCENT_OFF
+}
+
+
+enum PromotionAudience {
+ANY
+B2C
+B2B
+}
+
+
+model Promotion {
+id String @id @default(cuid())
+name String
+type PromotionType
+audience PromotionAudience @default(ANY)
+active Boolean @default(true)
+stacking Boolean @default(false)
+priority Int @default(100) // menor = más prioridad
+startsAt DateTime
+endsAt DateTime
+conditionsJson Json? // { minQty?, minSpend?, categoryIds? }
+benefitsJson Json? // { price? , percent? }
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+
+
+products PromotionProduct[]
+}
+
+
+model PromotionProduct {
+id String @id @default(cuid())
+promotionId String
+productId String // FK a Product.id (asumiendo model Product { id: String @id })
+minQty Int? // si aplica
+
+
+promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+
+@@index([promotionId])
+@@index([productId])
+}

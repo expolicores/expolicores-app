@@ -26,6 +26,9 @@ import { GeoModule } from './geo/geo.module';
 // Feed — contenido server-driven para Home (promos/combos por rol)
 import { FeedModule } from './feed/feed.module';
 
+// Promotions — módulo ADMIN para crear/editar/publicar promociones (Fase 1)
+import { PromotionsModule } from './promotions/promotions.module';
+
 @Module({
   imports: [
     // Config global (.env) + feature flags
@@ -53,6 +56,9 @@ import { FeedModule } from './feed/feed.module';
 
     // Feed server-driven (JSON en Cloudflare R2 + filtro por rol/estatus)
     FeedModule,
+
+    // Promotions (ADMIN-only) — Fase 1
+    PromotionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
