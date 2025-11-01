@@ -16,10 +16,15 @@ type CreateOrUpdateDto = {
   conditions?: any;  // { minQty?, minSpend?, categoryIds? ... }
 };
 
+type Audience = 'B2C' | 'B2B';
+
 @Injectable()
 export class PromotionsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ---------------------------
+  // Helpers
+  // ---------------------------
   private validatePayload(dto: CreateOrUpdateDto) {
     if (!dto.type) return; // update parcial puede no cambiar type/benefits
     const { type, benefits } = dto;
@@ -38,6 +43,9 @@ export class PromotionsService {
     }
   }
 
+  // ---------------------------
+  // CRUD (ADMIN)
+  // ---------------------------
   async create(dto: CreateOrUpdateDto) {
     // validaciones básicas
     if (!dto.name) throw new BadRequestException('name es requerido');
@@ -134,7 +142,7 @@ export class PromotionsService {
   }
 
   async softDelete(id: string) {
-    // Soft delete: active=false
+    // Soft delete: active=false (si además usas deletedAt en el schema, podrías setearlo aquí)
     return this.prisma.promotion.update({
       where: { id },
       data: { active: false },
@@ -143,8 +151,8 @@ export class PromotionsService {
 
   /**
    * Publicación del feed (hook).
-   * Integra aquí tu FeedService.compileAndPublishFeed() si ya existe.
    * Por ahora, devolvemos un resumen de vigentes como feedback rápido al admin.
+   * La compilación a R2 queda fuera de esta fase.
    */
   async publish(id?: string) {
     if (id) await this.findOne(id); // valida existencia
@@ -154,7 +162,53 @@ export class PromotionsService {
       where: { active: true, startsAt: { lte: now }, endsAt: { gte: now } },
     });
 
-    // TODO: this.feedService?.compileAndPublishFeed();
     return { message: 'Publish triggered', activeNow };
+  }
+
+  // ---------------------------
+  // OVERLAY REMOTO (público/autenticado)
+  // ---------------------------
+  /**
+   * Devuelve hasta 3 overlays vigentes para la audiencia indicada.
+   * Formato: [{ id, name, productId, price?, imageUrl?, bannerKey? }]
+   */
+  async getOverlayByAudience(audience: Audience) {
+    const now = new Date();
+
+    const promos = await this.prisma.promotion.findMany({
+      where: {
+        // si tu schema tiene deletedAt, evita traer borrados duros:
+        deletedAt: null as any, // si no existe en tu schema, puedes remover esta línea
+        active: true,
+        startsAt: { lte: now },
+        endsAt: { gte: now },
+        OR: [{ audience }, { audience: 'ANY' as any }],
+        products: { some: {} },
+      },
+      include: { products: true },
+      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
+      take: 3,
+    });
+
+    return promos.map((p) => {
+      const first = p.products[0]; // por ahora 1 producto por promo
+      const productId = String(first?.productId ?? '');
+
+      const benefits = (p as any).benefitsJson ?? {};
+      const conditions = ((p as any).conditionsJson ?? {}) as any;
+      const meta = conditions?.metadata ?? {};
+
+      const price =
+        typeof benefits.price === 'number' ? Number(benefits.price) : undefined;
+
+      return {
+        id: p.id,
+        name: p.name,
+        productId,                                // string (numérica)
+        price,                                    // PRICE_OVERRIDE; si es % no forzamos aquí
+        imageUrl: meta.imageUrl ?? meta.img ?? undefined,
+        bannerKey: meta.bannerKey ?? undefined,
+      };
+    });
   }
 }

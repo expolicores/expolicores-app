@@ -1,8 +1,5 @@
 // frontend/src/lib/api.ts
-import axios, {
-  AxiosError,
-  type AxiosInstance,
-} from 'axios';
+import axios, { AxiosError, type AxiosInstance } from 'axios';
 import { Platform } from 'react-native';
 import { ENV } from '../config/env';
 
@@ -459,7 +456,9 @@ export type PricingView = 'B2C_ONLY' | 'B2B_DEFAULT' | 'COMPARATIVE' | 'PUBLIC_R
 export type SlotType = 'hero' | 'collection' | 'nav' | 'chips' | 'editorial';
 
 export interface FeedItem {
+  /** En algunos feeds usas "productId"; en otros cambiastes a "id". Dejamos ambos opcionales. */
   productId?: string;
+  id?: string | number;
   title?: string;
   subtitle?: string;
   image?: string;
@@ -506,6 +505,29 @@ export async function fetchFeed(opts?: {
     signal: opts?.signal,
   });
   return data;
+}
+
+/* ============== Promotions Overlay (REMOTO) ============== */
+/** Respuesta del endpoint remoto para overlays (ver backend GET /promotions/overlays) */
+export interface RemoteOverlayItem {
+  id: string;
+  name: string;
+  productId: string;      // string numérica
+  price?: number;         // PRICE_OVERRIDE (opcional)
+  imageUrl?: string;      // opcional si se guarda en metadata
+  bannerKey?: string;     // opcional
+}
+
+/**
+ * Obtiene hasta 3 overlays vigentes según la audiencia (B2C | B2B).
+ * El front los fusionará con el overlay local para que todos los devices vean lo mismo.
+ */
+export async function fetchRemoteOverlay(audience: 'B2C' | 'B2B'): Promise<RemoteOverlayItem[]> {
+  const { data } = await api.get<RemoteOverlayItem[]>('/promotions/overlays', {
+    params: { audience },
+    headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache', Expires: '0' },
+  });
+  return Array.isArray(data) ? data : [];
 }
 
 export default api;
