@@ -6,6 +6,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -179,10 +180,12 @@ export default function ProfileScreen() {
   // Estados de carga
   if (booting || (!user && isFetching)) {
     return (
-      <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
-        <View style={[styles.center, { flex: 1 }]}>
-          <ActivityIndicator />
-          <Text style={{ marginTop: 8 }}>Cargando perfil...</Text>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={[styles.content, { flex: 1, paddingBottom: bottomPadding }]}>
+          <View style={[styles.center, { flex: 1 }]}>
+            <ActivityIndicator />
+            <Text style={{ marginTop: 8 }}>Cargando perfil...</Text>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -190,14 +193,19 @@ export default function ProfileScreen() {
 
   if (!user) {
     return (
-      <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
-        <View style={[styles.center, { flex: 1 }]}>
-          <Text style={styles.title}>Mi perfil</Text>
-          <Text style={styles.muted}>No autenticado</Text>
-          <View style={{ height: 12 }} />
-          <Pressable style={[styles.secondaryButton, styles.secondaryButtonBlue]} onPress={() => refetch()}>
-            <Text style={styles.secondaryButtonText}>Reintentar</Text>
-          </Pressable>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={[styles.content, { flex: 1, paddingBottom: bottomPadding }]}>
+          <View style={[styles.center, { flex: 1 }]}>
+            <Text style={styles.title}>Mi perfil</Text>
+            <Text style={styles.muted}>No autenticado</Text>
+            <View style={{ height: 12 }} />
+            <Pressable
+              style={[styles.secondaryButton, styles.secondaryButtonBlue]}
+              onPress={() => refetch()}
+            >
+              <Text style={styles.secondaryButtonText}>Reintentar</Text>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -212,8 +220,13 @@ export default function ProfileScreen() {
       : '#10b981';
 
   return (
-    <SafeAreaView style={[styles.container, { paddingBottom: bottomPadding }]}>
-      <Text style={styles.title}>Mi perfil</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[styles.content, { paddingBottom: bottomPadding }]}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>Mi perfil</Text>
 
       {/* Banners B2B */}
       {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
@@ -382,12 +395,19 @@ export default function ProfileScreen() {
       >
         <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
       </Pressable>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, paddingTop: 32, backgroundColor: '#fff' },
+  safeArea: { flex: 1, backgroundColor: '#fff' },
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 32,
+    paddingBottom: 20,
+  },
   center: { alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 24, fontWeight: '600', marginBottom: 16, color: '#111' },
   label: { marginTop: 12, marginBottom: 6, fontWeight: '600', color: '#111' },

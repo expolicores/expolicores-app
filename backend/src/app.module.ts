@@ -26,7 +26,7 @@ import { GeoModule } from './geo/geo.module';
 // Feed — contenido server-driven para Home (promos/combos por rol)
 import { FeedModule } from './feed/feed.module';
 
-// Promotions — módulo ADMIN para crear/editar/publicar promociones (Fase 1)
+// Promotions — ADMIN (CRUD + overlays públicos)
 import { PromotionsModule } from './promotions/promotions.module';
 
 @Module({
@@ -48,16 +48,16 @@ import { PromotionsModule } from './promotions/promotions.module';
     FavoritesModule,
 
     // Módulos B2B
-    BodegaModule, // acceso a Bodega Virtual (protegido por Roles/B2BApproved)
-    BusinessModule, // gestión de solicitudes B2B (apply, admin list/approve/reject)
+    BodegaModule,     // Bodega Virtual (protegido por roles/estatus)
+    BusinessModule,   // gestión de solicitudes B2B
 
     // Geocoding / Cobertura
-    GeoModule, // expone POST /geo/validate — controlado por FEATURE_GEOCODING en runtime
+    GeoModule,
 
-    // Feed server-driven (JSON en Cloudflare R2 + filtro por rol/estatus)
+    // Feed server-driven
     FeedModule,
 
-    // Promotions (ADMIN-only) — Fase 1
+    // Promociones (incluye /promotions/overlays)
     PromotionsModule,
   ],
   controllers: [AppController],

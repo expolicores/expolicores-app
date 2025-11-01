@@ -1,12 +1,17 @@
+// src/promotions/promotions.module.ts
 import { Module } from '@nestjs/common';
-import { PromotionsController } from 'src/promotions/promotions.controller';
-import { PromotionsService } from 'src/promotions/promotions.service';
-import { PrismaModule } from '../prisma/prisma.module';
+import { PromotionsService } from './promotions.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { OverlaysController } from './overlays.controller';
+// Si ya tienes un PromotionsController para CRUD/admin, déjalo como está e impórtalo aquí también:
+import { PromotionsController } from './promotions.controller'; // <-- si existe en tu repo
 
 @Module({
-  imports: [PrismaModule],
-  controllers: [PromotionsController],
-  providers: [PromotionsService],
+  controllers: [
+    OverlaysController,
+    PromotionsController, // quita esta línea si NO tienes este archivo
+  ],
+  providers: [PromotionsService, PrismaService],
   exports: [PromotionsService],
 })
 export class PromotionsModule {}
