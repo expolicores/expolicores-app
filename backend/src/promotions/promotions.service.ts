@@ -142,7 +142,7 @@ export class PromotionsService {
   }
 
   async softDelete(id: string) {
-    // Soft delete: active=false (si además usas deletedAt en el schema, podrías setearlo aquí)
+    // Soft delete simple: active=false
     return this.prisma.promotion.update({
       where: { id },
       data: { active: false },
@@ -177,21 +177,33 @@ export class PromotionsService {
 
     const promos = await this.prisma.promotion.findMany({
       where: {
-        // si tu schema tiene deletedAt, evita traer borrados duros:
-        deletedAt: null as any, // si no existe en tu schema, puedes remover esta línea
+        // NOTA: si tu schema tuviera deletedAt, puedes filtrarlo aquí.
         active: true,
         startsAt: { lte: now },
         endsAt: { gte: now },
         OR: [{ audience }, { audience: 'ANY' as any }],
         products: { some: {} },
       },
-      include: { products: true },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       take: 3,
+      // seleccionamos solo lo necesario y el primer productId
+      select: {
+        id: true,
+        name: true,
+        audience: true,
+        benefitsJson: true,
+        conditionsJson: true,
+        createdAt: true,
+        priority: true,
+        products: {
+          select: { productId: true },
+          take: 1,
+        },
+      },
     });
 
     return promos.map((p) => {
-      const first = p.products[0]; // por ahora 1 producto por promo
+      const first = p.products?.[0];
       const productId = String(first?.productId ?? '');
 
       const benefits = (p as any).benefitsJson ?? {};
@@ -204,8 +216,8 @@ export class PromotionsService {
       return {
         id: p.id,
         name: p.name,
-        productId,                                // string (numérica)
-        price,                                    // PRICE_OVERRIDE; si es % no forzamos aquí
+        productId,                                // string (numérica o slug, según tu modelo)
+        price,                                    // PRICE_OVERRIDE; si es % no se fuerza aquí
         imageUrl: meta.imageUrl ?? meta.img ?? undefined,
         bannerKey: meta.bannerKey ?? undefined,
       };
