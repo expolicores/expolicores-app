@@ -14,31 +14,31 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../context/AuthContext';
 import { api, fetchAdminPromotions, type AdminPromotion } from '../lib/api';
-import { bus } from '../lib/bus'; // evento para avisar al Feed
+import { bus } from '../lib/bus';
 
 type PromoType = 'PRICE_OVERRIDE' | 'PERCENT_OFF' | 'X_FOR_Y' | 'GIFT_WITH_PURCHASE';
 
 const MAX_PUBLISHED = 3;
 
-// Banners mock (asignación provisional de imagen)
+// Banners mock (provisional)
 const BANNERS = [
   { key: 'slotA', url: 'https://cdn.expressapp.net/p/vino-malbec-400.webp' },
   { key: 'slotB', url: 'https://cdn.expressapp.net/p/ron-1l-400.webp' },
   { key: 'slotC', url: 'https://cdn.expressapp.net/p/hero-b2c-week.webp' },
 ];
 
-// Overlay local de “publicadas”
+// Overlay local “publicadas”
 const OVERLAY_PUBLISHED_KEY = 'published_promos_overlay_v1';
-// Overlay local de “eliminadas” (tombstones) mientras el backend filtra
+// “Tombstones” locales para eliminadas
 const OVERLAY_DELETED_KEY = 'deleted_promos_overlay_v1';
 
 type OverlayPublished = {
   id: string;
   name: string;
-  productId: string;  // numeric string
+  productId: string; // numeric string
   price?: number;
   imageUrl?: string;
-  bannerKey?: string; // 👈 añadido
+  bannerKey?: string;
   publishedAt: number;
 };
 
@@ -71,7 +71,7 @@ async function removeFromPublished(id: string) {
   return next;
 }
 
-// Tombstones (IDs eliminados) para filtrar mientras el backend se corrige
+// Tombstones
 async function readDeletedIds(): Promise<string[]> {
   try {
     const raw = await AsyncStorage.getItem(OVERLAY_DELETED_KEY);
@@ -88,12 +88,6 @@ async function addDeletedId(id: string) {
     await AsyncStorage.setItem(OVERLAY_DELETED_KEY, JSON.stringify(list));
   }
   return list;
-}
-async function removeDeletedId(id: string) {
-  const list = await readDeletedIds();
-  const next = list.filter((x) => x !== id);
-  await AsyncStorage.setItem(OVERLAY_DELETED_KEY, JSON.stringify(next));
-  return next;
 }
 
 export default function AdminPromotionsScreen() {
@@ -234,7 +228,6 @@ export default function AdminPromotionsScreen() {
   };
 
   const publish = async (id: string) => {
-    // límite
     const publishedNow = new Set([
       ...list.filter((p) => p.published).map((p) => String(p.id)),
       ...overlayPublished.map((o) => String(o.id)),
@@ -246,13 +239,13 @@ export default function AdminPromotionsScreen() {
     }
 
     try {
-      // Optimista en UI
+      // Optimista
       setList((prev) => prev.map((p) => (String(p.id) === String(id) ? { ...p, published: true } : p)));
 
       // Backend
       await api.post(`/admin/promotions/${id}/publish`, {}, { headers });
 
-      // Persistir overlay rico para que Feed pueda mostrar nombre + precio bajo la imagen
+      // Persist overlay
       const promo = list.find((p) => String(p.id) === String(id));
       if (promo) {
         const bannerKey =
@@ -270,13 +263,14 @@ export default function AdminPromotionsScreen() {
           productId,
           price,
           imageUrl,
-          bannerKey,                 // 👈 guardamos también la key
+          bannerKey,
           publishedAt: Date.now(),
         });
         setOverlayPublished(nextPub);
 
-        // 🔔 Notificar al Feed que refresque su overlay
+        // Notifica al Feed (en ambos nombres por compat)
         bus.emit('promos:updated');
+        bus.emit('promos:changed');
       }
 
       await load({ silent: true });
@@ -289,7 +283,6 @@ export default function AdminPromotionsScreen() {
     }
   };
 
-  // Borrado: llamamos backend Y guardamos tombstone local
   const removePromotion = (id: string | number) => {
     const idStr = String(id);
     Alert.alert(
@@ -301,25 +294,24 @@ export default function AdminPromotionsScreen() {
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
-            // Optimista en UI
+            // Optimista
             setList((p) => p.filter((x) => String(x.id) !== idStr));
 
             try {
-              const resp = await api.delete(`/admin/promotions/${idStr}`, { headers });
-              console.log('[admin][promos] DELETE status →', resp.status);
+              await api.delete(`/admin/promotions/${idStr}`, { headers });
             } catch (e: any) {
-              console.log('[admin][promos] DELETE error →', e?.message);
               // aunque falle, seguimos con tombstone local
             }
 
-            // marcar tombstone
             const nextDeleted = await addDeletedId(idStr);
             setDeletedIds(nextDeleted);
 
-            // si estaba publicada, quitarla del overlay y avisar al Feed
             const nextPub = await removeFromPublished(idStr);
             setOverlayPublished(nextPub);
+
+            // Notifica al Feed (ambos eventos)
             bus.emit('promos:updated');
+            bus.emit('promos:changed');
 
             await load({ silent: true });
           },

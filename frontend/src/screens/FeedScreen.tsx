@@ -10,6 +10,7 @@ import {
   TextInput,
   Keyboard,
   Alert,
+  type DimensionValue,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
@@ -32,7 +33,6 @@ import {
 } from '../lib/api';
 import { bus } from '../lib/bus';
 
-// ---------- helpers de formato ----------
 const formatCOP = (n?: number) =>
   typeof n === 'number'
     ? new Intl.NumberFormat('es-CO', {
@@ -42,12 +42,11 @@ const formatCOP = (n?: number) =>
       }).format(n)
     : '';
 
-/** Overlay persistido por AdminPromotionsScreen */
 const OVERLAY_KEY = 'published_promos_overlay_v1';
 type OverlayItem = {
   id: string;
   name: string;
-  productId: string; // numérica como string
+  productId: string;
   price?: number;
   imageUrl?: string;
   bannerKey?: string;
@@ -63,7 +62,6 @@ async function readOverlay(): Promise<OverlayItem[]> {
   }
 }
 
-// ---------- Estilos ----------
 const spacing = { xs: 8, sm: 12, md: 16, lg: 20, xl: 24 };
 const radius = { sm: 8, md: 12, lg: 16, xl: 20 };
 const colors = {
@@ -78,7 +76,6 @@ const colors = {
 };
 const B2B_ENABLED = (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
 
-// ---------- Layout helpers ----------
 const { width: SCREEN_W } = Dimensions.get('window');
 const HERO_H = Math.min(280, SCREEN_W * 0.6);
 const COL_GAP = spacing.sm;
@@ -86,7 +83,6 @@ const COLS = 2;
 const CARD_W = Math.floor((SCREEN_W - (spacing.md * 2) - COL_GAP) / COLS);
 const CARD_H = 240;
 
-// ---------- Utils UI ----------
 function useTapOnce(cb: () => void, ms = 500) {
   const [disabled, setDisabled] = React.useState(false);
   return () => {
@@ -100,9 +96,6 @@ function useTapOnce(cb: () => void, ms = 500) {
   };
 }
 
-// ======================================================================
-// FEED SCREEN
-// ======================================================================
 export default function FeedScreen() {
   const { user, token, isReady } = useAuth();
   const navigation = useNavigation<any>();
@@ -123,7 +116,6 @@ export default function FeedScreen() {
   const [overlay, setOverlay] = useState<OverlayItem[]>([]);
   const FEED_CACHE_KEY = 'feed:last';
 
-  // Cart helpers (tolerante a implementaciones)
   const cartContext = (useCart() as any) ?? {};
   const { addItem, addToCart } = cartContext;
   const addCart = addItem ?? addToCart ?? cartContext?.add;
@@ -149,11 +141,8 @@ export default function FeedScreen() {
             if (result?.then) await result;
             added = true;
             break;
-          } catch {
-            // probar siguiente firma
-          }
+          } catch {}
         }
-
         if (!added) throw new Error('No se pudo agregar al carrito');
       } catch (e: any) {
         console.log('[feed] addFromFeed error', e?.message);
@@ -200,7 +189,6 @@ export default function FeedScreen() {
       console.log('[feed] fetched slots:', res?.slots?.length ?? 0);
       setData(res);
       persistFeed(res).catch(() => undefined);
-
       await reloadOverlay();
     } catch (e: any) {
       console.log('[feed] load error ->', e?.status, e?.message);
@@ -218,21 +206,22 @@ export default function FeedScreen() {
     }
   }, [persistFeed, loadFromCache, reloadOverlay]);
 
-  // Arranque cuando la sesión está lista
   useEffect(() => {
     if (!isReady || !hasToken) return;
     setLoading(true);
-    load();
-  }, [isReady, hasToken, load]);
+    reloadOverlay().finally(() => load());
+  }, [isReady, hasToken, load, reloadOverlay]);
 
-  // Suscribirse a publicaciones/eliminaciones desde Admin (refrescar overlay al vuelo)
   useEffect(() => {
     const handler = () => reloadOverlay();
     bus.on('promos:updated', handler);
-    return () => { bus.off('promos:updated', handler); };
+    bus.on('promos:changed', handler);
+    return () => {
+      bus.off('promos:updated', handler);
+      bus.off('promos:changed', handler);
+    };
   }, [reloadOverlay]);
 
-  // Reintenta al reenfocar si no hay data
   useFocusEffect(
     useCallback(() => {
       if (isReady && hasToken && !data && !loading) {
@@ -260,14 +249,12 @@ export default function FeedScreen() {
     [navigation, canSeeBodegaVirtual],
   );
 
-  // Deeplinks internos: app://collection/:slug y app://product/:id
   const handleDeeplink = useCallback(
     (url?: string) => {
       if (!url) return;
       try {
         const u = new URL(url);
         const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
-
         if (u.host === 'collection' || path.startsWith('collection/')) {
           const slug =
             (u.host === 'collection' ? path : path.replace('collection/', '')) ||
@@ -287,9 +274,8 @@ export default function FeedScreen() {
     [navigation],
   );
 
-  const slotUserRole: 'B2B' | 'B2C' = isB2BRole || isAdmin ? 'B2B' : 'B2C';
+  const slotUserRole: 'B2B' | 'B2C' = (isB2BRole || isAdmin) ? 'B2B' : 'B2C';
 
-  // ---------- Estados ----------
   if (!isReady) {
     return (
       <Centered>
@@ -298,7 +284,6 @@ export default function FeedScreen() {
       </Centered>
     );
   }
-
   if (!hasToken) {
     return (
       <Centered>
@@ -306,7 +291,6 @@ export default function FeedScreen() {
       </Centered>
     );
   }
-
   if (loading && !data) return <FeedSkeleton />;
 
   if (!data) {
@@ -339,7 +323,6 @@ export default function FeedScreen() {
   const slots = data.slots ?? [];
   const isEmpty = slots.length === 0;
 
-  // ---------- Lista ----------
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       {isEmpty ? (
@@ -347,24 +330,12 @@ export default function FeedScreen() {
           <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
             No hay promociones por ahora
           </Text>
-          <Text
-            style={{
-              color: colors.textMuted,
-              fontSize: 12,
-              marginBottom: spacing.sm,
-              textAlign: 'center',
-            }}
-          >
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm, textAlign: 'center' }}>
             Vuelve más tarde o intenta refrescar.
           </Text>
           <TouchableOpacity
             onPress={onRefresh}
-            style={{
-              backgroundColor: '#111',
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 8,
-            }}
+            style={{ backgroundColor: '#111', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }}
           >
             <Text style={{ color: 'white', fontWeight: '600' }}>Reintentar</Text>
           </TouchableOpacity>
@@ -383,14 +354,13 @@ export default function FeedScreen() {
               onAddToCart={(p) => addFromFeed(p)}
             />
           )}
+          // @ts-ignore (typings antiguos de FlashList)
           estimatedItemSize={300}
           contentContainerStyle={{ paddingBottom: spacing.xl + bottomPadding }}
           ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
           removeClippedSubviews
           windowSize={7}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           ListHeaderComponent={
             <FeedHeader
               showBodega={canSeeBodegaVirtual}
@@ -415,15 +385,7 @@ export default function FeedScreen() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: colors.bg,
-        padding: spacing.lg,
-      }}
-    >
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg, padding: spacing.lg }}>
       {children}
     </View>
   );
@@ -443,22 +405,9 @@ const FeedHeader = React.memo(function FeedHeader({
   isB2BSearch: boolean;
 }) {
   return (
-    <View
-      style={{
-        backgroundColor: colors.bg,
-        paddingHorizontal: spacing.md,
-        paddingTop: spacing.md,
-        paddingBottom: spacing.md,
-        marginBottom: spacing.md,
-        gap: spacing.md,
-      }}
-    >
+    <View style={{ backgroundColor: colors.bg, paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.md, marginBottom: spacing.md, gap: spacing.md }}>
       <HomeSearchBar onSubmit={onSubmitSearch} isB2B={isB2BSearch} />
-      <QuickAccessTiles
-        showBodega={showBodega}
-        onPressMarket={onPressMarket}
-        onPressBodega={onPressBodega}
-      />
+      <QuickAccessTiles showBodega={showBodega} onPressMarket={onPressMarket} onPressBodega={onPressBodega} />
     </View>
   );
 });
@@ -481,19 +430,7 @@ const HomeSearchBar = React.memo(function HomeSearchBar({
   };
 
   return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#F3F4F6',
-        borderRadius: 20,
-        paddingHorizontal: spacing.md,
-        paddingVertical: 10,
-        borderWidth: 1,
-        borderColor: colors.border,
-        gap: spacing.sm,
-      }}
-    >
+    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: spacing.md, paddingVertical: 10, borderWidth: 1, borderColor: colors.border, gap: spacing.sm }}>
       <Ionicons name="search" size={18} color={colors.textMuted} />
       <TextInput
         value={value}
@@ -522,19 +459,10 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
       <TouchableOpacity
         onPress={onPressMarket}
         activeOpacity={0.85}
-        style={{
-          flex: 1,
-          borderRadius: radius.lg,
-          borderWidth: 1,
-          borderColor: colors.border,
-          backgroundColor: '#F0FFF4',
-          padding: spacing.md,
-        }}
+        style={{ flex: 1, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: '#F0FFF4', padding: spacing.md }}
       >
         <Ionicons name="basket-outline" size={28} color="#0E8A3A" />
-        <Text style={{ marginTop: spacing.xs, color: colors.text, fontWeight: '700', fontSize: 15 }}>
-          Mercado
-        </Text>
+        <Text style={{ marginTop: spacing.xs, color: colors.text, fontWeight: '700', fontSize: 15 }}>Mercado</Text>
         <Text style={{ marginTop: 4, color: colors.textMuted, fontSize: 12 }}>Compra ahora</Text>
       </TouchableOpacity>
 
@@ -542,19 +470,10 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
         <TouchableOpacity
           onPress={() => onPressBodega?.()}
           activeOpacity={0.85}
-          style={{
-            flex: 1,
-            borderRadius: radius.lg,
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: '#EEF2FF',
-            padding: spacing.md,
-          }}
+          style={{ flex: 1, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: '#EEF2FF', padding: spacing.md }}
         >
           <Ionicons name="business-outline" size={28} color="#4338CA" />
-          <Text style={{ marginTop: spacing.xs, color: colors.text, fontWeight: '700', fontSize: 15 }}>
-            Bodega Virtual
-          </Text>
+          <Text style={{ marginTop: spacing.xs, color: colors.text, fontWeight: '700', fontSize: 15 }}>Bodega Virtual</Text>
           <Text style={{ marginTop: 4, color: colors.textMuted, fontSize: 12 }}>Mayorista</Text>
         </TouchableOpacity>
       ) : null}
@@ -562,9 +481,6 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
   );
 });
 
-// ======================================================================
-// Slot renderer
-// ======================================================================
 const SlotRenderer = React.memo(function SlotRenderer({
   slot,
   userRole,
@@ -578,11 +494,11 @@ const SlotRenderer = React.memo(function SlotRenderer({
   overlay: OverlayItem[];
   onDeeplink: (url?: string) => void;
   onItemPress: (p: FeedItem) => void;
-  onAddToCart: (p: FeedItem) => void;
+  onAddToCart: (p: FeedItem | { productId?: string }) => void;
 }) {
   switch (slot.type) {
     case 'hero':
-      return <HeroSlot slot={slot} overlay={overlay} onDeeplink={onDeeplink} onAddToCart={onAddToCart} />;
+      return <HeroSlot slot={slot} overlay={overlay} onDeeplink={onDeeplink} onAddToCart={onAddToCart as any} />;
     case 'collection':
       return (
         <CollectionSlot
@@ -590,7 +506,7 @@ const SlotRenderer = React.memo(function SlotRenderer({
           userRole={userRole}
           overlay={overlay}
           onItemPress={onItemPress}
-          onAddToCart={onAddToCart}
+          onAddToCart={(p) => onAddToCart(p)}
         />
       );
     default:
@@ -598,9 +514,6 @@ const SlotRenderer = React.memo(function SlotRenderer({
   }
 });
 
-// ======================================================================
-// Slots
-// ======================================================================
 const HeroSlot = React.memo(function HeroSlot({
   slot,
   overlay,
@@ -618,12 +531,7 @@ const HeroSlot = React.memo(function HeroSlot({
   });
 
   const img = (slot.image ?? '').trim();
-
-  // Busca overlay que matchee esta imagen (o el primero como fallback)
-  const ov = useMemo(() => {
-    if (!img) return overlay[0];
-    return overlay.find((o) => o.imageUrl === img) ?? overlay[0];
-  }, [overlay, img]);
+  const ov = overlay[0];
 
   return (
     <View style={{ backgroundColor: colors.bg, paddingHorizontal: spacing.md }}>
@@ -644,48 +552,30 @@ const HeroSlot = React.memo(function HeroSlot({
           contentFit="cover"
           transition={150}
           cachePolicy="memory-disk"
-          onError={(e) => {
-            console.log('[image error][hero]', img, e?.nativeEvent);
+          onError={(err) => {
+            console.log('[image error][hero]', img, err);
           }}
         />
       ) : null}
       {slot.cta?.label ? (
         <TouchableOpacity
           onPress={onCta}
-          style={{
-            alignSelf: 'flex-start',
-            marginTop: spacing.sm,
-            backgroundColor: colors.primary,
-            paddingHorizontal: spacing.lg,
-            paddingVertical: spacing.sm,
-            borderRadius: radius.md,
-          }}
+          style={{ alignSelf: 'flex-start', marginTop: spacing.sm, backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.md }}
         >
           <Text style={{ color: '#fff', fontWeight: '700' }}>{slot.cta.label}</Text>
         </TouchableOpacity>
       ) : null}
 
-      {/* 👇 Bloque de promo debajo del hero (usando overlay) */}
       {ov?.name ? (
         <View style={{ marginTop: spacing.sm, gap: 6 }}>
-          <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>
-            {ov.name}
-          </Text>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{ov.name}</Text>
           {typeof ov.price === 'number' ? (
-            <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>
-              {formatCOP(ov.price)}
-            </Text>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>{formatCOP(ov.price)}</Text>
           ) : null}
           {!!ov.productId && (
             <TouchableOpacity
               onPress={() => onAddToCart({ productId: ov.productId })}
-              style={{
-                alignSelf: 'flex-start',
-                backgroundColor: '#111',
-                paddingHorizontal: spacing.lg,
-                paddingVertical: 10,
-                borderRadius: radius.md,
-              }}
+              style={{ alignSelf: 'flex-start', backgroundColor: '#111', paddingHorizontal: spacing.lg, paddingVertical: 10, borderRadius: radius.md }}
               activeOpacity={0.85}
             >
               <Text style={{ color: '#fff', fontWeight: '700' }}>Agregar</Text>
@@ -712,22 +602,14 @@ const CollectionSlot = React.memo(function CollectionSlot({
 }) {
   const itemsRaw = (slot.items ?? []).filter((it) => !!it.image && !!it.image.trim());
 
-  // Inyectamos overlay: emparejar por imageUrl/productId; fallback al índice
   const items: FeedItem[] = itemsRaw.map((it, idx) => {
-    const img = it.image?.trim();
-    const pidStr = it.productId != null ? String(it.productId) : undefined;
-
-    const match =
-      overlay.find((ov) => (img && ov.imageUrl === img) || (pidStr && ov.productId === pidStr)) ??
-      overlay[idx];
-
-    if (!match) return it;
-
+    const ov = overlay[idx];
+    if (!ov) return it;
     return {
       ...it,
-      title: match.name || it.title,
-      productId: match.productId || it.productId,
-      priceB2C: typeof match.price === 'number' ? match.price : it.priceB2C,
+      title: ov.name || it.title,
+      productId: ov.productId || it.productId,
+      priceB2C: typeof ov.price === 'number' ? ov.price : it.priceB2C,
       image: it.image,
     };
   });
@@ -739,14 +621,10 @@ const CollectionSlot = React.memo(function CollectionSlot({
       {(slot.title || slot.subtitle) && (
         <View style={{ paddingHorizontal: spacing.md, marginBottom: spacing.sm }}>
           {slot.title ? (
-            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
-              {slot.title}
-            </Text>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{slot.title}</Text>
           ) : null}
           {slot.subtitle ? (
-            <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 2 }}>
-              {slot.subtitle}
-            </Text>
+            <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 2 }}>{slot.subtitle}</Text>
           ) : null}
         </View>
       )}
@@ -756,6 +634,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
           horizontal
           showsHorizontalScrollIndicator={false}
           data={items}
+          // @ts-ignore (typings antiguos de FlashList)
           estimatedItemSize={CARD_W}
           keyExtractor={(it, idx) => it.productId ?? `i${idx}`}
           contentContainerStyle={{ paddingHorizontal: spacing.md }}
@@ -776,6 +655,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
           data={items}
           numColumns={COLS}
           keyExtractor={(it, idx) => it.productId ?? `i${idx}`}
+          // @ts-ignore (typings antiguos de FlashList)
           estimatedItemSize={CARD_H}
           contentContainerStyle={{ paddingHorizontal: spacing.md }}
           ItemSeparatorComponent={() => <View style={{ height: COL_GAP }} />}
@@ -799,9 +679,6 @@ const CollectionSlot = React.memo(function CollectionSlot({
   );
 });
 
-// ======================================================================
-// Card
-// ======================================================================
 const ProductMiniCard = React.memo(function ProductMiniCard({
   item,
   pricingView,
@@ -852,42 +729,21 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
-      <View
-        style={{
-          width,
-          height: CARD_H,
-          backgroundColor: colors.bg,
-          borderRadius: radius.md,
-          borderWidth: 1,
-          borderColor: colors.border,
-          overflow: 'hidden',
-        }}
-      >
+      <View style={{ width, height: CARD_H, backgroundColor: colors.bg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
         <Image
           source={{ uri: img }}
           style={{ width: '100%', height: 130, backgroundColor: colors.bgAlt }}
           contentFit="cover"
           transition={120}
           cachePolicy="memory-disk"
-          onError={(e) => {
-            console.log('[image error][product]', item.productId, img, e?.nativeEvent);
+          onError={(err) => {
+            console.log('[image error][product]', item.productId, img, err);
           }}
         />
         <View style={{ padding: spacing.sm }}>
           {badgeText ? (
-            <View
-              style={{
-                alignSelf: 'flex-start',
-                backgroundColor: badgeText === 'Tu precio' ? colors.success : colors.neutral,
-                paddingHorizontal: 8,
-                paddingVertical: 2,
-                borderRadius: 999,
-                marginBottom: 4,
-              }}
-            >
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                {badgeText}
-              </Text>
+            <View style={{ alignSelf: 'flex-start', backgroundColor: badgeText === 'Tu precio' ? colors.success : colors.neutral, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, marginBottom: 4 }}>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{badgeText}</Text>
             </View>
           ) : null}
 
@@ -904,25 +760,14 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           ) : null}
 
           {secondaryLine ? (
-            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
-              {secondaryLine}
-            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{secondaryLine}</Text>
           ) : null}
         </View>
 
-        {/* Botón Agregar */}
         <TouchableOpacity
           onPress={onAddToCart}
           activeOpacity={0.85}
-          style={{
-            position: 'absolute',
-            right: 8,
-            bottom: 8,
-            backgroundColor: '#111',
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 10,
-          }}
+          style={{ position: 'absolute', right: 8, bottom: 8, backgroundColor: '#111', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}
         >
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Agregar</Text>
         </TouchableOpacity>
@@ -931,11 +776,8 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   );
 });
 
-// ======================================================================
-// Skeleton
-// ======================================================================
-function Rect({ w, h, r = 12 }: { w: number | string; h: number; r?: number }) {
-  return <View style={{ width: w, height: h, borderRadius: r, backgroundColor: colors.bgAlt }} />;
+function Rect({ w, h, r = 12 }: { w: number | `${number}%`; h: number; r?: number }) {
+  return <View style={{ width: w as DimensionValue, height: h, borderRadius: r, backgroundColor: colors.bgAlt }} />;
 }
 
 function FeedSkeleton() {
