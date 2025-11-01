@@ -1,4 +1,4 @@
-// src/screens/FeedScreen.tsx
+// frontend/src/screens/FeedScreen.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -9,28 +9,59 @@ import {
   ActivityIndicator,
   TextInput,
   Keyboard,
+  Alert,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 import {
   fetchFeed,
   getApiBaseUrl,
+  getProductById,
   type FeedResponse,
   type FeedSlot,
   type FeedItem,
   type PricingView,
 } from '../lib/api';
-import { useFavorites } from '../hooks/useFavorites';
-import { useActiveOrdersCount } from '../hooks/useActiveOrders';
+import { bus } from '../lib/bus';
 
-// 👉 Si tienes un placeholder local, descomenta la línea de abajo y crea assets/placeholder.png (1–3 KB).
-// import placeholderImg from '../../assets/placeholder.png';
+// ---------- helpers de formato ----------
+const formatCOP = (n?: number) =>
+  typeof n === 'number'
+    ? new Intl.NumberFormat('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+        maximumFractionDigits: 0,
+      }).format(n)
+    : '';
+
+/** Overlay persistido por AdminPromotionsScreen */
+const OVERLAY_KEY = 'published_promos_overlay_v1';
+type OverlayItem = {
+  id: string;
+  name: string;
+  productId: string; // numérica como string
+  price?: number;
+  imageUrl?: string;
+  bannerKey?: string;
+  publishedAt: number;
+};
+async function readOverlay(): Promise<OverlayItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(OVERLAY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
 
 // ---------- Estilos ----------
 const spacing = { xs: 8, sm: 12, md: 16, lg: 20, xl: 24 };
@@ -42,7 +73,7 @@ const colors = {
   bg: '#fff',
   bgAlt: '#F6F7F8',
   border: '#E5E7EB',
-  success: '#0EA5E9',
+  success: '#10b981',
   neutral: '#6B7280',
 };
 const B2B_ENABLED = (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
@@ -55,18 +86,15 @@ const COLS = 2;
 const CARD_W = Math.floor((SCREEN_W - (spacing.md * 2) - COL_GAP) / COLS);
 const CARD_H = 240;
 
-const formatCOP = (n?: number) =>
-  typeof n === 'number'
-    ? n.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })
-    : undefined;
-
 // ---------- Utils UI ----------
 function useTapOnce(cb: () => void, ms = 500) {
   const [disabled, setDisabled] = React.useState(false);
   return () => {
     if (disabled) return;
     setDisabled(true);
-    try { cb(); } finally {
+    try {
+      cb();
+    } finally {
       setTimeout(() => setDisabled(false), ms);
     }
   };
@@ -79,7 +107,7 @@ export default function FeedScreen() {
   const { user, token, isReady } = useAuth();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const authToken = user?.token ?? token ?? null;
+  const authToken = (user as any)?.token ?? token ?? null;
   const hasToken = !!authToken;
   const rawRole = (user as any)?.role as string | undefined;
   const isAdmin = rawRole === 'ADMIN';
@@ -88,16 +116,82 @@ export default function FeedScreen() {
   const canSeeBodegaVirtual = B2B_ENABLED && (isB2BRole || isAdmin);
   const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
 
-  const [loading, setLoading] = useState(false); // no arrancar en true
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<FeedResponse | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [overlay, setOverlay] = useState<OverlayItem[]>([]);
+  const FEED_CACHE_KEY = 'feed:last';
 
-  // Logs de diagnóstico
+  // Cart helpers (tolerante a implementaciones)
+  const cartContext = (useCart() as any) ?? {};
+  const { addItem, addToCart } = cartContext;
+  const addCart = addItem ?? addToCart ?? cartContext?.add;
+
+  const addFromFeed = useCallback(
+    async (item: { productId?: string }) => {
+      try {
+        const pid = Number(item?.productId);
+        if (!pid || !Number.isFinite(pid)) throw new Error('Producto inválido');
+        const product = await getProductById(pid);
+        if (!addCart) throw new Error('Carrito no disponible');
+
+        const attempts: Array<() => any> = [
+          () => addCart(product, 1),
+          () => addCart(product?.id ?? pid, 1),
+          () => addCart(pid, 1),
+        ];
+
+        let added = false;
+        for (const attempt of attempts) {
+          try {
+            const result = attempt();
+            if (result?.then) await result;
+            added = true;
+            break;
+          } catch {
+            // probar siguiente firma
+          }
+        }
+
+        if (!added) throw new Error('No se pudo agregar al carrito');
+      } catch (e: any) {
+        console.log('[feed] addFromFeed error', e?.message);
+        Alert.alert('No se pudo agregar', e?.message ?? 'Intenta de nuevo');
+      }
+    },
+    [addCart],
+  );
+
   useEffect(() => {
     console.log('API_BASE_URL (axios) =>', getApiBaseUrl());
-    console.log('FeedScreen isReady/token?', isReady, hasToken, user?.role);
-  }, [isReady, hasToken, user?.role]);
+    console.log('FeedScreen isReady/token?', isReady, hasToken, (user as any)?.role);
+  }, [isReady, hasToken, user]);
+
+  const persistFeed = useCallback(async (res: FeedResponse) => {
+    try {
+      await AsyncStorage.setItem(
+        FEED_CACHE_KEY,
+        JSON.stringify({ data: res, ts: Date.now() }),
+      );
+    } catch {}
+  }, []);
+
+  const loadFromCache = useCallback(async (): Promise<FeedResponse | null> => {
+    try {
+      const cached = await AsyncStorage.getItem(FEED_CACHE_KEY);
+      if (!cached) return null;
+      const parsed = JSON.parse(cached);
+      return parsed?.data ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const reloadOverlay = useCallback(async () => {
+    const ov = await readOverlay();
+    setOverlay(ov);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -105,24 +199,40 @@ export default function FeedScreen() {
       const res = await fetchFeed();
       console.log('[feed] fetched slots:', res?.slots?.length ?? 0);
       setData(res);
+      persistFeed(res).catch(() => undefined);
+
+      await reloadOverlay();
     } catch (e: any) {
       console.log('[feed] load error ->', e?.status, e?.message);
       setErrMsg(e?.message ?? 'Error');
-      setData(null);
+      const cached = await loadFromCache();
+      if (cached) {
+        console.log('[feed] using cached feed');
+        setData(cached);
+      } else {
+        setData(null);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [persistFeed, loadFromCache, reloadOverlay]);
 
-  // Dispara SOLO cuando la sesión está lista y hay token
+  // Arranque cuando la sesión está lista
   useEffect(() => {
     if (!isReady || !hasToken) return;
     setLoading(true);
     load();
   }, [isReady, hasToken, load]);
 
-  // Reintenta al enfocar (por si el token llegó después)
+  // Suscribirse a publicaciones/eliminaciones desde Admin (refrescar overlay al vuelo)
+  useEffect(() => {
+    const handler = () => reloadOverlay();
+    bus.on('promos:updated', handler);
+    return () => { bus.off('promos:updated', handler); };
+  }, [reloadOverlay]);
+
+  // Reintenta al reenfocar si no hay data
   useFocusEffect(
     useCallback(() => {
       if (isReady && hasToken && !data && !loading) {
@@ -149,6 +259,34 @@ export default function FeedScreen() {
     },
     [navigation, canSeeBodegaVirtual],
   );
+
+  // Deeplinks internos: app://collection/:slug y app://product/:id
+  const handleDeeplink = useCallback(
+    (url?: string) => {
+      if (!url) return;
+      try {
+        const u = new URL(url);
+        const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
+
+        if (u.host === 'collection' || path.startsWith('collection/')) {
+          const slug =
+            (u.host === 'collection' ? path : path.replace('collection/', '')) ||
+            path.split('/').pop();
+          if (slug) navigation.navigate('Catalog', { slug });
+          return;
+        }
+        if (u.host === 'product' || path.startsWith('product/')) {
+          const productId =
+            (u.host === 'product' ? path : path.replace('product/', '')) ||
+            path.split('/').pop();
+          if (productId) navigation.navigate('ProductDetail', { productId });
+          return;
+        }
+      } catch {}
+    },
+    [navigation],
+  );
+
   const slotUserRole: 'B2B' | 'B2C' = isB2BRole || isAdmin ? 'B2B' : 'B2C';
 
   // ---------- Estados ----------
@@ -171,7 +309,7 @@ export default function FeedScreen() {
 
   if (loading && !data) return <FeedSkeleton />;
 
-  if (errMsg || !data) {
+  if (!data) {
     return (
       <Centered>
         <Text style={{ color: colors.text, fontSize: 16, marginBottom: spacing.xs }}>
@@ -181,8 +319,16 @@ export default function FeedScreen() {
           Base URL: {getApiBaseUrl() || 'n/d'}
         </Text>
         <TouchableOpacity
-          onPress={() => { setLoading(true); load(); }}
-          style={{ backgroundColor: colors.primary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.md }}
+          onPress={() => {
+            setLoading(true);
+            load();
+          }}
+          style={{
+            backgroundColor: colors.primary,
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.sm,
+            borderRadius: radius.md,
+          }}
         >
           <Text style={{ color: '#fff', fontWeight: '700' }}>Reintentar</Text>
         </TouchableOpacity>
@@ -190,45 +336,94 @@ export default function FeedScreen() {
     );
   }
 
+  const slots = data.slots ?? [];
+  const isEmpty = slots.length === 0;
+
   // ---------- Lista ----------
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <FlashList
-        data={data.slots}
-        keyExtractor={(s) => s.id}
-        renderItem={({ item }) => (
-          <SlotRenderer slot={item} userRole={slotUserRole} />
-        )}
-        estimatedItemSize={300}
-        contentContainerStyle={{ paddingBottom: spacing.xl + bottomPadding }}
-        ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
-        removeClippedSubviews
-        windowSize={7}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        ListHeaderComponent={
-          <FeedHeader
-            showBodega={canSeeBodegaVirtual}
-            onPressMarket={() => navigation.navigate('Market')}
-            onPressBodega={() => navigation.navigate('Bodega')}
-            onSubmitSearch={handleSearchSubmit}
-            isB2BSearch={canSeeBodegaVirtual}
-          />
-        }
-        ListFooterComponent={
-          loading ? (
-            <View style={{ padding: spacing.md }}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
-          ) : null
-        }
-      />
+      {isEmpty ? (
+        <Centered>
+          <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
+            No hay promociones por ahora
+          </Text>
+          <Text
+            style={{
+              color: colors.textMuted,
+              fontSize: 12,
+              marginBottom: spacing.sm,
+              textAlign: 'center',
+            }}
+          >
+            Vuelve más tarde o intenta refrescar.
+          </Text>
+          <TouchableOpacity
+            onPress={onRefresh}
+            style={{
+              backgroundColor: '#111',
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 8,
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '600' }}>Reintentar</Text>
+          </TouchableOpacity>
+        </Centered>
+      ) : (
+        <FlashList
+          data={slots}
+          keyExtractor={(s) => s.id}
+          renderItem={({ item }) => (
+            <SlotRenderer
+              slot={item}
+              userRole={slotUserRole}
+              overlay={overlay}
+              onDeeplink={handleDeeplink}
+              onItemPress={(p) => navigation.navigate('PromoDetail', { promoItem: p })}
+              onAddToCart={(p) => addFromFeed(p)}
+            />
+          )}
+          estimatedItemSize={300}
+          contentContainerStyle={{ paddingBottom: spacing.xl + bottomPadding }}
+          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          removeClippedSubviews
+          windowSize={7}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListHeaderComponent={
+            <FeedHeader
+              showBodega={canSeeBodegaVirtual}
+              onPressMarket={() => navigation.navigate('Market')}
+              onPressBodega={() => navigation.navigate('Bodega')}
+              onSubmitSearch={handleSearchSubmit}
+              isB2BSearch={canSeeBodegaVirtual}
+            />
+          }
+          ListFooterComponent={
+            loading ? (
+              <View style={{ padding: spacing.md }}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : null
+          }
+        />
+      )}
     </View>
   );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg, padding: spacing.lg }}>
+    <View
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.bg,
+        padding: spacing.lg,
+      }}
+    >
       {children}
     </View>
   );
@@ -259,7 +454,11 @@ const FeedHeader = React.memo(function FeedHeader({
       }}
     >
       <HomeSearchBar onSubmit={onSubmitSearch} isB2B={isB2BSearch} />
-      <QuickAccessTiles showBodega={showBodega} onPressMarket={onPressMarket} onPressBodega={onPressBodega} />
+      <QuickAccessTiles
+        showBodega={showBodega}
+        onPressMarket={onPressMarket}
+        onPressBodega={onPressBodega}
+      />
     </View>
   );
 });
@@ -369,15 +568,31 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
 const SlotRenderer = React.memo(function SlotRenderer({
   slot,
   userRole,
+  overlay,
+  onDeeplink,
+  onItemPress,
+  onAddToCart,
 }: {
   slot: FeedSlot;
   userRole: 'B2B' | 'B2C';
+  overlay: OverlayItem[];
+  onDeeplink: (url?: string) => void;
+  onItemPress: (p: FeedItem) => void;
+  onAddToCart: (p: FeedItem) => void;
 }) {
   switch (slot.type) {
     case 'hero':
-      return <HeroSlot slot={slot} />;
+      return <HeroSlot slot={slot} overlay={overlay} onDeeplink={onDeeplink} onAddToCart={onAddToCart} />;
     case 'collection':
-      return <CollectionSlot slot={slot} userRole={userRole} />;
+      return (
+        <CollectionSlot
+          slot={slot}
+          userRole={userRole}
+          overlay={overlay}
+          onItemPress={onItemPress}
+          onAddToCart={onAddToCart}
+        />
+      );
     default:
       return null;
   }
@@ -386,13 +601,29 @@ const SlotRenderer = React.memo(function SlotRenderer({
 // ======================================================================
 // Slots
 // ======================================================================
-const HeroSlot = React.memo(function HeroSlot({ slot }: { slot: FeedSlot }) {
+const HeroSlot = React.memo(function HeroSlot({
+  slot,
+  overlay,
+  onDeeplink,
+  onAddToCart,
+}: {
+  slot: FeedSlot;
+  overlay: OverlayItem[];
+  onDeeplink: (url?: string) => void;
+  onAddToCart: (p: { productId?: string }) => void;
+}) {
   const onCta = useTapOnce(() => {
-    console.log('[hero] cta', slot.cta?.deeplink);
-    // TODO: manejar deeplink si aplica
+    const url = slot.cta?.deeplink || 'app://collection/promos-b2c';
+    onDeeplink(url);
   });
 
   const img = (slot.image ?? '').trim();
+
+  // Busca overlay que matchee esta imagen (o el primero como fallback)
+  const ov = useMemo(() => {
+    if (!img) return overlay[0];
+    return overlay.find((o) => o.imageUrl === img) ?? overlay[0];
+  }, [overlay, img]);
 
   return (
     <View style={{ backgroundColor: colors.bg, paddingHorizontal: spacing.md }}>
@@ -413,7 +644,6 @@ const HeroSlot = React.memo(function HeroSlot({ slot }: { slot: FeedSlot }) {
           contentFit="cover"
           transition={150}
           cachePolicy="memory-disk"
-          // placeholder={placeholderImg}
           onError={(e) => {
             console.log('[image error][hero]', img, e?.nativeEvent);
           }}
@@ -434,6 +664,35 @@ const HeroSlot = React.memo(function HeroSlot({ slot }: { slot: FeedSlot }) {
           <Text style={{ color: '#fff', fontWeight: '700' }}>{slot.cta.label}</Text>
         </TouchableOpacity>
       ) : null}
+
+      {/* 👇 Bloque de promo debajo del hero (usando overlay) */}
+      {ov?.name ? (
+        <View style={{ marginTop: spacing.sm, gap: 6 }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>
+            {ov.name}
+          </Text>
+          {typeof ov.price === 'number' ? (
+            <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>
+              {formatCOP(ov.price)}
+            </Text>
+          ) : null}
+          {!!ov.productId && (
+            <TouchableOpacity
+              onPress={() => onAddToCart({ productId: ov.productId })}
+              style={{
+                alignSelf: 'flex-start',
+                backgroundColor: '#111',
+                paddingHorizontal: spacing.lg,
+                paddingVertical: 10,
+                borderRadius: radius.md,
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Agregar</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -441,11 +700,38 @@ const HeroSlot = React.memo(function HeroSlot({ slot }: { slot: FeedSlot }) {
 const CollectionSlot = React.memo(function CollectionSlot({
   slot,
   userRole,
+  overlay,
+  onItemPress,
+  onAddToCart,
 }: {
   slot: FeedSlot;
   userRole: 'B2B' | 'B2C';
+  overlay: OverlayItem[];
+  onItemPress: (p: FeedItem) => void;
+  onAddToCart: (p: FeedItem) => void;
 }) {
-  const items = (slot.items ?? []).filter((it) => !!it.image && !!it.image.trim()); // omitimos items sin imagen
+  const itemsRaw = (slot.items ?? []).filter((it) => !!it.image && !!it.image.trim());
+
+  // Inyectamos overlay: emparejar por imageUrl/productId; fallback al índice
+  const items: FeedItem[] = itemsRaw.map((it, idx) => {
+    const img = it.image?.trim();
+    const pidStr = it.productId != null ? String(it.productId) : undefined;
+
+    const match =
+      overlay.find((ov) => (img && ov.imageUrl === img) || (pidStr && ov.productId === pidStr)) ??
+      overlay[idx];
+
+    if (!match) return it;
+
+    return {
+      ...it,
+      title: match.name || it.title,
+      productId: match.productId || it.productId,
+      priceB2C: typeof match.price === 'number' ? match.price : it.priceB2C,
+      image: it.image,
+    };
+  });
+
   const isCarousel = slot.layout === 'carousel';
 
   return (
@@ -480,6 +766,8 @@ const CollectionSlot = React.memo(function CollectionSlot({
               pricingView={slot.pricingView}
               userRole={userRole}
               width={CARD_W}
+              onPress={() => onItemPress(item)}
+              onAddToCart={() => onAddToCart(item)}
             />
           )}
         />
@@ -498,6 +786,8 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 pricingView={slot.pricingView}
                 userRole={userRole}
                 width={CARD_W}
+                onPress={() => onItemPress(item)}
+                onAddToCart={() => onAddToCart(item)}
               />
             </View>
           )}
@@ -517,17 +807,21 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   pricingView,
   userRole,
   width,
+  onPress,
+  onAddToCart,
 }: {
   item: FeedItem;
   pricingView: PricingView;
   userRole: 'B2B' | 'B2C';
   width: number;
+  onPress: () => void;
+  onAddToCart: () => void;
 }) {
-  // 🔒 Si no hay URL, no renderizamos la card
   if (!item.image || !item.image.trim()) return null;
   const img = item.image.trim();
 
   const priceActive = useMemo(() => {
+    if (typeof item.priceB2C === 'number') return item.priceB2C;
     if (pricingView === 'B2B_DEFAULT') return item.priceB2B;
     if (pricingView === 'B2C_ONLY') return item.priceB2C;
     if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
@@ -554,10 +848,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     return undefined;
   }, [pricingView, userRole]);
 
-  const onPress = useTapOnce(() => {
-    console.log('[product] open', item.productId);
-    // TODO: navegar a detalle si tienes ProductDetailScreen
-  });
+  const promoName = item.title || item.subtitle;
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
@@ -578,7 +869,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           contentFit="cover"
           transition={120}
           cachePolicy="memory-disk"
-          // placeholder={placeholderImg}
           onError={(e) => {
             console.log('[image error][product]', item.productId, img, e?.nativeEvent);
           }}
@@ -595,18 +885,15 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
                 marginBottom: 4,
               }}
             >
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{badgeText}</Text>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                {badgeText}
+              </Text>
             </View>
           ) : null}
 
-          {item.title ? (
+          {promoName ? (
             <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
-              {item.title}
-            </Text>
-          ) : null}
-          {item.subtitle ? (
-            <Text numberOfLines={1} style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
-              {item.subtitle}
+              {promoName}
             </Text>
           ) : null}
 
@@ -617,9 +904,28 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           ) : null}
 
           {secondaryLine ? (
-            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{secondaryLine}</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+              {secondaryLine}
+            </Text>
           ) : null}
         </View>
+
+        {/* Botón Agregar */}
+        <TouchableOpacity
+          onPress={onAddToCart}
+          activeOpacity={0.85}
+          style={{
+            position: 'absolute',
+            right: 8,
+            bottom: 8,
+            backgroundColor: '#111',
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 10,
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Agregar</Text>
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );

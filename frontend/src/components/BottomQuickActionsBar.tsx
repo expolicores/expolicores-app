@@ -75,6 +75,12 @@ const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
 
     base.push(
       {
+        key: 'admin-promos',
+        icon: 'pricetags-outline',
+        onPress: () => navigation.navigate('AdminPromotions'),
+        accessibilityLabel: 'Promociones (admin)',
+      },
+      {
         key: 'admin-b2c',
         icon: 'pricetag-outline',
         onPress: () => navigation.navigate('AdminPriceListB2C'),

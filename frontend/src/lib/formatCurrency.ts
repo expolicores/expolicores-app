@@ -1,8 +1,13 @@
 // frontend/src/lib/formatCurrency.ts
-export function formatCurrency(value: number, locale = 'es-CO', currency = 'COP') {
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value ?? 0);
+const formatter = new Intl.NumberFormat('es-CO', {
+  style: 'currency',
+  currency: 'COP',
+  maximumFractionDigits: 0,
+});
+
+export function formatCurrency(n: number | null | undefined): string {
+  const v = typeof n === 'number' && isFinite(n) ? n : 0;
+  return formatter.format(v);
 }
+
+export default formatCurrency;

@@ -1,6 +1,6 @@
 ﻿// frontend/src/navigation/AppNavigator.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef, LinkingOptions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -43,6 +43,10 @@ import BottomQuickActionsBar from '../components/BottomQuickActionsBar';
 /** ========== Admin — Solicitudes B2B (nuevo) ========== */
 import AdminBusinessApplicationsScreen from '../screens/AdminBusinessApplicationsScreen';
 
+/** ========== NUEVO: Detalle de Promo + Panel Admin de Promos ========== */
+import PromoDetailScreen from '../screens/PromoDetailScreen';
+import AdminPromotionsScreen from '../screens/AdminPromotionsScreen';
+
 /** ================= Buttons en header ================= */
 import HeaderAddress from '../components/HeaderAddress';
 
@@ -63,6 +67,7 @@ const QUICK_ACTION_ROUTES = new Set<string>([
   'AdminPriceListB2B',
   'AdminOrders',
   'AdminBusinessApplications',
+  'AdminPromotions', // ← mostramos barra rápida también aquí (opcional)
 ]);
 
 /** ---------------- Stacks tipados ---------------- **/
@@ -159,16 +164,34 @@ function PostAuthGate({ navigation }: any) {
   );
 }
 
+/** ---------------- Linking (deeplinks internos del feed) ---------------- **/
+const linking: LinkingOptions<any> = {
+  prefixes: ['app://', 'expolicores://'],
+  config: {
+    screens: {
+      Catalog: {
+        path: 'collection/:slug',
+        parse: { slug: (v: string) => String(v) },
+      },
+      ProductDetail: {
+        path: 'product/:productId',
+        parse: { productId: (v: string) => String(v) },
+      },
+      // PromoDetail: 'promo/:promoId'
+    },
+  },
+};
+
 /** ---------------- App Navigator ---------------- **/
 export default function AppNavigator() {
   const navigationRef = useNavigationContainerRef();
   const [currentRouteName, setCurrentRouteName] = useState<string | undefined>(undefined);
   const { booting, isAuthenticated, user } = useAuth();
 
-  // Estado B2B del usuario (si el backend ya lo incluye en /auth/me)
+  // Estado/B2B del usuario
   const role = (user as any)?.role as 'ADMIN' | 'B2C' | 'B2B' | undefined;
-
-  const canSeeBodegaVirtual = B2B_ENABLED && (role === 'B2B' || role === 'ADMIN');
+  const isAdmin = role === 'ADMIN';
+  const canSeeBodegaVirtual = B2B_ENABLED && (role === 'B2B' || isAdmin);
 
   const handleReady = useCallback(() => {
     const route = navigationRef.getCurrentRoute();
@@ -189,190 +212,209 @@ export default function AppNavigator() {
   );
 
   if (booting) {
-    return (
+  return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator />
       </View>
     );
   }
 
+  // Helper: botón de carrito + (opcional) un botón extra a la derecha
   const headerRightCommon = (navigation: any) => (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <HeaderCartButton onPress={() => navigation.navigate('Cart')} />
     </View>
   );
 
-  return (
+    return (
     <NavigationContainer
       ref={navigationRef}
       onReady={handleReady}
       onStateChange={handleStateChange}
+      linking={linking}
     >
       <View style={{ flex: 1 }}>
         {isAuthenticated ? (
           <RootStack.Navigator
             initialRouteName="Home" // pasa por el gate siempre
             screenOptions={{ headerBackTitle: 'Atrás' }}
-        >
-          {/* Gate decide el onboarding pendiente */}
-          <RootStack.Screen
-            name="Home"
-            component={PostAuthGate}
-            options={{ headerShown: false }}
-          />
-
-          {/* Onboarding post-OTP */}
-          <RootStack.Screen
-            name="Name"
-            component={NameScreen}
-            options={{ headerShown: false }}
-          />
-          <RootStack.Screen
-            name="EmailOptional"
-            component={EmailOptionalScreen}
-            options={{ title: 'Agrega tu correo (opcional)' }}
-          />
-
-          {/* HOME (Dashboard) → FeedScreen si el flag está ON, si no HomeScreen */}
-          <RootStack.Screen
-            name="Dashboard"
-            component={FEED_JSON_ENABLED ? FeedScreen : HomeScreen}
-            options={({ navigation }) => ({
-              headerTitle: '',
-              headerLeft: () => <HeaderAddress compact />,
-              headerRight: () => headerRightCommon(navigation),
-              headerShown: true,
-            })}
-          />
-
-          {/* MARKET/CATÁLOGO */}
-          <RootStack.Screen
-            name="Market"
-            component={MarketScreen}
-            options={({ navigation }) => ({
-              title: 'Mercado',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
-          <RootStack.Screen
-            name="Catalog"
-            component={MarketScreen}
-            options={({ navigation }) => ({
-              title: 'Mercado',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
-
-          {/* RESTAURANTES (flag) */}
-          {RESTAURANTS_ENABLED && (
+          >
+            {/* Gate decide el onboarding pendiente */}
             <RootStack.Screen
-              name="RestaurantsPlaceholder"
-              component={RestaurantsPlaceholderScreen}
+              name="Home"
+              component={PostAuthGate}
+              options={{ headerShown: false }}
+            />
+
+            {/* Onboarding post-OTP */}
+            <RootStack.Screen
+              name="Name"
+              component={NameScreen}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen
+              name="EmailOptional"
+              component={EmailOptionalScreen}
+              options={{ title: 'Agrega tu correo (opcional)' }}
+            />
+
+            {/* HOME (Dashboard) → FeedScreen si el flag está ON, si no HomeScreen */}
+            <RootStack.Screen
+              name="Dashboard"
+              component={FEED_JSON_ENABLED ? FeedScreen : HomeScreen}
               options={({ navigation }) => ({
-                title: 'Restaurantes',
+                headerTitle: '',
+                headerLeft: () => <HeaderAddress compact />,
+                headerRight: () => headerRightCommon(navigation),
+                headerShown: true,
+              })}
+            />
+
+            {/* MARKET/CATÁLOGO */}
+            <RootStack.Screen
+              name="Market"
+              component={MarketScreen}
+              options={({ navigation }) => ({
+                title: 'Mercado',
                 headerRight: () => headerRightCommon(navigation),
               })}
             />
-          )}
-
-          {/* BODEGA VIRTUAL (B2B) — acceso UI controlado por canSeeBodegaVirtual */}
-          {B2B_ENABLED && canSeeBodegaVirtual && (
             <RootStack.Screen
-              name="Bodega"
-              component={BodegaScreen}
+              name="Catalog"
+              component={MarketScreen}
               options={({ navigation }) => ({
-                title: 'Bodega Virtual',
+                title: 'Mercado',
                 headerRight: () => headerRightCommon(navigation),
               })}
             />
-          )}
 
-          {/* PRODUCTO / PERFIL / CARRITO */}
-          <RootStack.Screen
-            name="ProductDetail"
-            component={ProductDetailScreen}
-            options={({ navigation }) => ({
-              title: 'Detalle',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
-          <RootStack.Screen name="Cart" component={CartScreen} options={{ title: 'Carrito' }} />
-          <RootStack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Perfil' }} />
+            {/* RESTAURANTES (flag) */}
+            {RESTAURANTS_ENABLED && (
+              <RootStack.Screen
+                name="RestaurantsPlaceholder"
+                component={RestaurantsPlaceholderScreen}
+                options={({ navigation }) => ({
+                  title: 'Restaurantes',
+                  headerRight: () => headerRightCommon(navigation),
+                })}
+              />
+            )}
 
-          {/* DIRECCIONES (modal con stack anidado) */}
-          <RootStack.Screen
-            name="Addresses"
-            component={AddressesNavigator}
-            options={{ headerShown: false, presentation: 'modal' }}
-          />
+            {/* BODEGA VIRTUAL (B2B) — acceso UI controlado por canSeeBodegaVirtual */}
+            {B2B_ENABLED && canSeeBodegaVirtual && (
+              <RootStack.Screen
+                name="Bodega"
+                component={BodegaScreen}
+                options={({ navigation }) => ({
+                  title: 'Bodega Virtual',
+                  headerRight: () => headerRightCommon(navigation),
+                })}
+              />
+            )}
 
-          {/* PEDIDOS / FAVORITOS / ADMIN */}
-          <RootStack.Screen name="MyOrders" component={MyOrdersScreen} options={{ title: 'Mis pedidos' }} />
-          <RootStack.Screen name="Favorites" component={FavoritesScreen} options={{ title: 'Mis favoritos' }} />
-          <RootStack.Screen
-            name="AdminPriceListB2C"
-            component={AdminPriceListB2CScreen}
-            options={({ navigation }) => ({
-              title: 'Lista precio cliente (B2C)',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
-          <RootStack.Screen
-            name="AdminPriceListB2B"
-            component={AdminPriceListB2BScreen}
-            options={({ navigation }) => ({
-              title: 'Lista precios negocios (B2B)',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
-          <RootStack.Screen
-            name="AdminOrders"
-            component={AdminOrdersScreen}
-            options={({ navigation }) => ({
-              title: 'Pedidos (Admin)',
-              headerRight: () => headerRightCommon(navigation),
-            })}
-          />
-
-          {/* Admin: Solicitudes B2B (solo si feature activo) */}
-          {B2B_ENABLED && (
+            {/* PRODUCTO / PERFIL / CARRITO */}
             <RootStack.Screen
-              name="AdminBusinessApplications"
-              component={AdminBusinessApplicationsScreen}
+              name="ProductDetail"
+              component={ProductDetailScreen}
               options={({ navigation }) => ({
-                title: 'Solicitudes B2B',
+                title: 'Detalle',
                 headerRight: () => headerRightCommon(navigation),
               })}
             />
-          )}
 
-          <RootStack.Screen
-            name="OrderTracking"
-            component={OrderTrackingScreen}
-            options={{ title: 'Estado del pedido' }}
-          />
+            {/* NUEVO: Detalle de promoción */}
+            {/* @ts-expect-error agregar a RootStackParamList si usas tipos estrictos */}
+            <RootStack.Screen
+              name="PromoDetail"
+              component={PromoDetailScreen}
+              options={({ navigation }) => ({
+                title: 'Promoción',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
 
-          {/* CHECKOUT */}
-          <RootStack.Screen name="Checkout" component={CheckoutScreen} options={{ title: 'Checkout' }} />
-          <RootStack.Screen name="OrderSuccess" component={OrderSuccessScreen} options={{ title: 'Pedido creado' }} />
-        </RootStack.Navigator>
-      ) : (
-        <RootStack.Navigator initialRouteName="AuthChooser" screenOptions={{ headerBackTitle: 'Atrás' }}>
-          {/* Auth flow (celular primero) */}
-          <RootStack.Screen name="AuthChooser" component={AuthChooserScreen} options={{ headerShown: false }} />
-          <RootStack.Screen name="PhoneEntry" component={PhoneEntryScreen} options={{ title: 'Ingresa tu número' }} />
-          <RootStack.Screen name="OtpCode" component={OtpCodeScreen} options={{ title: 'Código de verificación' }} />
-          {/* También permitimos Name/EmailOptional en el stack de no autenticado por si el flujo se rehidrata */}
-          <RootStack.Screen name="Name" component={NameScreen} options={{ headerShown: false }} />
-          <RootStack.Screen
-            name="EmailOptional"
-            component={EmailOptionalScreen}
-            options={{ title: 'Agrega tu correo (opcional)' }}
-          />
-        </RootStack.Navigator>
-      )}
-      {shouldShowQuickActions ? <BottomQuickActionsBar /> : null}
-    </View>
-  </NavigationContainer>
+            {/* NUEVO: Panel Admin de Promociones */}
+            {/* @ts-expect-error agregar a RootStackParamList si usas tipos estrictos */}
+            <RootStack.Screen
+              name="AdminPromotions"
+              component={AdminPromotionsScreen}
+              options={({ navigation }) => ({
+                title: 'Promociones (Admin)',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+
+            {/* Admin: Solicitudes B2B (solo si feature activo) */}
+            {B2B_ENABLED && (
+              <RootStack.Screen
+                name="AdminBusinessApplications"
+                component={AdminBusinessApplicationsScreen}
+                options={({ navigation }) => ({
+                  title: 'Solicitudes B2B',
+                  headerRight: () => headerRightCommon(navigation),
+                })}
+              />
+            )}
+
+            {/* Miscelánea */}
+            <RootStack.Screen name="Cart" component={CartScreen} options={{ title: 'Carrito' }} />
+            <RootStack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Perfil' }} />
+            <RootStack.Screen
+              name="Addresses"
+              component={AddressesNavigator}
+              options={{ headerShown: false, presentation: 'modal' }}
+            />
+            <RootStack.Screen name="MyOrders" component={MyOrdersScreen} options={{ title: 'Mis pedidos' }} />
+            <RootStack.Screen name="Favorites" component={FavoritesScreen} options={{ title: 'Mis favoritos' }} />
+            <RootStack.Screen
+              name="AdminPriceListB2C"
+              component={AdminPriceListB2CScreen}
+              options={({ navigation }) => ({
+                title: 'Lista precio cliente (B2C)',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+            <RootStack.Screen
+              name="AdminPriceListB2B"
+              component={AdminPriceListB2BScreen}
+              options={({ navigation }) => ({
+                title: 'Lista precios negocios (B2B)',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+            <RootStack.Screen
+              name="AdminOrders"
+              component={AdminOrdersScreen}
+              options={({ navigation }) => ({
+                title: 'Pedidos (Admin)',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+            <RootStack.Screen
+              name="OrderTracking"
+              component={OrderTrackingScreen}
+              options={{ title: 'Estado del pedido' }}
+            />
+            <RootStack.Screen name="Checkout" component={CheckoutScreen} options={{ title: 'Checkout' }} />
+            <RootStack.Screen name="OrderSuccess" component={OrderSuccessScreen} options={{ title: 'Pedido creado' }} />
+          </RootStack.Navigator>
+        ) : (
+          <RootStack.Navigator initialRouteName="AuthChooser" screenOptions={{ headerBackTitle: 'Atrás' }}>
+            {/* Auth flow (celular primero) */}
+            <RootStack.Screen name="AuthChooser" component={AuthChooserScreen} options={{ headerShown: false }} />
+            <RootStack.Screen name="PhoneEntry" component={PhoneEntryScreen} options={{ title: 'Ingresa tu número' }} />
+            <RootStack.Screen name="OtpCode" component={OtpCodeScreen} options={{ title: 'Código de verificación' }} />
+            {/* También permitimos Name/EmailOptional en el stack de no autenticado por si el flujo se rehidrata */}
+            <RootStack.Screen name="Name" component={NameScreen} options={{ headerShown: false }} />
+            <RootStack.Screen
+              name="EmailOptional"
+              component={EmailOptionalScreen}
+              options={{ title: 'Agrega tu correo (opcional)' }}
+            />
+          </RootStack.Navigator>
+        )}
+        {shouldShowQuickActions ? <BottomQuickActionsBar /> : null}
+      </View>
+    </NavigationContainer>
   );
 }
