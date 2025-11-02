@@ -12,6 +12,11 @@ import {
   Image,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+
+import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 import { useAuth } from '../context/AuthContext';
 import { api, fetchAdminPromotions, type AdminPromotion } from '../lib/api';
 import { bus } from '../lib/bus';
@@ -31,6 +36,9 @@ const BANNERS = [
 const OVERLAY_PUBLISHED_KEY = 'published_promos_overlay_v1';
 // “Tombstones” locales para eliminadas
 const OVERLAY_DELETED_KEY = 'deleted_promos_overlay_v1';
+
+// Claves de caché que podemos limpiar
+const CACHE_KEYS_TO_CLEAR = ['published_promos_overlay_v1', 'feed:last', 'feed:last:v2'];
 
 type OverlayPublished = {
   id: string;
@@ -92,6 +100,10 @@ async function addDeletedId(id: string) {
 
 export default function AdminPromotionsScreen() {
   const { token, user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
+
   const [list, setList] = useState<AdminPromotion[]>([]);
   const [overlayPublished, setOverlayPublished] = useState<OverlayPublished[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
@@ -268,7 +280,7 @@ export default function AdminPromotionsScreen() {
         });
         setOverlayPublished(nextPub);
 
-        // Notifica al Feed (en ambos nombres por compat)
+        // Notifica al Feed
         bus.emit('promos:updated');
         bus.emit('promos:changed');
       }
@@ -299,7 +311,7 @@ export default function AdminPromotionsScreen() {
 
             try {
               await api.delete(`/admin/promotions/${idStr}`, { headers });
-            } catch (e: any) {
+            } catch {
               // aunque falle, seguimos con tombstone local
             }
 
@@ -309,13 +321,38 @@ export default function AdminPromotionsScreen() {
             const nextPub = await removeFromPublished(idStr);
             setOverlayPublished(nextPub);
 
-            // Notifica al Feed (ambos eventos)
+            // Notifica al Feed
             bus.emit('promos:updated');
             bus.emit('promos:changed');
 
             await load({ silent: true });
           },
         },
+      ],
+    );
+  };
+
+  // ---- Borrar caché local (overlay/feeds) ----
+  const clearLocalCaches = async () => {
+    try {
+      await AsyncStorage.multiRemove(CACHE_KEYS_TO_CLEAR);
+      setOverlayPublished([]);
+      setDeletedIds([]);
+      bus.emit('promos:updated');
+      bus.emit('promos:changed');
+      Alert.alert('Listo', 'Caché local limpiada.');
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'No se pudo limpiar la caché');
+    }
+  };
+
+  const confirmClearCaches = () => {
+    Alert.alert(
+      'Borrar caché local',
+      'Esto eliminará el overlay y el feed almacenados en este dispositivo. Úsalo solo para diagnóstico.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Borrar', style: 'destructive', onPress: clearLocalCaches },
       ],
     );
   };
@@ -334,15 +371,47 @@ export default function AdminPromotionsScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 16 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+    <View style={{ flex: 1, padding: 16, paddingBottom: bottomPadding + 16 }}>
+      {/* Header con “Nueva” y “Borrar caché” */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
         <Text style={{ fontSize: 22, fontWeight: '800' }}>Promociones</Text>
-        <TouchableOpacity
-          onPress={() => setModal(true)}
-          style={{ backgroundColor: '#111', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Nueva</Text>
-        </TouchableOpacity>
+
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            onPress={confirmClearCaches}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#dc2626', // rojo
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              borderRadius: 10,
+              gap: 6,
+            }}
+          >
+            <Ionicons name="trash-outline" size={16} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Borrar caché</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setModal(true)}
+            style={{
+              backgroundColor: '#111',
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              borderRadius: 10,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Nueva</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Text style={{ marginBottom: 8, color: '#666' }}>
@@ -359,7 +428,21 @@ export default function AdminPromotionsScreen() {
           const canPublish = isPublished || publishedCount < MAX_PUBLISHED;
 
           return (
-            <View style={{ padding: 12, borderRadius: 12, backgroundColor: '#fff', marginBottom: 10 }}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => {
+                // Navega al detalle al tocar la TARJETA (no los botones)
+                navigation.navigate('PromoDetail', { promoId: String(item.id) });
+              }}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                backgroundColor: '#fff',
+                marginBottom: 10,
+                borderWidth: 1,
+                borderColor: '#E5E7EB',
+              }}
+            >
               <Text style={{ fontWeight: '700' }}>{item.name}</Text>
               <Text style={{ color: '#666' }}>
                 {item.type} · {item.audience} · prioridad {item.priority}
@@ -369,6 +452,7 @@ export default function AdminPromotionsScreen() {
               )}
 
               <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                {/* Botón Publicar (no dispara onPress del contenedor) */}
                 <TouchableOpacity
                   onPress={() => publish(String(item.id))}
                   disabled={!canPublish}
@@ -386,6 +470,7 @@ export default function AdminPromotionsScreen() {
                   </Text>
                 </TouchableOpacity>
 
+                {/* Botón Eliminar */}
                 <TouchableOpacity
                   onPress={() => removePromotion(item.id)}
                   style={{
@@ -398,7 +483,7 @@ export default function AdminPromotionsScreen() {
                   <Text style={{ color: '#fff' }}>Eliminar</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </TouchableOpacity>
           );
         }}
       />

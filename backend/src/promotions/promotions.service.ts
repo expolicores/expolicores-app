@@ -2,9 +2,15 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+type PromotionType =
+  | 'PRICE_OVERRIDE'
+  | 'PERCENT_OFF'
+  | 'X_FOR_Y'
+  | 'GIFT_WITH_PURCHASE';
+
 type CreateOrUpdateDto = {
   name?: string;
-  type?: 'PRICE_OVERRIDE' | 'PERCENT_OFF';
+  type?: PromotionType;
   audience?: 'ANY' | 'B2C' | 'B2B';
   active?: boolean;
   stacking?: boolean;
@@ -12,8 +18,15 @@ type CreateOrUpdateDto = {
   startsAt?: string; // ISO
   endsAt?: string;   // ISO
   products?: Array<{ productId: string; minQty?: number }>;
-  benefits?: any;    // { price } | { percent }
-  conditions?: any;  // { minQty?, minSpend?, categoryIds? ... }
+  /**
+   * Formatos esperados por tipo:
+   * - PRICE_OVERRIDE       => { price: number }
+   * - PERCENT_OFF          => { percent: number }
+   * - X_FOR_Y              => { x: number, y: number, bundleId: string, components?: Array<{ productId: string, qty: number }> }
+   * - GIFT_WITH_PURCHASE   => { bundleId: string, triggerProductId: string, giftProductId: string, triggerQty?: number, components?: Array<{ productId: string, qty: number }> }
+   */
+  benefits?: any;
+  conditions?: any;  // { minQty?, minSpend?, categoryIds?, metadata?: { bannerKey?, imageUrl? } ... }
 };
 
 type Audience = 'B2C' | 'B2B';
@@ -33,14 +46,106 @@ export class PromotionsService {
       if (!benefits || typeof benefits.price !== 'number' || benefits.price < 0) {
         throw new BadRequestException('PRICE_OVERRIDE requiere benefits.price >= 0');
       }
-    } else if (type === 'PERCENT_OFF') {
+      return;
+    }
+
+    if (type === 'PERCENT_OFF') {
       const p = benefits?.percent;
       if (typeof p !== 'number' || p <= 0 || p >= 100) {
         throw new BadRequestException('PERCENT_OFF requiere benefits.percent en (0,100)');
       }
-    } else {
-      throw new BadRequestException('Tipo de promoción no soportado');
+      return;
     }
+
+    if (type === 'X_FOR_Y') {
+      const x = benefits?.x;
+      const y = benefits?.y;
+      const bundleId = benefits?.bundleId;
+      if (!Number.isInteger(x) || x <= 0) throw new BadRequestException('X_FOR_Y requiere benefits.x entero > 0');
+      if (!Number.isInteger(y) || y <= 0) throw new BadRequestException('X_FOR_Y requiere benefits.y entero > 0');
+      if (!bundleId || typeof bundleId !== 'string') throw new BadRequestException('X_FOR_Y requiere benefits.bundleId');
+      return;
+    }
+
+    if (type === 'GIFT_WITH_PURCHASE') {
+      const { bundleId, triggerProductId, giftProductId } = benefits ?? {};
+      if (!bundleId || typeof bundleId !== 'string') throw new BadRequestException('GWP requiere benefits.bundleId');
+      if (!triggerProductId || !giftProductId) {
+        throw new BadRequestException('GWP requiere triggerProductId y giftProductId');
+      }
+      return;
+    }
+
+    throw new BadRequestException('Tipo de promoción no soportado');
+  }
+
+  /** Normaliza/arma components para BundleMap si no llegan explícitos en benefits.components */
+  private buildComponentsForBundle(
+    type: PromotionType | undefined,
+    dto: CreateOrUpdateDto,
+  ): Array<{ productId: string; qty: number }> {
+    const benefits = dto.benefits ?? {};
+    const explicit = Array.isArray(benefits.components) ? benefits.components : undefined;
+
+    if (explicit?.length) {
+      return explicit
+        .map((c: any) => ({ productId: String(c.productId), qty: Number(c.qty) }))
+        .filter(c => !!c.productId && Number.isFinite(c.qty) && c.qty > 0);
+    }
+
+    // Inferencias mínimas por tipo:
+    if (type === 'X_FOR_Y') {
+      const target = (dto.products ?? [])[0]?.productId;
+      const x = Number(benefits.x);
+      if (target && Number.isFinite(x) && x > 0) {
+        return [{ productId: String(target), qty: x }];
+      }
+    }
+
+    if (type === 'GIFT_WITH_PURCHASE') {
+      const trigger = benefits.triggerProductId
+        ? String(benefits.triggerProductId)
+        : (dto.products ?? [])[0]?.productId;
+      const gift = benefits.giftProductId
+        ? String(benefits.giftProductId)
+        : (dto.products ?? [])[1]?.productId;
+      const triggerQty = Number(benefits.triggerQty ?? 1);
+      const comps: Array<{ productId: string; qty: number }> = [];
+      if (trigger && Number.isFinite(triggerQty) && triggerQty > 0) {
+        comps.push({ productId: String(trigger), qty: triggerQty });
+      }
+      if (gift) comps.push({ productId: String(gift), qty: 1 });
+      if (comps.length) return comps;
+    }
+
+    // Fallback: usa products con minQty (o 1)
+    const fromProducts = (dto.products ?? [])
+      .map(p => ({ productId: String(p.productId), qty: Number(p.minQty ?? 1) }))
+      .filter(c => !!c.productId && Number.isFinite(c.qty) && c.qty > 0);
+
+    return fromProducts;
+  }
+
+  /** Crea/actualiza el registro de BundleMap cuando el tipo es combo (X_FOR_Y / GWP) */
+  private async upsertBundleMapIfNeeded(type: PromotionType | undefined, dto: CreateOrUpdateDto) {
+    if (type !== 'X_FOR_Y' && type !== 'GIFT_WITH_PURCHASE') return;
+
+    const benefits = dto.benefits ?? {};
+    const bundleId = benefits.bundleId;
+    if (!bundleId || typeof bundleId !== 'string') {
+      throw new BadRequestException('bundleId requerido para combos (X_FOR_Y, GWP)');
+    }
+
+    const components = this.buildComponentsForBundle(type, dto);
+    if (!components?.length) {
+      throw new BadRequestException('No se pudieron determinar componentes para BundleMap');
+    }
+
+    await this.prisma.bundleMap.upsert({
+      where: { bundleId },
+      update: { components: components as any, active: true },
+      create: { bundleId, components: components as any, active: true },
+    });
   }
 
   // ---------------------------
@@ -53,6 +158,9 @@ export class PromotionsService {
       throw new BadRequestException('startsAt y endsAt son requeridos (ISO)');
     }
     this.validatePayload(dto);
+
+    // Si es combo, registra/actualiza BundleMap
+    await this.upsertBundleMapIfNeeded(dto.type, dto);
 
     const { products = [], ...rest } = dto;
 
@@ -70,7 +178,7 @@ export class PromotionsService {
         conditionsJson: rest.conditions ?? undefined,
         products: {
           create: products.map((p) => ({
-            productId: p.productId,
+            productId: String(p.productId),
             minQty: p.minQty ?? null,
           })),
         },
@@ -105,6 +213,19 @@ export class PromotionsService {
     // Validar payload si cambia type/benefits
     if (dto.type || dto.benefits) this.validatePayload(dto);
 
+    // Si es combo y llega info (type/benefits/products), asegurar BundleMap
+    if (dto.type || dto.benefits || dto.products) {
+      const current = await this.prisma.promotion.findUnique({ where: { id } });
+      const type: PromotionType | undefined = (dto.type ?? (current?.type as any)) as PromotionType | undefined;
+      const merged: CreateOrUpdateDto = {
+        ...dto,
+        type,
+        benefits: dto.benefits ?? (current?.benefitsJson as any),
+        products: dto.products ?? undefined,
+      };
+      await this.upsertBundleMapIfNeeded(type, merged);
+    }
+
     const { products, ...rest } = dto;
 
     // Actualiza campos base
@@ -131,7 +252,7 @@ export class PromotionsService {
         await this.prisma.promotionProduct.createMany({
           data: products.map((p) => ({
             promotionId: id,
-            productId: p.productId,
+            productId: String(p.productId),
             minQty: p.minQty ?? null,
           })),
         });
@@ -177,50 +298,38 @@ export class PromotionsService {
 
     const promos = await this.prisma.promotion.findMany({
       where: {
-        // NOTA: si tu schema tuviera deletedAt, puedes filtrarlo aquí.
         active: true,
         startsAt: { lte: now },
         endsAt: { gte: now },
         OR: [{ audience }, { audience: 'ANY' as any }],
-        products: { some: {} },
+        // (evitamos usar relation filter products: { some: {} } por compatibilidad)
       },
+      include: { products: { select: { productId: true }, take: 1 } },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
       take: 3,
-      // seleccionamos solo lo necesario y el primer productId
-      select: {
-        id: true,
-        name: true,
-        audience: true,
-        benefitsJson: true,
-        conditionsJson: true,
-        createdAt: true,
-        priority: true,
-        products: {
-          select: { productId: true },
-          take: 1,
-        },
-      },
     });
 
-    return promos.map((p) => {
-      const first = p.products?.[0];
-      const productId = String(first?.productId ?? '');
+    return promos
+      .filter((p: any) => Array.isArray(p.products) && p.products.length > 0)
+      .map((p: any) => {
+        const first = p.products[0];
+        const productId = String(first?.productId ?? '');
 
-      const benefits = (p as any).benefitsJson ?? {};
-      const conditions = ((p as any).conditionsJson ?? {}) as any;
-      const meta = conditions?.metadata ?? {};
+        const benefits = (p as any).benefitsJson ?? {};
+        const conditions = ((p as any).conditionsJson ?? {}) as any;
+        const meta = conditions?.metadata ?? {};
 
-      const price =
-        typeof benefits.price === 'number' ? Number(benefits.price) : undefined;
+        const price =
+          typeof benefits.price === 'number' ? Number(benefits.price) : undefined;
 
-      return {
-        id: p.id,
-        name: p.name,
-        productId,                                // string (numérica o slug, según tu modelo)
-        price,                                    // PRICE_OVERRIDE; si es % no se fuerza aquí
-        imageUrl: meta.imageUrl ?? meta.img ?? undefined,
-        bannerKey: meta.bannerKey ?? undefined,
-      };
-    });
+        return {
+          id: p.id,
+          name: p.name,
+          productId,                                // string (numérica o slug, según tu modelo)
+          price,                                    // PRICE_OVERRIDE; si es % no se fuerza aquí
+          imageUrl: meta.imageUrl ?? meta.img ?? undefined,
+          bannerKey: meta.bannerKey ?? undefined,
+        };
+      });
   }
 }

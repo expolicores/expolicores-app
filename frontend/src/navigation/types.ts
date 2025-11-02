@@ -47,6 +47,8 @@ export type RootStackParamList = {
   AdminPriceListB2C: undefined;
   AdminPriceListB2B: undefined;
   AdminOrders: undefined;
+  AdminPromotions: undefined;               // ⬅️ listado de promociones (admin)
+  PromoDetail: { promoId: string } | { promo?: any }; // ⬅️ detalle/edición de una promo
 
   // Direcciones (si las manejas como pantallas del root)
   Addresses: undefined;

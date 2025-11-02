@@ -391,27 +391,46 @@ export async function fetchAdminPromotions(headers?: Record<string, string>): Pr
   return Array.isArray(data) ? data : [];
 }
 
-/* ================= Admin Products ================= */
+/** ===== Nuevos tipos & endpoints para detalle/edición ===== */
 
-export type ProductPricePatch = { price?: number; b2bPrice?: number };
-export async function fetchAdminProducts(opts: RequestOpts = {}): Promise<AdminProduct[]> {
-  const { data } = await api.get<AdminProduct[]>('/products/admin', { signal: opts.signal });
-  return data ?? [];
-}
-export async function adminCreateProduct(payload: Omit<AdminProduct, 'id' | 'createdAt' | 'updatedAt'>) {
-  const { data } = await api.post('/products', payload);
+export type PromotionDTO = {
+  id: string;
+  name: string;
+  type: 'PRICE_OVERRIDE' | 'PERCENT_OFF';
+  audience: 'ANY' | 'B2C' | 'B2B';
+  active: boolean;
+  stacking: boolean;
+  priority: number;
+  startsAt: string; // ISO
+  endsAt: string;   // ISO
+  benefitsJson: any;
+  conditionsJson?: any;
+  products: Array<{ id: string; productId: string; minQty?: number | null }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpdatePromotionPayload = Partial<{
+  name: string;
+  type: 'PRICE_OVERRIDE' | 'PERCENT_OFF';
+  audience: 'ANY' | 'B2C' | 'B2B';
+  active: boolean;
+  stacking: boolean;
+  priority: number;
+  startsAt: string; // ISO
+  endsAt: string;   // ISO
+  benefits: any;
+  conditions: any;
+  products: Array<{ productId: string; minQty?: number }>;
+}>;
+
+export async function getPromotionById(id: string): Promise<PromotionDTO> {
+  const { data } = await api.get<PromotionDTO>(`/admin/promotions/${id}`);
   return data;
 }
-export async function adminUpdateProduct(id: number, payload: Partial<AdminProduct>) {
-  const { data } = await api.put(`/products/${id}`, payload);
-  return data;
-}
-export async function adminDeleteProduct(id: number) {
-  const { data } = await api.delete(`/products/${id}`);
-  return data;
-}
-export async function updateProductPricing(productId: number, payload: ProductPricePatch): Promise<AdminProduct> {
-  const { data } = await api.patch<AdminProduct>(`/products/${productId}`, payload);
+
+export async function updatePromotion(id: string, payload: UpdatePromotionPayload): Promise<PromotionDTO> {
+  const { data } = await api.patch<PromotionDTO>(`/admin/promotions/${id}`, payload);
   return data;
 }
 

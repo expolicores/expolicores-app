@@ -247,6 +247,8 @@ model UserPushToken {
 enum PromotionType {
 PRICE_OVERRIDE
 PERCENT_OFF
+X_FOR_Y
+GIFT_WITH_PURCHASE
 }
 
 
@@ -289,4 +291,13 @@ promotion Promotion @relation(fields: [promotionId], references: [id], onDelete:
 
 @@index([promotionId])
 @@index([productId])
+}
+
+model BundleMap {
+  bundleId   String   @id            // SKU promo (ej. "1001")
+  components Json                     // [{ productId: "3", qty: 3 }, { productId: "12", qty: 1 }]
+  active     Boolean  @default(true)  // habilitado/pausado
+  notes      String?                  // opcional: “X_FOR_Y de cerveza…”
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }

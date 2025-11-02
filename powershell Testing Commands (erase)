@@ -1,0 +1,24 @@
+$API_BASE = "https://expolicores-app-production.up.railway.app"
+$TOKEN    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImVtYWlsIjoibmVnb2Npb0BleHBvbGljb3Jlcy5jb20iLCJyb2xlIjoiQjJCIiwiaWF0IjoxNzYxNzg0MjM2LCJleHAiOjE3NjIzODkwMzZ9.hmnqcrAIal5Fvm-HXV65L94MIqZh40dQjyiO2BvM-GM"
+$H = @{ Authorization = "Bearer $TOKEN" }
+
+# Si NO usas prefijo global:
+Invoke-RestMethod -Uri "$API_BASE/promotions/overlays?audience=B2C" -Headers $H -Method GET | ConvertTo-Json -Depth 6
+
+# Si SÍ usas 'api' como prefijo global:
+# Invoke-RestMethod -Uri "$API_BASE/api/promotions/overlays?audience=B2C" -Headers $H -Method GET | ConvertTo-Json -Depth 6
+
+
+
+
+
+
+
+
+
+
+
+--------------
+
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImVtYWlsIjoibmVnb2Npb0BleHBvbGljb3Jlcy5jb20iLCJyb2xlIjoiQjJCIiwiaWF0IjoxNzYxNzg0MjM2LCJleHAiOjE3NjIzODkwMzZ9.hmnqcrAIal5Fvm-HXV65L94MIqZh40dQjyiO2BvM-GM
