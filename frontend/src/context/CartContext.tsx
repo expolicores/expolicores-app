@@ -11,18 +11,35 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ===== Tipos =====
 export type CartItem = {
-  productId: number;
-  name: string;
-  price: number;          // COP (int)
+  productId: number;        // ID normalizado a number
+  name: string;             // siempre presente (override | nombre producto | fallback)
+  price: number;            // COP (int) -- unit price efectivo (override > default)
   imageUrl?: string | null;
-  qty: number;            // >= 1
-  stock: number;          // límite por ítem (UI y lógica)
+  qty: number;              // >= 1
+  stock: number;            // límite por ítem (UI y lógica)
   category?: string | null;
+  // meta opcional para auditoría
+  appliedPromotion?: { source: 'overlay' | 'system'; ts: number } | undefined;
+};
+
+export type AddItemOpts = {
+  priceOverride?: number;
+  nameOverride?: string;
+  imageOverride?: string;
+  stockOverride?: number;
+  categoryOverride?: string | null;
+  promoSource?: 'overlay' | 'system';
 };
 
 export type CartState = {
   items: CartItem[];
-  add: (item: Omit<CartItem, 'qty'>, qty?: number) => void;
+  /**
+   * Agrega al carrito. Acepta:
+   * - add(productDto, qty?, opts?)
+   * - add({productId, name, price, ...}, qty?)
+   * - add(productIdNumber, qty?, opts?)
+   */
+  add: (item: any, qty?: number, opts?: AddItemOpts) => void;
   remove: (productId: number) => void;
   setQty: (productId: number, qty: number) => void; // qty <= 0 elimina
   clear: () => void;
@@ -35,7 +52,6 @@ const BIG_STOCK = 999_999; // stock virtual cuando no llega desde backend
 
 // ===== Utils internas =====
 function normalizeStock(input?: number | null): number {
-  // null/undefined/NaN => BIG_STOCK
   return Number.isFinite(input as number) && (input as number) >= 0
     ? (input as number)
     : BIG_STOCK;
@@ -43,6 +59,109 @@ function normalizeStock(input?: number | null): number {
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(n, max));
+}
+
+function toNumberId(idLike: any): number | null {
+  if (idLike == null) return null;
+  const n = Number(idLike);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Extrae un "precio por defecto" de un DTO de producto heterogéneo.
+ * Prioridad:
+ *  1) product.price (si ya viene listo)
+ *  2) product.priceB2C
+ *  3) product.pricePublic
+ *  4) product.priceB2B
+ *  5) 0
+ */
+function defaultUnitPriceFromProduct(p: any): number {
+  const cands = [
+    p?.price,
+    p?.priceB2C,
+    p?.pricePublic,
+    p?.priceB2B,
+  ];
+  for (const v of cands) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  return 0;
+}
+
+/**
+ * Intenta construir un CartItem base a partir de distintas formas de entrada.
+ * NO asigna qty (eso lo maneja add()).
+ */
+function normalizeIncomingToCartLineBase(
+  item: any,
+  opts?: AddItemOpts
+): Omit<CartItem, 'qty'> {
+  // Caso 1: ya es un objeto estilo CartItem (sin qty)
+  if (typeof item === 'object' && item && ('productId' in item) && !('qty' in item)) {
+    const pid = toNumberId((item as any).productId);
+    const priceBase = Number(item.price);
+    const nameBase = String(item.name ?? '');
+    return {
+      productId: pid ?? 0,
+      name: nameBase || opts?.nameOverride || `Item ${pid ?? 'N/D'}`,
+      price: Number.isFinite(priceBase) ? Math.floor(priceBase) : 0,
+      imageUrl: (item.imageUrl ?? item.image ?? null) as any,
+      stock: normalizeStock((item as any).stock),
+      category: (item as any).category ?? null,
+      appliedPromotion: undefined,
+    };
+  }
+
+  // Caso 2: viene solo el ID
+  if (typeof item === 'number' || typeof item === 'string') {
+    const pid = toNumberId(item) ?? 0;
+    return {
+      productId: pid,
+      name: opts?.nameOverride || `Item ${pid}`,
+      price: Math.floor(Number(opts?.priceOverride ?? 0)),
+      imageUrl: (opts?.imageOverride ?? null) as any,
+      stock: normalizeStock(opts?.stockOverride),
+      category: opts?.categoryOverride ?? null,
+      appliedPromotion: undefined,
+    };
+  }
+
+  // Caso 3: es un DTO de producto del backend
+  if (typeof item === 'object' && item) {
+    const pid = toNumberId(item.id ?? item.productId) ?? 0;
+    const img = item.imageUrl ?? item.image ?? item.thumbnail ?? null;
+    const stock = normalizeStock(item.stock);
+    const name =
+      (opts?.nameOverride && String(opts.nameOverride).trim()) ||
+      String(item.name ?? item.title ?? item.label ?? `Item ${pid}`);
+
+    const price = Number.isFinite(opts?.priceOverride as number)
+      ? Math.floor(opts!.priceOverride as number)
+      : defaultUnitPriceFromProduct(item);
+
+    return {
+      productId: pid,
+      name,
+      price,
+      imageUrl: img,
+      stock,
+      category: item.category ?? item.categoryName ?? null,
+      appliedPromotion: undefined,
+    };
+  }
+
+  // Fallback
+  return {
+    productId: 0,
+    name: opts?.nameOverride || 'Item',
+    price: Math.floor(Number(opts?.priceOverride ?? 0)),
+    imageUrl: (opts?.imageOverride ?? null) as any,
+    stock: normalizeStock(opts?.stockOverride),
+    category: opts?.categoryOverride ?? null,
+    appliedPromotion: undefined,
+  };
 }
 
 // ===== Contexto =====
@@ -56,7 +175,21 @@ export function CartProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) setItems(JSON.parse(raw));
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        const arr: any[] = Array.isArray(parsed) ? parsed : [];
+        // sanea tipos (productId como number, price como int)
+        const clean: CartItem[] = arr.map((it: any) => ({
+          productId: toNumberId(it?.productId) ?? 0,
+          name: String(it?.name ?? `Item ${it?.productId ?? ''}`),
+          price: Math.floor(Number(it?.price ?? 0)),
+          imageUrl: it?.imageUrl ?? null,
+          qty: Math.max(1, Math.floor(Number(it?.qty ?? 1))),
+          stock: normalizeStock(it?.stock),
+          category: it?.category ?? null,
+          appliedPromotion: it?.appliedPromotion,
+        }));
+        setItems(clean);
       } catch {
         // noop
       }
@@ -69,31 +202,58 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items]);
 
   // ===== Acciones =====
-  const add: CartState['add'] = (item, qty = 1) => {
-    const incomingStock = normalizeStock(item.stock as number | undefined);
+  const add: CartState['add'] = (item: any, qty = 1, opts?: AddItemOpts) => {
+    const base = normalizeIncomingToCartLineBase(item, opts);
     const inc = Math.max(1, Math.floor(qty)); // mínimo 1 al agregar
 
+    // Aplica overrides (si vienen) sobre el base
+    const unitPrice =
+      typeof opts?.priceOverride === 'number'
+        ? Math.floor(opts!.priceOverride as number)
+        : base.price;
+
+    const name =
+      (opts?.nameOverride && String(opts.nameOverride).trim()) ||
+      base.name;
+
+    const imageUrl = (opts?.imageOverride ?? base.imageUrl) ?? null;
+    const incomingStock = normalizeStock(opts?.stockOverride ?? base.stock);
+
+    const appliedPromotion =
+      opts && (opts.priceOverride != null || (opts.nameOverride && opts.nameOverride.trim().length))
+        ? { source: opts.promoSource ?? 'overlay', ts: Date.now() }
+        : base.appliedPromotion;
+
     setItems(prev => {
-      const idx = prev.findIndex(p => p.productId === item.productId);
+      const idx = prev.findIndex(p => p.productId === base.productId);
       if (idx >= 0) {
         const next = [...prev];
-        // si llega nuevo stock lo actualizamos; si no, mantenemos el existente
-        const lineStock = normalizeStock(item.stock ?? next[idx].stock);
+        const lineStock = normalizeStock(next[idx].stock ?? incomingStock);
         const newQty = clamp(next[idx].qty + inc, 1, lineStock);
-        next[idx] = { ...next[idx], qty: newQty, stock: lineStock };
+        next[idx] = {
+          ...next[idx],
+          qty: newQty,
+          stock: lineStock,
+          // si llegan nuevos overrides, actualiza nombre/precio/imagen
+          name,
+          price: unitPrice,
+          imageUrl,
+          appliedPromotion: appliedPromotion ?? next[idx].appliedPromotion,
+        };
         return next;
       }
       // línea nueva
       return [
         ...prev,
         {
-          productId: item.productId,
-          name: item.name,
-          price: item.price,
-          imageUrl: item.imageUrl ?? null,
-          category: item.category ?? null,
+          productId: base.productId,
+          name,
+          price: unitPrice,
+          imageUrl,
+          category: base.category ?? null,
           stock: incomingStock,
           qty: clamp(inc, 1, incomingStock),
+          appliedPromotion,
         },
       ];
     });

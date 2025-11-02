@@ -20,11 +20,30 @@ const B2B_ENABLED = (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
 const BUTTON_SIZE = 40;
 const INNER_VERTICAL = spacing.sm * 0.75;
 const TOP_PADDING = spacing.sm;
+const BUTTONS_PER_ROW = 5;
+const BASE_BUTTON_COUNT = 4;
 
 export const BASE_BOTTOM_QUICK_ACTION_HEIGHT = TOP_PADDING + BUTTON_SIZE + INNER_VERTICAL * 2;
 
-export const getBottomQuickActionsPadding = (bottomInset: number) =>
-  BASE_BOTTOM_QUICK_ACTION_HEIGHT + Math.max(bottomInset, spacing.sm);
+type QuickActionsPaddingOptions = {
+  isAdmin?: boolean;
+  buttonCountOverride?: number;
+};
+
+const getEstimatedButtonCount = ({ isAdmin = false, buttonCountOverride }: QuickActionsPaddingOptions) => {
+  if (typeof buttonCountOverride === 'number') return Math.max(0, buttonCountOverride);
+  if (!isAdmin) return BASE_BUTTON_COUNT;
+  const adminExtras = 4 + (B2B_ENABLED ? 1 : 0);
+  return BASE_BUTTON_COUNT + adminExtras;
+};
+
+export const getBottomQuickActionsPadding = (bottomInset: number, options: QuickActionsPaddingOptions = {}) => {
+  const buttonCount = getEstimatedButtonCount(options);
+  const estimatedRows = Math.max(1, Math.ceil(buttonCount / BUTTONS_PER_ROW));
+  const innerHeight =
+    BUTTON_SIZE * estimatedRows + INNER_VERTICAL * 2 + spacing.sm * Math.max(0, estimatedRows - 1);
+  return TOP_PADDING + innerHeight + Math.max(bottomInset, spacing.sm);
+};
 
 const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
   const navigation = useNavigation<any>();

@@ -10,6 +10,8 @@ import {
   ScrollView,
   Alert,
   Image,
+  Platform,
+  type TextInputProps,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -49,6 +51,30 @@ type OverlayPublished = {
   bannerKey?: string;
   publishedAt: number;
 };
+
+type ComponentRow = { productId: string; qtyStr: string };
+
+const baseInputStyle = {
+  borderWidth: 1,
+  borderColor: '#ddd',
+  borderRadius: 8,
+  padding: Platform.OS === 'ios' ? 12 : 10,
+  color: '#111',
+};
+
+function FormInput({
+  style,
+  placeholderTextColor,
+  ...rest
+}: TextInputProps) {
+  return (
+    <TextInput
+      {...rest}
+      placeholderTextColor={placeholderTextColor ?? '#9CA3AF'}
+      style={[baseInputStyle, style]}
+    />
+  );
+}
 
 async function readPublished(): Promise<OverlayPublished[]> {
   try {
@@ -102,7 +128,6 @@ export default function AdminPromotionsScreen() {
   const { token, user } = useAuth();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
-  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
 
   const [list, setList] = useState<AdminPromotion[]>([]);
   const [overlayPublished, setOverlayPublished] = useState<OverlayPublished[]>([]);
@@ -111,6 +136,7 @@ export default function AdminPromotionsScreen() {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // ====== FORM ======
   const [form, setForm] = useState<any>({
     name: '',
     type: 'PRICE_OVERRIDE' as PromoType,
@@ -119,13 +145,24 @@ export default function AdminPromotionsScreen() {
     stacking: false,
     startsAt: new Date().toISOString(),
     endsAt: new Date(Date.now() + 86400000).toISOString(),
-    products: [{ productId: '' }],
-    benefits: {},
+    products: [{ productId: '' }], // productId principal (string numérica)
+    benefits: {},                  // se rellena según type
     conditions: {},
-    bannerKey: 'slotA',
+    bannerKey: 'slotA' as 'slotA' | 'slotB' | 'slotC' | 'none',
+    // Campos extra (solo UI)
+    components: [] as ComponentRow[], // lista editable {productId, qtyStr}
+    // X_FOR_Y
+    bundleId: '',
+    xStr: '',
+    yStr: '',
+    // GWP
+    triggerProductId: '',
+    giftProductId: '',
+    triggerQtyStr: '1',
   });
 
   const isAdmin = user?.role === 'ADMIN';
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom, { isAdmin });
 
   const headers = useMemo(() => {
     const auth = token ? `Bearer ${token}` : undefined;
@@ -157,6 +194,7 @@ export default function AdminPromotionsScreen() {
           return true;
         });
 
+        // Mantén published (solo UI) para compat con overlay local; pero el toggle usará "active"
         const publishedIds = new Set(savedPublished.map((s) => String(s.id)));
         const merged = cleaned.map((p: any) => ({
           ...p,
@@ -182,11 +220,14 @@ export default function AdminPromotionsScreen() {
   const normalizeISO = (v: string) => new Date(v).toISOString();
   const normalizeProductId = (val: any) => String(val ?? '').trim();
 
+  // ====== VALIDACIONES ======
   const validateForm = () => {
     const msgs: string[] = [];
     if (!form.name?.trim()) msgs.push('Falta el nombre');
-    if (!['PRICE_OVERRIDE', 'PERCENT_OFF'].includes(form.type))
-      msgs.push('Tipo inválido (usa PRICE_OVERRIDE o PERCENT_OFF por ahora)');
+
+    if (!['PRICE_OVERRIDE', 'PERCENT_OFF', 'X_FOR_Y', 'GIFT_WITH_PURCHASE'].includes(form.type))
+      msgs.push('Tipo inválido');
+
     if (!form.startsAt || !form.endsAt) msgs.push('Falta vigencia');
 
     const pid = normalizeProductId(form.products?.[0]?.productId);
@@ -201,9 +242,24 @@ export default function AdminPromotionsScreen() {
       const p = form.benefits?.percent;
       if (!(typeof p === 'number') || p <= 0 || p >= 100) msgs.push('% descuento inválido (1..99)');
     }
+    if (form.type === 'X_FOR_Y') {
+      if (!String(form.bundleId || '').trim()) msgs.push('Bundle ID requerido');
+      const x = Number(form.xStr);
+      const y = Number(form.yStr);
+      if (!Number.isInteger(x) || x <= 0) msgs.push('X debe ser entero > 0');
+      if (!Number.isInteger(y) || y <= 0) msgs.push('Y debe ser entero > 0');
+    }
+    if (form.type === 'GIFT_WITH_PURCHASE') {
+      if (!String(form.bundleId || '').trim()) msgs.push('Bundle ID requerido');
+      if (!String(form.triggerProductId || '').trim()) msgs.push('Trigger productId requerido');
+      if (!String(form.giftProductId || '').trim()) msgs.push('Gift productId requerido');
+      const tq = Number(form.triggerQtyStr);
+      if (!Number.isInteger(tq) || tq <= 0) msgs.push('Qty trigger debe ser entero > 0');
+    }
     return msgs;
   };
 
+  // ====== GUARDAR ======
   const save = async () => {
     const errors = validateForm();
     if (errors.length) {
@@ -212,25 +268,75 @@ export default function AdminPromotionsScreen() {
     }
     setSaving(true);
     try {
+      // Normaliza componentes opcionales
+      const comps =
+        (form.components as ComponentRow[])
+          ?.map((c) => ({ productId: c.productId.trim(), qty: Number(c.qtyStr) }))
+          ?.filter((c) => c.productId && Number.isInteger(c.qty) && c.qty > 0) ?? [];
+
+      const benefits: any = {};
+
+      if (form.type === 'PRICE_OVERRIDE') {
+        benefits.price = Number(form.benefits?.price);
+      }
+      if (form.type === 'PERCENT_OFF') {
+        benefits.percent = Number(form.benefits?.percent);
+      }
+      if (form.type === 'X_FOR_Y') {
+        benefits.bundleId = String(form.bundleId).trim();
+        benefits.x = Number(form.xStr);
+        benefits.y = Number(form.yStr);
+        if (comps.length) benefits.components = comps;
+      }
+      if (form.type === 'GIFT_WITH_PURCHASE') {
+        benefits.bundleId = String(form.bundleId).trim();
+        benefits.triggerProductId = String(form.triggerProductId).trim();
+        benefits.giftProductId = String(form.giftProductId).trim();
+        benefits.triggerQty = Number(form.triggerQtyStr || '1');
+        if (comps.length) benefits.components = comps;
+      }
+
       const payload = {
         name: String(form.name).trim(),
-        type: form.type as 'PRICE_OVERRIDE' | 'PERCENT_OFF',
+        type: form.type as PromoType,
         audience: form.audience ?? 'B2C',
         priority: Number(form.priority ?? 100),
         stacking: !!form.stacking,
         startsAt: normalizeISO(form.startsAt),
         endsAt: normalizeISO(form.endsAt),
         products: [{ productId: normalizeProductId(form.products?.[0]?.productId) }],
-        benefits: form.benefits ?? {},
-        conditions: {
-          ...(form.conditions && Object.keys(form.conditions).length ? form.conditions : {}),
-          metadata: { bannerKey: form.bannerKey },
-        },
+        benefits,
+        conditions:
+          form.bannerKey === 'none'
+            ? form.conditions && Object.keys(form.conditions || {}).length
+              ? form.conditions
+              : undefined
+            : {
+                ...(form.conditions && Object.keys(form.conditions || {}).length ? form.conditions : {}),
+                metadata: { bannerKey: form.bannerKey },
+              },
       };
+
       await api.post('/admin/promotions', payload, { headers });
+
       setModal(false);
-      setForm((prev: any) => ({ ...prev, name: '', benefits: {} }));
+      // Limpia campos esenciales del form (deja vigencias y audiencia como estaban)
+      setForm((prev: any) => ({
+        ...prev,
+        name: '',
+        products: [{ productId: '' }],
+        benefits: {},
+        components: [],
+        bundleId: '',
+        xStr: '',
+        yStr: '',
+        triggerProductId: '',
+        giftProductId: '',
+        triggerQtyStr: '1',
+      }));
+
       await load();
+      bus.emit('promos:updated');
     } catch (e: any) {
       const msg = e?.details?.message || e?.message || 'No pudimos crear la promoción';
       Alert.alert('Error', Array.isArray(msg) ? msg.join('\n') : String(msg));
@@ -239,62 +345,75 @@ export default function AdminPromotionsScreen() {
     }
   };
 
-  const publish = async (id: string) => {
-    const publishedNow = new Set([
-      ...list.filter((p) => p.published).map((p) => String(p.id)),
-      ...overlayPublished.map((o) => String(o.id)),
-    ]);
-    const isAlready = publishedNow.has(String(id));
-    if (!isAlready && publishedNow.size >= MAX_PUBLISHED) {
-      Alert.alert('Límite alcanzado', `Solo puedes tener ${MAX_PUBLISHED} promociones publicadas a la vez.`);
+  // ====== TOGGLE PUBLICAR/PUBLICADO (usa active) ======
+  const togglePublish = async (item: AdminPromotion) => {
+    const id = String(item.id);
+    const nextActive = !item.active;
+
+    // Límite sólo al activar
+    const activeCount = list.filter((p) => p.active).length;
+    if (nextActive && activeCount >= MAX_PUBLISHED) {
+      Alert.alert('Límite alcanzado', `Solo puedes tener ${MAX_PUBLISHED} promociones activas a la vez.`);
       return;
     }
 
+    // Optimista: cambia active en UI
+    setList((prev) => prev.map((p) => (String(p.id) === id ? { ...p, active: nextActive } : p)));
+
     try {
-      // Optimista
-      setList((prev) => prev.map((p) => (String(p.id) === String(id) ? { ...p, published: true } : p)));
+      // 1) Patch active
+      await api.patch(`/admin/promotions/${id}`, { active: nextActive }, { headers });
 
-      // Backend
-      await api.post(`/admin/promotions/${id}/publish`, {}, { headers });
+      if (nextActive) {
+        // 2) Al activar: llama publish y sube a overlay local
+        await api.post(`/admin/promotions/${id}/publish`, {}, { headers });
 
-      // Persist overlay
-      const promo = list.find((p) => String(p.id) === String(id));
-      if (promo) {
+        // Reconstruye overlay para esta promo
+        const fresh = list.find((p) => String(p.id) === id) ?? item;
         const bannerKey =
-          (promo as any)?.conditions?.metadata?.bannerKey ?? form.bannerKey ?? 'slotA';
+          (fresh as any)?.conditions?.metadata?.bannerKey ??
+          (item as any)?.conditions?.metadata?.bannerKey ??
+          'slotA';
         const imageUrl = BANNERS.find((b) => b.key === bannerKey)?.url;
-        const productId = String((promo.products?.[0] as any)?.productId ?? '').trim();
+        const productId = String((fresh.products?.[0] as any)?.productId ?? '').trim();
         const price =
-          typeof (promo as any)?.benefits?.price === 'number'
-            ? (promo as any).benefits.price
+          typeof (fresh as any)?.benefits?.price === 'number'
+            ? (fresh as any).benefits.price
             : undefined;
 
-        const nextPub = await upsertPublished({
-          id: String(promo.id),
-          name: String(promo.name || 'Promoción'),
-          productId,
-          price,
-          imageUrl,
-          bannerKey,
-          publishedAt: Date.now(),
-        });
+        if (productId) {
+          const nextPub = await upsertPublished({
+            id,
+            name: String(fresh.name || 'Promoción'),
+            productId,
+            price,
+            imageUrl,
+            bannerKey,
+            publishedAt: Date.now(),
+          });
+          setOverlayPublished(nextPub);
+        }
+      } else {
+        // 3) Al desactivar: quita de overlay local
+        const nextPub = await removeFromPublished(id);
         setOverlayPublished(nextPub);
-
-        // Notifica al Feed
-        bus.emit('promos:updated');
-        bus.emit('promos:changed');
       }
 
+      // Notifica
+      bus.emit('promos:updated');
+      bus.emit('promos:changed');
+
+      // Revalida lista silenciosa
       await load({ silent: true });
     } catch (e: any) {
-      // rollback
-      setList((prev) => prev.map((p) => (String(p.id) === String(id) ? { ...p, published: false } : p)));
-      await removeFromPublished(String(id));
-      const msg = e?.details?.message || e?.message || 'No pudimos publicar';
+      // Rollback visual
+      setList((prev) => prev.map((p) => (String(p.id) === id ? { ...p, active: !nextActive } : p)));
+      const msg = e?.details?.message || e?.message || 'No se pudo cambiar el estado';
       Alert.alert('Error', String(msg));
     }
   };
 
+  // ====== ELIMINAR ======
   const removePromotion = (id: string | number) => {
     const idStr = String(id);
     Alert.alert(
@@ -357,10 +476,8 @@ export default function AdminPromotionsScreen() {
     );
   };
 
-  const publishedCount = new Set([
-    ...list.filter((p) => p.published).map((p) => String(p.id)),
-    ...overlayPublished.map((o) => String(o.id)),
-  ]).size;
+  // Para el contador, usamos activas reales
+  const activeCount = list.filter((p) => p.active).length;
 
   if (!isAdmin) {
     return (
@@ -369,6 +486,34 @@ export default function AdminPromotionsScreen() {
       </View>
     );
   }
+
+  // ====== UI Helpers ======
+  const TypePill = ({ value, active, onPress }: { value: PromoType; active: boolean; onPress: () => void }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      style={{
+        backgroundColor: active ? '#111' : '#eee',
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderRadius: 8,
+        marginRight: 8,
+      }}
+    >
+      <Text style={{ color: active ? '#fff' : '#111', fontWeight: '700' }}>{value}</Text>
+    </TouchableOpacity>
+  );
+
+  const addComponentRow = () =>
+    setForm((f: any) => ({ ...f, components: [...(f.components as ComponentRow[]), { productId: '', qtyStr: '' }] }));
+
+  const updateComponentRow = (idx: number, patch: Partial<ComponentRow>) =>
+    setForm((f: any) => ({
+      ...f,
+      components: (f.components as ComponentRow[]).map((r, i) => (i === idx ? { ...r, ...patch } : r)),
+    }));
+
+  const removeComponentRow = (idx: number) =>
+    setForm((f: any) => ({ ...f, components: (f.components as ComponentRow[]).filter((_, i) => i !== idx) }));
 
   return (
     <View style={{ flex: 1, padding: 16, paddingBottom: bottomPadding + 16 }}>
@@ -415,7 +560,7 @@ export default function AdminPromotionsScreen() {
       </View>
 
       <Text style={{ marginBottom: 8, color: '#666' }}>
-        Publicadas: {publishedCount}/{MAX_PUBLISHED} · Ocultas localmente: {deletedIds.length}
+        Publicadas (activas): {activeCount}/{MAX_PUBLISHED} · Ocultas localmente: {deletedIds.length}
       </Text>
 
       <FlatList
@@ -424,16 +569,13 @@ export default function AdminPromotionsScreen() {
         refreshing={loading}
         onRefresh={() => load().catch(() => undefined)}
         renderItem={({ item }) => {
-          const isPublished = !!item.published;
-          const canPublish = isPublished || publishedCount < MAX_PUBLISHED;
+          const isActive = !!item.active;
+          const canActivate = isActive || activeCount < MAX_PUBLISHED;
 
           return (
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() => {
-                // Navega al detalle al tocar la TARJETA (no los botones)
-                navigation.navigate('PromoDetail', { promoId: String(item.id) });
-              }}
+              onPress={() => navigation.navigate('PromoDetail', { promoId: String(item.id) })}
               style={{
                 padding: 12,
                 borderRadius: 12,
@@ -447,30 +589,28 @@ export default function AdminPromotionsScreen() {
               <Text style={{ color: '#666' }}>
                 {item.type} · {item.audience} · prioridad {item.priority}
               </Text>
-              {isPublished && (
+              {isActive && (
                 <Text style={{ marginTop: 4, color: '#059669', fontWeight: '700' }}>Publicado</Text>
               )}
 
               <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                {/* Botón Publicar (no dispara onPress del contenedor) */}
                 <TouchableOpacity
-                  onPress={() => publish(String(item.id))}
-                  disabled={!canPublish}
+                  onPress={() => togglePublish(item)}
+                  disabled={!canActivate}
                   style={{
-                    backgroundColor: isPublished ? '#10b981' : canPublish ? '#111' : '#9ca3af',
+                    backgroundColor: isActive ? '#10b981' : canActivate ? '#111' : '#9ca3af',
                     paddingHorizontal: 12,
                     paddingVertical: 8,
                     borderRadius: 8,
                     marginRight: 8,
-                    opacity: canPublish ? 1 : 0.6,
+                    opacity: canActivate ? 1 : 0.6,
                   }}
                 >
                   <Text style={{ color: '#fff' }}>
-                    {isPublished ? 'Publicado' : 'Publicar'}
+                    {isActive ? 'Publicado' : 'Publicar'}
                   </Text>
                 </TouchableOpacity>
 
-                {/* Botón Eliminar */}
                 <TouchableOpacity
                   onPress={() => removePromotion(item.id)}
                   style={{
@@ -494,46 +634,34 @@ export default function AdminPromotionsScreen() {
           <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 12 }}>Nueva promoción</Text>
 
           <Text>Nombre</Text>
-          <TextInput
+          <FormInput
             value={form.name}
-            onChangeText={(v) => setForm({ ...form, name: v })}
+            onChangeText={(v: string) => setForm({ ...form, name: v })}
             placeholder="Ej: Solo hoy: Cerveza a $2.000"
-            style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginBottom: 10 }}
           />
 
-          <Text>Tipo</Text>
+          <Text style={{ marginTop: 12 }}>Tipo</Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             style={{ marginBottom: 10, flexGrow: 0 }}
             contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 2 }}
           >
-            {(['PRICE_OVERRIDE', 'PERCENT_OFF'] as PromoType[]).map((t) => (
-              <TouchableOpacity
-                key={t}
-                onPress={() => setForm({ ...form, type: t })}
-                style={{
-                  backgroundColor: form.type === t ? '#111' : '#eee',
-                  paddingHorizontal: 10,
-                  paddingVertical: 8,
-                  borderRadius: 8,
-                  marginRight: 8,
-                  flexShrink: 0,
-                }}
-              >
-                <Text style={{ color: form.type === t ? '#fff' : '#111' }}>{t}</Text>
-              </TouchableOpacity>
+            {(['PRICE_OVERRIDE', 'PERCENT_OFF', 'X_FOR_Y', 'GIFT_WITH_PURCHASE'] as PromoType[]).map((t) => (
+              <TypePill key={t} value={t} active={form.type === t} onPress={() => setForm({ ...form, type: t })} />
             ))}
           </ScrollView>
 
           {form.type === 'PRICE_OVERRIDE' && (
             <>
               <Text>Precio fijo (COP)</Text>
-              <TextInput
+              <FormInput
                 keyboardType="numeric"
                 value={String(form.benefits?.price ?? '')}
-                onChangeText={(v) => setForm({ ...form, benefits: { ...form.benefits, price: Number(v || 0) } })}
-                style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginBottom: 10 }}
+                onChangeText={(v: string) =>
+                  setForm({ ...form, benefits: { ...form.benefits, price: Number(v || 0) } })
+                }
+                placeholder="10000"
               />
             </>
           )}
@@ -541,39 +669,172 @@ export default function AdminPromotionsScreen() {
           {form.type === 'PERCENT_OFF' && (
             <>
               <Text>% Descuento</Text>
-              <TextInput
+              <FormInput
                 keyboardType="numeric"
                 value={String(form.benefits?.percent ?? '')}
-                onChangeText={(v) => setForm({ ...form, benefits: { ...form.benefits, percent: Number(v || 0) } })}
-                style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginBottom: 10 }}
+                onChangeText={(v: string) =>
+                  setForm({ ...form, benefits: { ...form.benefits, percent: Number(v || 0) } })
+                }
+                placeholder="15"
               />
             </>
           )}
 
-          <Text>Producto principal (productId numérico)</Text>
-          <TextInput
+          {form.type === 'X_FOR_Y' && (
+            <>
+              <Text style={{ marginTop: 8 }}>Bundle ID (SKU promo)</Text>
+              <FormInput
+                value={form.bundleId}
+                onChangeText={(v: string) => setForm({ ...form, bundleId: v })}
+                placeholder="1002"
+                autoCapitalize="none"
+              />
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ marginTop: 8 }}>X (lleva)</Text>
+                  <FormInput
+                    keyboardType="numeric"
+                    value={form.xStr}
+                    onChangeText={(v: string) => setForm({ ...form, xStr: v })}
+                    placeholder="3"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ marginTop: 8 }}>Y (paga)</Text>
+                  <FormInput
+                    keyboardType="numeric"
+                    value={form.yStr}
+                    onChangeText={(v: string) => setForm({ ...form, yStr: v })}
+                    placeholder="2"
+                  />
+                </View>
+              </View>
+            </>
+          )}
+
+          {form.type === 'GIFT_WITH_PURCHASE' && (
+            <>
+              <Text style={{ marginTop: 8 }}>Bundle ID (SKU promo)</Text>
+              <FormInput
+                value={form.bundleId}
+                onChangeText={(v: string) => setForm({ ...form, bundleId: v })}
+                placeholder="1002"
+                autoCapitalize="none"
+              />
+              <Text style={{ marginTop: 8 }}>Producto trigger (productId)</Text>
+              <FormInput
+                value={form.triggerProductId}
+                onChangeText={(v: string) => setForm({ ...form, triggerProductId: v })}
+                placeholder="50"
+                autoCapitalize="none"
+              />
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ marginTop: 8 }}>Qty trigger</Text>
+                  <FormInput
+                    keyboardType="numeric"
+                    value={form.triggerQtyStr}
+                    onChangeText={(v: string) => setForm({ ...form, triggerQtyStr: v })}
+                    placeholder="1"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ marginTop: 8 }}>Producto regalo (productId)</Text>
+                  <FormInput
+                    value={form.giftProductId}
+                    onChangeText={(v: string) => setForm({ ...form, giftProductId: v })}
+                    placeholder="99"
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+            </>
+          )}
+
+          {(form.type === 'X_FOR_Y' || form.type === 'GIFT_WITH_PURCHASE') && (
+            <>
+              <Text style={{ marginTop: 12, marginBottom: 6, fontWeight: '700' }}>
+                Componentes del bundle (opcional)
+              </Text>
+              {(form.components as ComponentRow[]).map((row, idx) => (
+                <View
+                  key={idx}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                    borderRadius: 10,
+                    padding: 12,
+                    marginBottom: 10,
+                  }}
+                >
+                  <Text>productId</Text>
+                  <FormInput
+                    value={row.productId}
+                    onChangeText={(v: string) => updateComponentRow(idx, { productId: v })}
+                    placeholder="p.ej. 3"
+                  />
+                  <Text style={{ marginTop: 8 }}>qty</Text>
+                  <FormInput
+                    keyboardType="numeric"
+                    value={row.qtyStr}
+                    onChangeText={(v: string) => updateComponentRow(idx, { qtyStr: v })}
+                    placeholder="p.ej. 3"
+                  />
+                  <TouchableOpacity
+                    onPress={() => removeComponentRow(idx)}
+                    style={{
+                      alignSelf: 'flex-start',
+                      backgroundColor: '#ef4444',
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      marginTop: 8,
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>Eliminar</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <TouchableOpacity
+                onPress={addComponentRow}
+                style={{
+                  alignSelf: 'flex-start',
+                  backgroundColor: '#111',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>+ Agregar componente</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          <Text style={{ marginTop: 8 }}>Producto principal (productId numérico)</Text>
+          <FormInput
             keyboardType="number-pad"
             value={String(form.products?.[0]?.productId ?? '')}
-            onChangeText={(v) => {
+            onChangeText={(v: string) => {
               const onlyDigits = v.replace(/\D+/g, '');
               setForm({ ...form, products: [{ productId: onlyDigits }] });
             }}
-            placeholder="p.ej. 2"
-            style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginBottom: 10 }}
+            placeholder="p.ej. 2 o 1002 (bundle)"
           />
 
-          <Text>Vigencia</Text>
-          <TextInput
+          <Text style={{ marginTop: 8 }}>Vigencia (inicio ISO)</Text>
+          <FormInput
             value={form.startsAt}
-            onChangeText={(v) => setForm({ ...form, startsAt: v })}
+            onChangeText={(v: string) => setForm({ ...form, startsAt: v })}
             placeholder="YYYY-MM-DDTHH:mm:ssZ"
-            style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginBottom: 10 }}
+            autoCapitalize="none"
           />
-          <TextInput
+          <Text style={{ marginTop: 8 }}>Vigencia (fin ISO)</Text>
+          <FormInput
             value={form.endsAt}
-            onChangeText={(v) => setForm({ ...form, endsAt: v })}
+            onChangeText={(v: string) => setForm({ ...form, endsAt: v })}
             placeholder="YYYY-MM-DDTHH:mm:ssZ"
-            style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, marginBottom: 10 }}
+            autoCapitalize="none"
           />
 
           <Text style={{ marginTop: 12, marginBottom: 6 }}>Imagen provisional (elige 1 de 3)</Text>
@@ -591,6 +852,20 @@ export default function AdminPromotionsScreen() {
                 </TouchableOpacity>
               );
             })}
+            <TouchableOpacity
+              onPress={() => setForm({ ...form, bannerKey: 'none' })}
+              style={{
+                justifyContent: 'center',
+                alignItems: 'center',
+                width: 100,
+                borderWidth: 1,
+                borderColor: '#E5E7EB',
+                borderRadius: 8,
+                marginLeft: 12,
+              }}
+            >
+              <Text style={{ color: '#6B7280', textAlign: 'center' }}>Sin banner</Text>
+            </TouchableOpacity>
           </ScrollView>
 
           <View style={{ flexDirection: 'row', marginTop: 16 }}>
@@ -604,7 +879,13 @@ export default function AdminPromotionsScreen() {
             <TouchableOpacity
               onPress={save}
               disabled={saving}
-              style={{ paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, backgroundColor: '#111', opacity: saving ? 0.6 : 1 }}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                borderRadius: 10,
+                backgroundColor: '#111',
+                opacity: saving ? 0.6 : 1,
+              }}
             >
               <Text style={{ color: '#fff', fontWeight: '700' }}>{saving ? 'Guardando…' : 'Guardar'}</Text>
             </TouchableOpacity>

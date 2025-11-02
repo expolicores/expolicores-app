@@ -44,7 +44,7 @@ const formatCOP = (n?: number) =>
       }).format(n)
     : '';
 
-/** Overlay persistido por AdminPromotionsScreen */
+/** Overlay persistido por AdminPromotionsScreen (legacy; hoy usamos remoto) */
 const OVERLAY_KEY = 'published_promos_overlay_v1';
 type OverlayItem = {
   id: string;
@@ -171,7 +171,7 @@ export default function FeedScreen() {
   const isLegacyBusiness = rawRole === 'BUSINESS';
   const isB2BRole = rawRole === 'B2B' || isLegacyBusiness;
   const canSeeBodegaVirtual = B2B_ENABLED && (isB2BRole || isAdmin);
-  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom, { isAdmin });
 
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -185,15 +185,29 @@ export default function FeedScreen() {
   const { addItem, addToCart } = cartContext as any;
   const addCart = addItem ?? addToCart ?? cartContext?.add;
 
+  // 🚚 acepta overrides desde el feed
   const addFromFeed = useCallback(
-    async (item: { productId?: string }) => {
+    async (item: { productId?: string; priceOverride?: number; nameOverride?: string }) => {
       try {
+        console.log('[feed] addFromFeed: payload ->', item);
         const pid = Number(item?.productId);
         if (!pid || !Number.isFinite(pid)) throw new Error('Producto inválido');
         const product = await getProductById(pid);
         if (!addCart) throw new Error('Carrito no disponible');
 
+        const opts = {
+          priceOverride: typeof item.priceOverride === 'number' ? item.priceOverride : undefined,
+          nameOverride:
+            item.nameOverride && String(item.nameOverride).trim().length
+              ? String(item.nameOverride).trim()
+              : undefined,
+        };
+
+        // primero intentamos con opts; luego fallbacks sin opts
         const attempts: Array<() => any> = [
+          () => addCart(product, 1, opts),
+          () => addCart(product?.id ?? pid, 1, opts),
+          () => addCart(pid, 1, opts),
           () => addCart(product, 1),
           () => addCart(product?.id ?? pid, 1),
           () => addCart(pid, 1),
@@ -206,12 +220,15 @@ export default function FeedScreen() {
             if (result?.then) await result;
             added = true;
             break;
-          } catch {}
+          } catch (e) {
+            // continúa con el siguiente intento
+          }
         }
 
         if (!added) throw new Error('No se pudo agregar al carrito');
+        console.log('[feed] addFromFeed: agregado OK ->', pid);
       } catch (e: any) {
-        console.log('[feed] addFromFeed error', e?.message);
+        console.log('[feed] addFromFeed error', e?.message, item);
         Alert.alert('No se pudo agregar', e?.message ?? 'Intenta de nuevo');
       }
     },
@@ -242,7 +259,6 @@ export default function FeedScreen() {
 
   // 🔄 carga overlay REMOTO (solo) — ADMIN se trata como B2C
   const reloadOverlay = useCallback(async () => {
-    // const local = await readOverlay(); // ← ignorado por ahora
     const audience: 'B2C' | 'B2B' = isB2BRole ? 'B2B' : 'B2C';
     let remote: OverlayItem[] = [];
     try {
@@ -685,6 +701,8 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
 // ======================================================================
 // Slot renderer
 // ======================================================================
+type AddToCartPayload = { productId?: string; priceOverride?: number; nameOverride?: string };
+
 const SlotRenderer = React.memo(function SlotRenderer({
   slot,
   userRole,
@@ -698,7 +716,7 @@ const SlotRenderer = React.memo(function SlotRenderer({
   overlay: OverlayItem[];
   onDeeplink: (url?: string) => void;
   onItemPress: (p: FeedItem) => void;
-  onAddToCart: (p: FeedItem | { productId?: string }) => void;
+  onAddToCart: (p: AddToCartPayload) => void;
 }) {
   switch (slot.type) {
     case 'hero':
@@ -707,7 +725,7 @@ const SlotRenderer = React.memo(function SlotRenderer({
           slot={slot}
           overlay={overlay}
           onDeeplink={onDeeplink}
-          onAddToCart={onAddToCart as any}
+          onAddToCart={onAddToCart}
         />
       );
     case 'collection':
@@ -737,7 +755,7 @@ const HeroSlot = React.memo(function HeroSlot({
   slot: FeedSlot;
   overlay: OverlayItem[];
   onDeeplink: (url?: string) => void;
-  onAddToCart: (p: { productId?: string }) => void;
+  onAddToCart: (p: AddToCartPayload) => void;
 }) {
   const onCta = useTapOnce(() => {
     const url = slot.cta?.deeplink || 'app://collection/promos-b2c';
@@ -804,7 +822,13 @@ const HeroSlot = React.memo(function HeroSlot({
           ) : null}
           {!!ov.productId && (
             <TouchableOpacity
-              onPress={() => onAddToCart({ productId: ov.productId })}
+              onPress={() =>
+                onAddToCart({
+                  productId: ov.productId,
+                  priceOverride: ov.price,
+                  nameOverride: ov.name,
+                })
+              }
               style={{
                 alignSelf: 'flex-start',
                 backgroundColor: '#111',
@@ -834,13 +858,17 @@ const CollectionSlot = React.memo(function CollectionSlot({
   userRole: 'B2B' | 'B2C';
   overlay: OverlayItem[];
   onItemPress: (p: FeedItem) => void;
-  onAddToCart: (p: FeedItem | { productId?: string }) => void;
+  onAddToCart: (p: AddToCartPayload) => void;
 }) {
   const itemsRaw = (slot.items ?? []).filter((it) => !!it.image && !!it.image.trim());
 
   const itemsWithOverrides = itemsRaw.map((it) => {
     // match robusto por imagen y por id/productId
-    const ov = findOverlayForItem(overlay, { image: it.image, productId: (it as any).productId, id: (it as any).id });
+    const ov = findOverlayForItem(overlay, {
+      image: it.image,
+      productId: (it as any).productId,
+      id: (it as any).id,
+    });
     if (ov?.name) {
       console.log('[overlay->item match]', {
         itemImage: it.image,
@@ -851,10 +879,13 @@ const CollectionSlot = React.memo(function CollectionSlot({
       });
     }
 
-    // normaliza productId para el botón Agregar
+    // normaliza productId base
     const effectiveProductId =
-      (it as any).id != null ? String((it as any).id) :
-      (it as any).productId != null ? String((it as any).productId) : undefined;
+      (it as any).id != null
+        ? String((it as any).id)
+        : (it as any).productId != null
+        ? String((it as any).productId)
+        : undefined;
 
     return {
       item: { ...it, productId: effectiveProductId }, // asegura productId
@@ -903,7 +934,13 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 promoNameOverride={row.promoNameOverride}
                 promoPriceOverride={row.promoPriceOverride}
                 onPress={() => onItemPress(row.item)}
-                onAddToCart={() => onAddToCart({ productId: productIdEffective as any })}
+                onAddToCart={() =>
+                  onAddToCart({
+                    productId: productIdEffective as any,
+                    priceOverride: row.promoPriceOverride,
+                    nameOverride: row.promoNameOverride,
+                  })
+                }
               />
             );
           }}
@@ -932,7 +969,13 @@ const CollectionSlot = React.memo(function CollectionSlot({
                   promoNameOverride={row.promoNameOverride}
                   promoPriceOverride={row.promoPriceOverride}
                   onPress={() => onItemPress(row.item)}
-                  onAddToCart={() => onAddToCart({ productId: productIdEffective as any })}
+                  onAddToCart={() =>
+                    onAddToCart({
+                      productId: productIdEffective as any,
+                      priceOverride: row.promoPriceOverride,
+                      nameOverride: row.promoNameOverride,
+                    })
+                  }
                 />
               </View>
             );

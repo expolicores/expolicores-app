@@ -290,10 +290,11 @@ export class PromotionsService {
   // OVERLAY REMOTO (público/autenticado)
   // ---------------------------
   /**
-   * Devuelve hasta 3 overlays vigentes para la audiencia indicada.
+   * Devuelve overlays vigentes para la audiencia indicada.
    * Formato: [{ id, name, productId, price?, imageUrl?, bannerKey? }]
+   * Si `limit` es un número > 0, limita resultados. Si no, devuelve todos.
    */
-  async getOverlayByAudience(audience: Audience) {
+  async getOverlayByAudience(audience: Audience, limit?: number) {
     const now = new Date();
 
     const promos = await this.prisma.promotion.findMany({
@@ -306,7 +307,7 @@ export class PromotionsService {
       },
       include: { products: { select: { productId: true }, take: 1 } },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
-      take: 3,
+      take: typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? limit : undefined,
     });
 
     return promos
