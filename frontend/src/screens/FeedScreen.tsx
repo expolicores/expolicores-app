@@ -24,7 +24,7 @@ import { useCart } from '../context/CartContext';
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 import {
   fetchFeed,
-  fetchRemoteOverlay, // overlay remoto
+  fetchRemoteOverlay,
   getApiBaseUrl,
   getProductById,
   type FeedResponse,
@@ -111,11 +111,10 @@ function findOverlayForItem(
     if (ov) return ov;
   }
 
-  // ❌ sin fallback por índice (evita “fantasmas” entre devices)
   return undefined;
 }
 
-// (Temporal) Solo remoto: mantenemos helper por si luego quieres fusionar
+// (Temporal) Solo remoto
 function mergeOverlayRemoteOnly(_local: OverlayItem[], remote: OverlayItem[]): OverlayItem[] {
   return Array.isArray(remote) ? remote.slice(0, 3) : [];
 }
@@ -178,7 +177,7 @@ export default function FeedScreen() {
   const [data, setData] = useState<FeedResponse | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [overlay, setOverlay] = useState<OverlayItem[]>([]);
-  const FEED_CACHE_KEY = 'feed:last:v2'; // 🔑 versionado
+  const FEED_CACHE_KEY = 'feed:last:v2';
 
   // Cart helpers
   const cartContext = (useCart() as any) ?? {};
@@ -189,7 +188,6 @@ export default function FeedScreen() {
   const addFromFeed = useCallback(
     async (item: { productId?: string; priceOverride?: number; nameOverride?: string }) => {
       try {
-        console.log('[feed] addFromFeed: payload ->', item);
         const pid = Number(item?.productId);
         if (!pid || !Number.isFinite(pid)) throw new Error('Producto inválido');
         const product = await getProductById(pid);
@@ -203,7 +201,6 @@ export default function FeedScreen() {
               : undefined,
         };
 
-        // primero intentamos con opts; luego fallbacks sin opts
         const attempts: Array<() => any> = [
           () => addCart(product, 1, opts),
           () => addCart(product?.id ?? pid, 1, opts),
@@ -220,15 +217,11 @@ export default function FeedScreen() {
             if (result?.then) await result;
             added = true;
             break;
-          } catch (e) {
-            // continúa con el siguiente intento
-          }
+          } catch {}
         }
 
         if (!added) throw new Error('No se pudo agregar al carrito');
-        console.log('[feed] addFromFeed: agregado OK ->', pid);
       } catch (e: any) {
-        console.log('[feed] addFromFeed error', e?.message, item);
         Alert.alert('No se pudo agregar', e?.message ?? 'Intenta de nuevo');
       }
     },
@@ -272,7 +265,6 @@ export default function FeedScreen() {
       console.log('[overlay] remote fetch failed', e?.message);
     }
     const merged = mergeOverlayRemoteOnly([], remote);
-    console.log('[overlay] remote', remote, 'merged', merged);
     setOverlay(merged);
   }, [isB2BRole]);
 
@@ -280,16 +272,13 @@ export default function FeedScreen() {
     try {
       setErrMsg(null);
       const res = await fetchFeed();
-      console.log('[feed] fetched slots:', res?.slots?.length ?? 0);
       setData(res);
       persistFeed(res).catch(() => undefined);
       await reloadOverlay();
     } catch (e: any) {
-      console.log('[feed] load error ->', e?.status, e?.message);
       setErrMsg(e?.message ?? 'Error');
       const cached = await loadFromCache();
       if (cached) {
-        console.log('[feed] using cached feed');
         setData(cached);
       } else {
         setData(null);
@@ -369,21 +358,23 @@ export default function FeedScreen() {
       if (!url) return;
       try {
         const u = new URL(url);
-        const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
+        thePath: {
+          const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
 
-        if (u.host === 'collection' || path.startsWith('collection/')) {
-          const slug =
-            (u.host === 'collection' ? path : path.replace('collection/', '')) ||
-            path.split('/').pop();
-          if (slug) navigation.navigate('Catalog', { slug });
-          return;
-        }
-        if (u.host === 'product' || path.startsWith('product/')) {
-          const productId =
-            (u.host === 'product' ? path : path.replace('product/', '')) ||
-            path.split('/').pop();
-          if (productId) navigation.navigate('ProductDetail', { productId });
-          return;
+          if (u.host === 'collection' || path.startsWith('collection/')) {
+            const slug =
+              (u.host === 'collection' ? path : path.replace('collection/', '')) ||
+              path.split('/').pop();
+            if (slug) navigation.navigate('Catalog', { slug });
+            break thePath;
+          }
+          if (u.host === 'product' || path.startsWith('product/')) {
+            const productId =
+              (u.host === 'product' ? path : path.replace('product/', '')) ||
+              path.split('/').pop();
+            if (productId) navigation.navigate('ProductDetail', { productId });
+            break thePath;
+          }
         }
       } catch {}
     },
@@ -769,7 +760,7 @@ const HeroSlot = React.memo(function HeroSlot({
   const ov =
     (slotBannerKey && overlay.find((o) => o.bannerKey === slotBannerKey)) ||
     overlay.find((o) => sameImageHeuristic(o.imageUrl, heroImg)) ||
-    undefined; // ❌ sin overlay[0]
+    undefined;
 
   return (
     <View style={{ backgroundColor: colors.bg, paddingHorizontal: spacing.md }}>
@@ -863,23 +854,12 @@ const CollectionSlot = React.memo(function CollectionSlot({
   const itemsRaw = (slot.items ?? []).filter((it) => !!it.image && !!it.image.trim());
 
   const itemsWithOverrides = itemsRaw.map((it) => {
-    // match robusto por imagen y por id/productId
     const ov = findOverlayForItem(overlay, {
       image: it.image,
       productId: (it as any).productId,
       id: (it as any).id,
     });
-    if (ov?.name) {
-      console.log('[overlay->item match]', {
-        itemImage: it.image,
-        itemPid: (it as any).id ?? (it as any).productId,
-        overlayName: ov.name,
-        overlayImg: ov.imageUrl,
-        overlayPid: ov.productId,
-      });
-    }
 
-    // normaliza productId base
     const effectiveProductId =
       (it as any).id != null
         ? String((it as any).id)
@@ -888,10 +868,11 @@ const CollectionSlot = React.memo(function CollectionSlot({
         : undefined;
 
     return {
-      item: { ...it, productId: effectiveProductId }, // asegura productId
+      item: { ...it, productId: effectiveProductId },
       promoNameOverride: ov?.name,
       promoPriceOverride: typeof ov?.price === 'number' ? ov.price : undefined,
       promoProductIdOverride: ov?.productId ?? effectiveProductId,
+      effectiveId: ov?.productId ?? effectiveProductId,
     };
   });
 
@@ -923,7 +904,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
           contentContainerStyle={{ paddingHorizontal: spacing.md }}
           ItemSeparatorComponent={() => <View style={{ width: COL_GAP }} />}
           renderItem={({ item: row }) => {
-            const productIdEffective = row.promoProductIdOverride ?? row.item.productId;
+            const productIdEffective = row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
             const itemForCard: FeedItem = { ...row.item, productId: productIdEffective as any };
             return (
               <ProductMiniCard
@@ -933,6 +914,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 width={CARD_W}
                 promoNameOverride={row.promoNameOverride}
                 promoPriceOverride={row.promoPriceOverride}
+                effectiveProductId={productIdEffective as any}
                 onPress={() => onItemPress(row.item)}
                 onAddToCart={() =>
                   onAddToCart({
@@ -957,7 +939,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
           contentContainerStyle={{ paddingHorizontal: spacing.md }}
           ItemSeparatorComponent={() => <View style={{ height: COL_GAP }} />}
           renderItem={({ item: row, index }) => {
-            const productIdEffective = row.promoProductIdOverride ?? row.item.productId;
+            const productIdEffective = row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
             const itemForCard: FeedItem = { ...row.item, productId: productIdEffective as any };
             return (
               <View style={{ width: CARD_W, marginRight: index % COLS === 0 ? COL_GAP : 0 }}>
@@ -968,6 +950,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
                   width={CARD_W}
                   promoNameOverride={row.promoNameOverride}
                   promoPriceOverride={row.promoPriceOverride}
+                  effectiveProductId={productIdEffective as any}
                   onPress={() => onItemPress(row.item)}
                   onAddToCart={() =>
                     onAddToCart({
@@ -989,7 +972,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
 });
 
 // ======================================================================
-// Card
+// Card (con controles dinámicos estilo Catálogo)
 // ======================================================================
 const ProductMiniCard = React.memo(function ProductMiniCard({
   item,
@@ -998,6 +981,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   width,
   promoNameOverride,
   promoPriceOverride,
+  effectiveProductId,
   onPress,
   onAddToCart,
 }: {
@@ -1007,12 +991,68 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   width: number;
   promoNameOverride?: string;
   promoPriceOverride?: number;
+  effectiveProductId?: string;
   onPress: () => void;
   onAddToCart: () => void;
 }) {
   if (!item.image || !item.image.trim()) return null;
   const img = item.image.trim();
 
+  // id efectivo
+  const baseId = (item as any)?.id ?? (item as any)?.productId;
+  const pidStr = (effectiveProductId ?? baseId) != null ? String(effectiveProductId ?? baseId) : undefined;
+  const pidNum = pidStr ? Number(pidStr) : NaN;
+  const pidKey: any = Number.isFinite(pidNum) ? pidNum : pidStr;
+
+  // Cart
+  const cart = (useCart() as any) ?? {};
+  const cartItems: Array<any> = cart?.items ?? cart?.lines ?? [];
+  const qty = useMemo(() => {
+    if (!pidStr) return 0;
+    const line = cartItems.find((l) => String(l?.productId ?? l?.id) === String(pidStr));
+    return Number(line?.qty ?? 0);
+  }, [cartItems, pidStr]);
+
+  const tryDecrement = () => {
+    if (!pidStr) return;
+    const next = Math.max(0, qty - 1);
+    const attempts: Array<() => any> = [
+      () => cart.addItem?.(pidKey, -1),
+      () => cart.decrement?.(pidKey),
+      () => cart.updateQty?.(pidKey, next),
+      () => cart.setQty?.(pidKey, next),
+      () => (qty <= 1 ? cart.removeItem?.(pidKey) : undefined),
+    ];
+    for (const fn of attempts) {
+      try {
+        const r = fn?.();
+        if (r?.then) return r;
+        return;
+      } catch {}
+    }
+  };
+
+  const tryRemove = () => {
+    if (!pidStr) return;
+    const attempts: Array<() => any> = [
+      () => cart.removeItem?.(pidKey),
+      () => cart.updateQty?.(pidKey, 0),
+      () => cart.setQty?.(pidKey, 0),
+    ];
+    for (const fn of attempts) {
+      try {
+        const r = fn?.();
+        if (r?.then) return r;
+        return;
+      } catch {}
+    }
+  };
+
+  const handlePlus = () => {
+    onAddToCart();
+  };
+
+  // Precio activo (respeta override)
   const priceActive = useMemo(() => {
     if (typeof promoPriceOverride === 'number') return promoPriceOverride;
     if (typeof item.priceB2C === 'number') return item.priceB2C;
@@ -1057,7 +1097,9 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           borderWidth: 1,
           borderColor: colors.border,
           overflow: 'hidden',
+          position: 'relative',
         }}
+        pointerEvents="box-none"
       >
         <Image
           source={{ uri: img }}
@@ -1066,9 +1108,10 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           transition={120}
           cachePolicy="memory-disk"
           onError={(err) => {
-            console.log('[image error][product]', (item as any).productId ?? (item as any).id, img, err);
+            console.log('[image error][product]', pidStr, img, err);
           }}
         />
+
         <View style={{ padding: spacing.sm }}>
           {badgeText ? (
             <View
@@ -1103,22 +1146,94 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           ) : null}
         </View>
 
-        {/* Botón Agregar */}
-        <TouchableOpacity
-          onPress={onAddToCart}
-          activeOpacity={0.85}
-          style={{
-            position: 'absolute',
-            right: 8,
-            bottom: 8,
-            backgroundColor: '#111',
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 10,
-          }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Agregar</Text>
-        </TouchableOpacity>
+        {/* Controles de carrito estilo Catálogo */}
+        {qty > 0 ? (
+          <View
+            style={{
+              position: 'absolute',
+              left: 8,
+              right: 8,
+              bottom: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+            }}
+            pointerEvents="box-none"
+          >
+            {/* eliminar / menos */}
+            <TouchableOpacity
+              onPress={qty <= 1 ? tryRemove : tryDecrement}
+              activeOpacity={0.85}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: '#fff',
+                borderWidth: 1,
+                borderColor: colors.border,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {qty <= 1 ? (
+                <Ionicons name="trash-outline" size={18} color="#ef4444" />
+              ) : (
+                <Ionicons name="remove" size={18} color={colors.text} />
+              )}
+            </TouchableOpacity>
+
+            {/* qty */}
+            <View
+              style={{
+                minWidth: 52,
+                paddingHorizontal: 12,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: '#F3F4F6',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <Text style={{ fontWeight: '700', color: colors.text }}>{qty}</Text>
+            </View>
+
+            {/* plus (+) */}
+            <TouchableOpacity
+              onPress={handlePlus}
+              activeOpacity={0.9}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: '#10B981',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={handlePlus}
+            activeOpacity={0.85}
+            style={{
+              position: 'absolute',
+              right: 8,
+              bottom: 8,
+              backgroundColor: '#111',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 10,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Agregar</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
