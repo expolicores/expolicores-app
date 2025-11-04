@@ -24,6 +24,9 @@ type CreateOrUpdateDto = {
    * - PERCENT_OFF          => { percent: number }
    * - X_FOR_Y              => { x: number, y: number, bundleId: string, components?: Array<{ productId: string, qty: number }> }
    * - GIFT_WITH_PURCHASE   => { bundleId: string, triggerProductId: string, giftProductId: string, triggerQty?: number, components?: Array<{ productId: string, qty: number }> }
+   * Campos opcionales transversales:
+   * - productId?: string        // ID o bundleId asociado para overlay/feed
+   * - imageUrl?: string         // imagen de la promo (si no va en conditions.metadata)
    */
   benefits?: any;
   conditions?: any;  // { minQty?, minSpend?, categoryIds?, metadata?: { bannerKey?, imageUrl? } ... }
@@ -148,11 +151,48 @@ export class PromotionsService {
     });
   }
 
+  /** Helper: escoge productId efectivo para overlay */
+  private pickOverlayProductId(p: any): string | null {
+    const ben = (p?.benefitsJson ?? {}) as any;
+    const cond = (p?.conditionsJson ?? {}) as any;
+    // Prioridad: benefitsJson.productId -> benefitsJson.bundleId -> relación products[0]
+    const fromBenefits =
+      (ben.productId != null && String(ben.productId)) ||
+      (ben.bundleId != null && String(ben.bundleId)) ||
+      null;
+
+    if (fromBenefits && String(fromBenefits).trim().length) {
+      return String(fromBenefits).trim();
+    }
+
+    const firstRel = Array.isArray(p?.products) && p.products[0]?.productId
+      ? String(p.products[0].productId)
+      : null;
+
+    return firstRel && firstRel.trim().length ? firstRel.trim() : null;
+  }
+
+  /** Helper: arma imageUrl/bannerKey para overlay */
+  private pickOverlayMedia(p: any): { imageUrl?: string; bannerKey?: string } {
+    const ben = (p?.benefitsJson ?? {}) as any;
+    const cond = (p?.conditionsJson ?? {}) as any;
+    const meta = (cond?.metadata ?? {}) as any;
+
+    const imageUrl =
+      meta.imageUrl ??
+      meta.img ??
+      ben.imageUrl ??
+      undefined;
+
+    const bannerKey = meta.bannerKey ?? undefined;
+
+    return { imageUrl, bannerKey };
+  }
+
   // ---------------------------
   // CRUD (ADMIN)
   // ---------------------------
   async create(dto: CreateOrUpdateDto) {
-    // validaciones básicas
     if (!dto.name) throw new BadRequestException('name es requerido');
     if (!dto.startsAt || !dto.endsAt) {
       throw new BadRequestException('startsAt y endsAt son requeridos (ISO)');
@@ -293,6 +333,11 @@ export class PromotionsService {
    * Devuelve overlays vigentes para la audiencia indicada.
    * Formato: [{ id, name, productId, price?, imageUrl?, bannerKey? }]
    * Si `limit` es un número > 0, limita resultados. Si no, devuelve todos.
+   *
+   * ⚠️ Cambios clave:
+   * - Usa benefitsJson.productId o benefitsJson.bundleId si están presentes.
+   * - Si no existen, cae a la relación products[0].
+   * - No descarta promos sin relación products si tienen productId/bundleId en benefitsJson.
    */
   async getOverlayByAudience(audience: Audience, limit?: number) {
     const now = new Date();
@@ -303,7 +348,6 @@ export class PromotionsService {
         startsAt: { lte: now },
         endsAt: { gte: now },
         OR: [{ audience }, { audience: 'ANY' as any }],
-        // (evitamos usar relation filter products: { some: {} } por compatibilidad)
       },
       include: { products: { select: { productId: true }, take: 1 } },
       orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
@@ -311,26 +355,33 @@ export class PromotionsService {
     });
 
     return promos
-      .filter((p: any) => Array.isArray(p.products) && p.products.length > 0)
+      // Mantener sólo aquellas que resultan con productId efectivo (por cualquiera de las fuentes)
       .map((p: any) => {
-        const first = p.products[0];
-        const productId = String(first?.productId ?? '');
+        const productId = this.pickOverlayProductId(p);
+        if (!productId) return null;
 
         const benefits = (p as any).benefitsJson ?? {};
-        const conditions = ((p as any).conditionsJson ?? {}) as any;
-        const meta = conditions?.metadata ?? {};
-
         const price =
           typeof benefits.price === 'number' ? Number(benefits.price) : undefined;
+
+        const media = this.pickOverlayMedia(p);
 
         return {
           id: p.id,
           name: p.name,
-          productId,                                // string (numérica o slug, según tu modelo)
-          price,                                    // PRICE_OVERRIDE; si es % no se fuerza aquí
-          imageUrl: meta.imageUrl ?? meta.img ?? undefined,
-          bannerKey: meta.bannerKey ?? undefined,
+          productId,                 // string numérica (SKU/bundle) o slug, según modelo
+          price,                     // PRICE_OVERRIDE; si es % no se fuerza aquí
+          imageUrl: media.imageUrl,  // conditions.metadata.imageUrl/img o benefitsJson.imageUrl
+          bannerKey: media.bannerKey,
         };
-      });
+      })
+      .filter(Boolean) as Array<{
+        id: string;
+        name: string;
+        productId: string;
+        price?: number;
+        imageUrl?: string;
+        bannerKey?: string;
+      }>;
   }
 }

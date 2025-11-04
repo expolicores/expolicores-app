@@ -32,9 +32,9 @@ const colors = {
 };
 
 type RouteParams =
-  | { promoId: string }                        // modo ADMIN (detalle/edición por ID)
-  | { promo?: PromotionDTO }                   // opcional si alguna vez pasas el objeto completo
-  | { promoItem?: any }                        // modo LECTOR desde feed (item del slot)
+  | { promoId: string }
+  | { promo?: PromotionDTO }
+  | { promoItem?: any }
   | undefined;
 
 export default function PromoDetailScreen() {
@@ -54,6 +54,8 @@ export default function PromoDetailScreen() {
   const [priceStr, setPriceStr] = useState(''); // para PRICE_OVERRIDE
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
+  // ⬇️ NUEVO: producto asociado que usará el overlay/feed
+  const [linkedProductId, setLinkedProductId] = useState<string>('');
 
   useEffect(() => {
     let mounted = true;
@@ -63,12 +65,26 @@ export default function PromoDetailScreen() {
         setLoading(true);
         const p = await getPromotionById(String(promoId));
         if (!mounted) return;
+
         setPromo(p);
         setName(p.name ?? '');
+
+        // Precio (si exists en benefitsJson.price)
         const price = (p.benefitsJson as any)?.price;
         setPriceStr(typeof price === 'number' ? String(price) : '');
+
+        // Ventana de tiempo
         setStartsAt(p.startsAt?.slice(0, 19) ?? '');
         setEndsAt(p.endsAt?.slice(0, 19) ?? '');
+
+        // Producto asociado: intentamos en varios campos comunes
+        const initialLinked =
+          (p as any)?.benefitsJson?.productId ??
+          (p as any)?.benefitsJson?.bundleId ??
+          (p as any)?.productId ??
+          (Array.isArray((p as any)?.products) && (p as any).products[0]?.productId) ??
+          '';
+        setLinkedProductId(initialLinked ? String(initialLinked) : '');
       } catch (e: any) {
         Alert.alert('Error', e?.message ?? 'No se pudo cargar la promoción');
         navigation.goBack();
@@ -88,6 +104,7 @@ export default function PromoDetailScreen() {
       const n = Number(priceStr);
       if (!Number.isFinite(n) || n < 0) return false;
     }
+    // linkedProductId es opcional: hay promos de banner sin add-to-cart
     return true;
   }, [promo, name, priceStr]);
 
@@ -95,15 +112,26 @@ export default function PromoDetailScreen() {
     try {
       if (!promo) return;
       setSaving(true);
+
+      // Mantenemos compat: benefits (para price) + benefitsJson (para productId)
+      const nextBenefitsJson = {
+        ...(promo.benefitsJson ?? {}),
+        // solo seteamos si hay valor
+        ...(linkedProductId?.trim() ? { productId: String(linkedProductId).trim() } : {}),
+      };
+
       const payload: any = {
         name: name.trim(),
         startsAt: startsAt ? new Date(startsAt).toISOString() : undefined,
         endsAt: endsAt ? new Date(endsAt).toISOString() : undefined,
         benefits: { ...(promo.benefitsJson || {}) },
+        benefitsJson: nextBenefitsJson,
       };
+
       if (promo.type === 'PRICE_OVERRIDE') {
         payload.benefits.price = Number(priceStr);
       }
+
       const updated = await updatePromotion(promo.id, payload);
       setPromo(updated);
       bus.emit('promos:updated');
@@ -114,7 +142,7 @@ export default function PromoDetailScreen() {
     } finally {
       setSaving(false);
     }
-  }, [promo, name, startsAt, endsAt, priceStr, navigation]);
+  }, [promo, name, startsAt, endsAt, priceStr, linkedProductId, navigation]);
 
   // ======== MODO LECTOR (desde feed: promoItem) ========
   const promoItem = (params as any)?.promoItem;
@@ -125,14 +153,14 @@ export default function PromoDetailScreen() {
       ? promoItem.promoPriceOverride
       : promoItem?.priceB2C;
 
-  // Cart
+  // Cart (lector)
   const cartCtx: any = (useCart() as any) ?? {};
   const addItem = cartCtx.addItem || cartCtx.addToCart || cartCtx.add;
   const handleAdd = async () => {
     try {
       const pidStr = String(promoItem?.productId ?? promoItem?.id ?? '').trim();
       if (!pidStr) throw new Error('Producto inválido');
-      // Algunos contextos aceptan (product, qty), otros (id, qty)
+
       const attempts: Array<() => any> = [
         () => addItem?.(Number(pidStr), 1),
         () => addItem?.(pidStr, 1),
@@ -255,6 +283,30 @@ export default function PromoDetailScreen() {
             color: colors.text,
           }}
         />
+
+        {/* ⬇️ NUEVO: producto asociado */}
+        <Text style={{ color: colors.text, fontWeight: '700', marginBottom: 6 }}>
+          Producto asociado (ID o bundleId)
+        </Text>
+        <TextInput
+          value={linkedProductId}
+          onChangeText={setLinkedProductId}
+          keyboardType="number-pad"
+          placeholder="Ej: 2, 11, 1009…"
+          autoCapitalize="none"
+          style={{
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 10,
+            paddingHorizontal: 12,
+            paddingVertical: Platform.OS === 'ios' ? 12 : 8,
+            marginBottom: 6,
+            color: colors.text,
+          }}
+        />
+        <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 14 }}>
+          Este ID se usará para agregar al carrito desde el feed/overlay.
+        </Text>
 
         {/* Guardar */}
         <TouchableOpacity

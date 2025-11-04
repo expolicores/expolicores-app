@@ -1,9 +1,9 @@
 // frontend/src/components/ProductMiniCard.tsx
-import React, { memo, useMemo } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import formatCurrency from '../lib/formatCurrency';
-import type { FeedItem, PricingView } from '../lib/api';
+import { getProductById, type FeedItem, type PricingView } from '../lib/api';
 
 // Tokens locales (ligeros) para mantener estilo consistente
 const spacing = { xs: 8, sm: 12 };
@@ -14,20 +14,48 @@ const colors = {
   bg: '#fff',
   bgAlt: '#F6F7F8',
   border: '#E5E7EB',
-  success: '#0EA5E9',
+  success: '#10B981',
   neutral: '#6B7280',
+  info: '#0EA5E9',
 };
 
 // Alto fijo como en el Feed
 const CARD_H = 240;
 
+// Cache volátil de producto para completar name/price cuando el feed no lo trae
+const productCache = new Map<
+  string,
+  { name?: string; price?: number; b2bPrice?: number }
+>();
+
 type Props = {
   item: FeedItem;
+
+  /** Cómo mostrar precios (misma semántica que en feed) */
   pricingView: PricingView;
+
+  /** Rol del usuario para decidir precio activo */
   userRole: 'B2B' | 'B2C';
+
+  /** Ancho de la tarjeta (el alto es fijo) */
   width: number;
+
+  /** Cantidad actual en el carrito para este item (si 0, se muestra botón Agregar) */
+  qty?: number;
+
+  /** Id efectivo si difiere de item.id/productId (por ejemplo por overlay) */
+  effectiveProductId?: string;
+
+  /** Overrides desde overlay/promo */
+  promoNameOverride?: string;
+  promoPriceOverride?: number;
+
   onPress?: () => void;
-  onAddToCart?: () => void;
+
+  /** Callbacks de carrito (desacoplados) */
+  onAdd?: () => void;      // +1
+  onMinus?: () => void;    // -1
+  onRemove?: () => void;   // quitar línea
 };
 
 function ProductMiniCardBase({
@@ -35,39 +63,127 @@ function ProductMiniCardBase({
   pricingView,
   userRole,
   width,
+  qty = 0,
+  effectiveProductId,
+  promoNameOverride,
+  promoPriceOverride,
   onPress,
-  onAddToCart,
+  onAdd,
+  onMinus,
+  onRemove,
 }: Props) {
   if (!item?.image?.trim()) return null;
   const img = item.image.trim();
 
-  const priceActive = useMemo(() => {
-    if (pricingView === 'B2B_DEFAULT') return item.priceB2B;
-    if (pricingView === 'B2C_ONLY') return item.priceB2C;
-    if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
-    if (pricingView === 'COMPARATIVE') {
-      return userRole === 'B2B' ? item.priceB2B ?? item.priceB2C : item.priceB2C;
+  // Id efectivo del producto para completar datos si faltan
+  const baseId = (item as any)?.id ?? (item as any)?.productId;
+  const pidStr =
+    (effectiveProductId ?? baseId) != null
+      ? String(effectiveProductId ?? baseId)
+      : undefined;
+
+  // Fallback de detalle si el feed no trae nombre/precio
+  const [fallback, setFallback] = useState<{
+    name?: string;
+    price?: number;
+    b2bPrice?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!pidStr) return;
+
+    const cached = productCache.get(pidStr);
+    if (cached) {
+      setFallback(cached);
+      return;
     }
+
+    const needsName =
+      !item.title && !item.subtitle && !promoNameOverride;
+    const needsPrice =
+      promoPriceOverride == null &&
+      item.priceB2C == null &&
+      item.priceB2B == null;
+
+    if (!needsName && !needsPrice) return;
+
+    (async () => {
+      try {
+        const p = await getProductById(Number(pidStr));
+        const payload = {
+          name: p?.name,
+          price: p?.price,
+          b2bPrice: p?.b2bPrice,
+        };
+        productCache.set(pidStr, payload);
+        if (mounted) setFallback(payload);
+      } catch {
+        // silencioso
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    pidStr,
+    item.title,
+    item.subtitle,
+    item.priceB2B,
+    item.priceB2C,
+    promoNameOverride,
+    promoPriceOverride,
+  ]);
+
+  // Precio activo (override > feed > fallback detalle)
+  const priceActive = useMemo(() => {
+    if (typeof promoPriceOverride === 'number') return promoPriceOverride;
+
+    // del feed
+    if (typeof item.priceB2C === 'number') {
+      if (pricingView === 'B2C_ONLY') return item.priceB2C;
+      if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
+      if (pricingView === 'COMPARATIVE') return userRole === 'B2B'
+        ? (item.priceB2B ?? item.priceB2C)
+        : item.priceB2C;
+    }
+    if (pricingView === 'B2B_DEFAULT') return item.priceB2B;
+
+    // fallback de detalle si el feed no lo trae
+    if (userRole === 'B2B' && typeof fallback?.b2bPrice === 'number') {
+      return fallback.b2bPrice;
+    }
+    if (typeof fallback?.price === 'number') {
+      return fallback.price;
+    }
+
     return undefined;
-  }, [pricingView, userRole, item.priceB2B, item.priceB2C]);
+  }, [pricingView, userRole, item.priceB2B, item.priceB2C, promoPriceOverride, fallback]);
 
   const secondaryLine = useMemo(() => {
-    if (pricingView === 'COMPARATIVE' && item.priceB2C && item.priceB2B && userRole === 'B2B') {
-      return `Público: ${formatCurrency(item.priceB2C)}`;
+    if (promoPriceOverride != null) return undefined;
+    const refB2C = item.priceB2C ?? fallback?.price;
+    if (pricingView === 'COMPARATIVE' && refB2C && userRole === 'B2B') {
+      return `Público: ${formatCurrency(refB2C)}`;
     }
-    if (pricingView === 'PUBLIC_REFERENCE' && item.priceB2C && userRole === 'B2B') {
-      return `Público (ref): ${formatCurrency(item.priceB2C)}`;
+    if (pricingView === 'PUBLIC_REFERENCE' && refB2C && userRole === 'B2B') {
+      return `Público (ref): ${formatCurrency(refB2C)}`;
     }
     return undefined;
-  }, [pricingView, userRole, item.priceB2B, item.priceB2C]);
+  }, [pricingView, userRole, item.priceB2C, promoPriceOverride, fallback]);
 
   const badgeText = useMemo(() => {
+    if (promoPriceOverride != null) return 'Promo';
     if (pricingView === 'B2B_DEFAULT' && userRole === 'B2B') return 'Tu precio';
     if (pricingView === 'PUBLIC_REFERENCE' && userRole === 'B2B') return 'Precio público';
     if (pricingView === 'COMPARATIVE' && userRole === 'B2B') return 'Tu precio';
     if (pricingView === 'B2C_ONLY') return 'Precio público';
     return undefined;
-  }, [pricingView, userRole]);
+  }, [pricingView, userRole, promoPriceOverride]);
+
+  const titleToShow =
+    promoNameOverride || item.title || item.subtitle || fallback?.name;
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
@@ -80,7 +196,9 @@ function ProductMiniCardBase({
           borderWidth: 1,
           borderColor: colors.border,
           overflow: 'hidden',
+          position: 'relative',
         }}
+        pointerEvents="box-none"
       >
         <Image
           source={{ uri: img }}
@@ -89,7 +207,7 @@ function ProductMiniCardBase({
           transition={120}
           cachePolicy="memory-disk"
           onError={(e) => {
-            console.log('[image error][product]', item.productId, img, e?.nativeEvent);
+            console.log('[image error][product]', pidStr, img, e?.nativeEvent);
           }}
         />
 
@@ -98,25 +216,27 @@ function ProductMiniCardBase({
             <View
               style={{
                 alignSelf: 'flex-start',
-                backgroundColor: badgeText === 'Tu precio' ? colors.success : colors.neutral,
+                backgroundColor:
+                  badgeText === 'Promo'
+                    ? colors.info
+                    : badgeText === 'Tu precio'
+                    ? colors.success
+                    : colors.neutral,
                 paddingHorizontal: 8,
                 paddingVertical: 2,
                 borderRadius: 999,
                 marginBottom: 4,
               }}
             >
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{badgeText}</Text>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                {badgeText}
+              </Text>
             </View>
           ) : null}
 
-          {!!item.title && (
+          {!!titleToShow && (
             <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
-              {item.title}
-            </Text>
-          )}
-          {!!item.subtitle && (
-            <Text numberOfLines={1} style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
-              {item.subtitle}
+              {titleToShow}
             </Text>
           )}
 
@@ -127,26 +247,98 @@ function ProductMiniCardBase({
           )}
 
           {!!secondaryLine && (
-            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{secondaryLine}</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
+              {secondaryLine}
+            </Text>
           )}
         </View>
 
-        {/* Botón Agregar (overlay) */}
-        <TouchableOpacity
-          onPress={onAddToCart}
-          activeOpacity={0.85}
-          style={{
-            position: 'absolute',
-            right: 8,
-            bottom: 8,
-            backgroundColor: '#111',
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 10,
-          }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Agregar</Text>
-        </TouchableOpacity>
+        {/* Controles de carrito (desacoplados) */}
+        {qty > 0 ? (
+          <View
+            style={{
+              position: 'absolute',
+              left: 8,
+              right: 8,
+              bottom: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+            }}
+            pointerEvents="box-none"
+          >
+            {/* eliminar / menos */}
+            <TouchableOpacity
+              onPress={qty <= 1 ? onRemove : onMinus}
+              activeOpacity={0.85}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: '#fff',
+                borderWidth: 1,
+                borderColor: colors.border,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: qty <= 1 ? '#ef4444' : colors.text, fontSize: 18, fontWeight: '700' }}>
+                {qty <= 1 ? '🗑' : '−'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* qty */}
+            <View
+              style={{
+                minWidth: 52,
+                paddingHorizontal: 12,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: '#F3F4F6',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <Text style={{ fontWeight: '700', color: colors.text }}>{qty}</Text>
+            </View>
+
+            {/* plus (+) */}
+            <TouchableOpacity
+              onPress={onAdd}
+              activeOpacity={0.9}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: colors.success,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>+</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={onAdd}
+            activeOpacity={0.85}
+            style={{
+              position: 'absolute',
+              right: 8,
+              bottom: 8,
+              backgroundColor: '#111',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 10,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Agregar</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );

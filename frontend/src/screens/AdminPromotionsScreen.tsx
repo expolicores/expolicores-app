@@ -20,19 +20,13 @@ import { useNavigation } from '@react-navigation/native';
 
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 import { useAuth } from '../context/AuthContext';
-import { api, fetchAdminPromotions, type AdminPromotion } from '../lib/api';
+import { api, fetchAdminPromotions, type AdminPromotion, fetchFeed, type FeedResponse } from '../lib/api';
 import { bus } from '../lib/bus';
 
 type PromoType = 'PRICE_OVERRIDE' | 'PERCENT_OFF' | 'X_FOR_Y' | 'GIFT_WITH_PURCHASE';
 
-const MAX_PUBLISHED = 3;
-
-// Banners mock (provisional)
-const BANNERS = [
-  { key: 'slotA', url: 'https://cdn.expressapp.net/p/vino-malbec-400.webp' },
-  { key: 'slotB', url: 'https://cdn.expressapp.net/p/ron-1l-400.webp' },
-  { key: 'slotC', url: 'https://cdn.expressapp.net/p/hero-b2c-week.webp' },
-];
+// 👇 ahora tenemos 4 slots (y además dinámico según el JSON del feed)
+const MAX_PUBLISHED = 4;
 
 // Overlay local “publicadas”
 const OVERLAY_PUBLISHED_KEY = 'published_promos_overlay_v1';
@@ -41,6 +35,13 @@ const OVERLAY_DELETED_KEY = 'deleted_promos_overlay_v1';
 
 // Claves de caché que podemos limpiar
 const CACHE_KEYS_TO_CLEAR = ['published_promos_overlay_v1', 'feed:last', 'feed:last:v2'];
+
+// Descubrimos candidatos de banners desde el feed (dinámico)
+type BannerCandidate = {
+  key: string;          // bannerKey sugerido
+  imageUrl?: string;    // preview
+  source: 'hero' | 'collection' | 'item' | 'manual';
+};
 
 type OverlayPublished = {
   id: string;
@@ -124,6 +125,25 @@ async function addDeletedId(id: string) {
   return list;
 }
 
+// helpers
+function uniq<T>(arr: T[], key: (x: T) => string) {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const it of arr) {
+    const k = key(it);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(it);
+  }
+  return out;
+}
+
+function cacheBust(url?: string, v?: string | number) {
+  if (!url) return undefined;
+  const token = v ?? Date.now();
+  return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(String(token))}`;
+}
+
 export default function AdminPromotionsScreen() {
   const { token, user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -135,6 +155,11 @@ export default function AdminPromotionsScreen() {
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Descubiertos desde el feed
+  const [feed, setFeed] = useState<FeedResponse | null>(null);
+  const [bannerCandidates, setBannerCandidates] = useState<BannerCandidate[]>([]);
+  const [manualBanner, setManualBanner] = useState<{ key: string; imageUrl?: string }>({ key: '', imageUrl: '' });
 
   // ====== FORM ======
   const [form, setForm] = useState<any>({
@@ -148,7 +173,8 @@ export default function AdminPromotionsScreen() {
     products: [{ productId: '' }], // productId principal (string numérica)
     benefits: {},                  // se rellena según type
     conditions: {},
-    bannerKey: 'slotA' as 'slotA' | 'slotB' | 'slotC' | 'none',
+    bannerKey: '',                 // dinámico; viene de candidatos o manual
+    bannerImageUrl: '',            // opcional (para cache bust y mobile)
     // Campos extra (solo UI)
     components: [] as ComponentRow[], // lista editable {productId, qtyStr}
     // X_FOR_Y
@@ -171,17 +197,57 @@ export default function AdminPromotionsScreen() {
     return base;
   }, [token]);
 
+  const discoverBannersFromFeed = useCallback((res: FeedResponse | null) => {
+    if (!res) return [];
+    const candidates: BannerCandidate[] = [];
+
+    for (const slot of res.slots ?? []) {
+      const bk = (slot as any)?.bannerKey as string | undefined;
+      if (slot.type === 'hero') {
+        if (bk) candidates.push({ key: bk, imageUrl: slot.image ?? undefined, source: 'hero' });
+        else if (slot.image) {
+          // fallback: filename as key
+          const last = slot.image.split('/').pop() ?? '';
+          const base = last.replace(/\.(png|jpe?g|webp|gif|avif)$/i, '');
+          candidates.push({ key: base, imageUrl: slot.image, source: 'hero' });
+        }
+      }
+      if (slot.type === 'collection') {
+        // a nivel de slot
+        if (bk && slot.image) {
+          candidates.push({ key: bk, imageUrl: slot.image, source: 'collection' });
+        }
+        // a nivel de items
+        for (const it of slot.items ?? []) {
+          const kb = (it as any)?.bannerKey as string | undefined;
+          if (kb) candidates.push({ key: kb, imageUrl: it.image ?? undefined, source: 'item' });
+        }
+      }
+    }
+
+    // dedup por key, priorizando los que tengan imageUrl
+    const ordered = candidates
+      .sort((a, b) => Number(!!b.imageUrl) - Number(!!a.imageUrl));
+    const unique = uniq(ordered, (c) => c.key.trim().toLowerCase()).filter((c) => !!c.key?.trim());
+
+    return unique;
+  }, []);
+
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
       const silent = !!opts?.silent;
       if (!silent) setLoading(true);
       try {
-        const res = await fetchAdminPromotions(headers);
+        const [res, savedPublished, savedDeleted, feedRes] = await Promise.all([
+          fetchAdminPromotions(headers),
+          readPublished(),
+          readDeletedIds(),
+          fetchFeed().catch(() => null),
+        ]);
 
-        const savedPublished = await readPublished();
-        const savedDeleted = await readDeletedIds();
         setOverlayPublished(savedPublished);
         setDeletedIds(savedDeleted);
+        setFeed(feedRes);
 
         const cleaned = (res ?? []).filter((p: any) => {
           if (!p) return false;
@@ -194,7 +260,6 @@ export default function AdminPromotionsScreen() {
           return true;
         });
 
-        // Mantén published (solo UI) para compat con overlay local; pero el toggle usará "active"
         const publishedIds = new Set(savedPublished.map((s) => String(s.id)));
         const merged = cleaned.map((p: any) => ({
           ...p,
@@ -202,6 +267,10 @@ export default function AdminPromotionsScreen() {
         })) as AdminPromotion[];
 
         setList(merged);
+
+        const discovered = discoverBannersFromFeed(feedRes);
+        setBannerCandidates(discovered);
+
         return merged;
       } catch (e: any) {
         if (!silent) Alert.alert('No pudimos cargar', e?.message ?? 'Intenta de nuevo');
@@ -210,7 +279,7 @@ export default function AdminPromotionsScreen() {
         if (!silent) setLoading(false);
       }
     },
-    [headers],
+    [headers, discoverBannersFromFeed],
   );
 
   useEffect(() => {
@@ -256,6 +325,8 @@ export default function AdminPromotionsScreen() {
       const tq = Number(form.triggerQtyStr);
       if (!Number.isInteger(tq) || tq <= 0) msgs.push('Qty trigger debe ser entero > 0');
     }
+    // BannerKey puede ser vacío (sin banner), pero si pones imageUrl, sugiere bannerKey
+    if (form.bannerImageUrl && !form.bannerKey) msgs.push('Si especificas imagen, indica un bannerKey');
     return msgs;
   };
 
@@ -296,6 +367,14 @@ export default function AdminPromotionsScreen() {
         if (comps.length) benefits.components = comps;
       }
 
+      const metadata: Record<string, any> | undefined =
+        form.bannerKey || form.bannerImageUrl
+          ? {
+              bannerKey: form.bannerKey || undefined,
+              imageUrl: form.bannerImageUrl || undefined,
+            }
+          : undefined;
+
       const payload = {
         name: String(form.name).trim(),
         type: form.type as PromoType,
@@ -306,15 +385,12 @@ export default function AdminPromotionsScreen() {
         endsAt: normalizeISO(form.endsAt),
         products: [{ productId: normalizeProductId(form.products?.[0]?.productId) }],
         benefits,
-        conditions:
-          form.bannerKey === 'none'
-            ? form.conditions && Object.keys(form.conditions || {}).length
-              ? form.conditions
-              : undefined
-            : {
-                ...(form.conditions && Object.keys(form.conditions || {}).length ? form.conditions : {}),
-                metadata: { bannerKey: form.bannerKey },
-              },
+        conditions: metadata
+          ? {
+              ...(form.conditions && Object.keys(form.conditions || {}).length ? form.conditions : {}),
+              metadata,
+            }
+          : (form.conditions && Object.keys(form.conditions || {}).length ? form.conditions : undefined),
       };
 
       await api.post('/admin/promotions', payload, { headers });
@@ -333,6 +409,8 @@ export default function AdminPromotionsScreen() {
         triggerProductId: '',
         giftProductId: '',
         triggerQtyStr: '1',
+        bannerKey: '',
+        bannerImageUrl: '',
       }));
 
       await load();
@@ -370,11 +448,19 @@ export default function AdminPromotionsScreen() {
 
         // Reconstruye overlay para esta promo
         const fresh = list.find((p) => String(p.id) === id) ?? item;
-        const bannerKey =
-          (fresh as any)?.conditions?.metadata?.bannerKey ??
-          (item as any)?.conditions?.metadata?.bannerKey ??
-          'slotA';
-        const imageUrl = BANNERS.find((b) => b.key === bannerKey)?.url;
+        const meta = (fresh as any)?.conditions?.metadata ?? {};
+        const bannerKey = meta.bannerKey as string | undefined;
+
+        // buscar imagen preferente:
+        // 1) conditions.metadata.imageUrl
+        // 2) candidato descubierto por bannerKey
+        // 3) undefined (sin imagen)
+        let imageUrl: string | undefined = meta.imageUrl;
+        if (!imageUrl && bannerKey) {
+          const found = bannerCandidates.find((c) => c.key.trim().toLowerCase() === bannerKey.trim().toLowerCase());
+          imageUrl = found?.imageUrl;
+        }
+
         const productId = String((fresh.products?.[0] as any)?.productId ?? '').trim();
         const price =
           typeof (fresh as any)?.benefits?.price === 'number'
@@ -515,20 +601,67 @@ export default function AdminPromotionsScreen() {
   const removeComponentRow = (idx: number) =>
     setForm((f: any) => ({ ...f, components: (f.components as ComponentRow[]).filter((_, i) => i !== idx) }));
 
+  const applyBannerCandidate = (cand: BannerCandidate) => {
+    setForm((f: any) => ({
+      ...f,
+      bannerKey: cand.key,
+      bannerImageUrl: cand.imageUrl ?? f.bannerImageUrl,
+    }));
+  };
+
+  const visibleBannerCandidates = useMemo(() => bannerCandidates.slice(0, 20), [bannerCandidates]);
+
+  const previewBannerUrl = useMemo(
+    () =>
+      cacheBust(
+        form.bannerImageUrl ||
+          visibleBannerCandidates.find((c) => c.key.trim().toLowerCase() === form.bannerKey.trim().toLowerCase())
+            ?.imageUrl,
+        Date.now(),
+      ),
+    [form.bannerImageUrl, form.bannerKey, visibleBannerCandidates],
+  );
+
   return (
     <View style={{ flex: 1, padding: 16, paddingBottom: bottomPadding + 16 }}>
-      {/* Header con “Nueva” y “Borrar caché” */}
+      {/* Header con “Nueva”, “Refrescar feed” y “Borrar caché” */}
       <View
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'space-between',
           marginBottom: 12,
         }}
       >
-        <Text style={{ fontSize: 22, fontWeight: '800' }}>Promociones</Text>
+        <Text style={{ fontSize: 22, fontWeight: '800', flexShrink: 0 }}>Promociones</Text>
 
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginLeft: 12, flex: 1 }}
+          contentContainerStyle={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            justifyContent: 'flex-end',
+            flexGrow: 1,
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => load().catch(() => undefined)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#0284c7',
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              borderRadius: 10,
+              gap: 6,
+            }}
+          >
+            <Ionicons name="refresh" size={16} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '800' }}>Refrescar feed</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={confirmClearCaches}
             style={{
@@ -556,7 +689,7 @@ export default function AdminPromotionsScreen() {
           >
             <Text style={{ color: '#fff', fontWeight: '700' }}>Nueva</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       </View>
 
       <Text style={{ marginBottom: 8, color: '#666' }}>
@@ -572,6 +705,12 @@ export default function AdminPromotionsScreen() {
           const isActive = !!item.active;
           const canActivate = isActive || activeCount < MAX_PUBLISHED;
 
+          const meta = (item as any)?.conditions?.metadata ?? {};
+          const bKey = meta.bannerKey as string | undefined;
+          const img =
+            meta.imageUrl ||
+            bannerCandidates.find((c) => bKey && c.key.toLowerCase() === bKey.toLowerCase())?.imageUrl;
+
           return (
             <TouchableOpacity
               activeOpacity={0.9}
@@ -585,15 +724,31 @@ export default function AdminPromotionsScreen() {
                 borderColor: '#E5E7EB',
               }}
             >
-              <Text style={{ fontWeight: '700' }}>{item.name}</Text>
-              <Text style={{ color: '#666' }}>
-                {item.type} · {item.audience} · prioridad {item.priority}
-              </Text>
-              {isActive && (
-                <Text style={{ marginTop: 4, color: '#059669', fontWeight: '700' }}>Publicado</Text>
-              )}
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                {img ? (
+                  <Image
+                    source={{ uri: cacheBust(img, (item as any)?.updatedAt ?? item.id) }}
+                    style={{ width: 72, height: 72, borderRadius: 8, backgroundColor: '#F3F4F6' }}
+                  />
+                ) : (
+                  <View style={{ width: 72, height: 72, borderRadius: 8, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="image-outline" size={20} color="#9CA3AF" />
+                  </View>
+                )}
 
-              <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700' }}>{item.name}</Text>
+                  <Text style={{ color: '#666' }}>
+                    {item.type} · {item.audience} · prioridad {item.priority}
+                  </Text>
+                  {isActive && (
+                    <Text style={{ marginTop: 4, color: '#059669', fontWeight: '700' }}>Publicado</Text>
+                  )}
+                  {bKey ? <Text style={{ color: '#6B7280', fontSize: 12 }}>bannerKey: {bKey}</Text> : null}
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', marginTop: 12 }}>
                 <TouchableOpacity
                   onPress={() => togglePublish(item)}
                   disabled={!canActivate}
@@ -626,6 +781,47 @@ export default function AdminPromotionsScreen() {
             </TouchableOpacity>
           );
         }}
+        ListHeaderComponent={
+          <View style={{ marginBottom: 12 }}>
+            {!!feed && visibleBannerCandidates.length > 0 ? (
+              <>
+                <Text style={{ fontWeight: '700', marginBottom: 6 }}>Banners detectados en el feed</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 6 }}>
+                  {visibleBannerCandidates.map((c) => (
+                    <TouchableOpacity
+                      key={`${c.source}-${c.key}`}
+                      onPress={() => applyBannerCandidate(c)}
+                      style={{
+                        marginRight: 10,
+                        borderWidth: 2,
+                        borderColor: form.bannerKey.toLowerCase() === c.key.toLowerCase() ? '#111' : 'transparent',
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        width: 140,
+                      }}
+                    >
+                      {c.imageUrl ? (
+                        <Image source={{ uri: cacheBust(c.imageUrl, 'prev') }} style={{ width: 140, height: 78 }} />
+                      ) : (
+                        <View style={{ width: 140, height: 78, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' }}>
+                          <Ionicons name="image-outline" size={18} color="#9CA3AF" />
+                        </View>
+                      )}
+                      <View style={{ padding: 6 }}>
+                        <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: '700' }}>{c.key}</Text>
+                        <Text style={{ fontSize: 10, color: '#6B7280' }}>{c.source}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            ) : (
+              <Text style={{ color: '#6B7280', marginBottom: 6 }}>
+                No detectamos banners en el feed todavía. Intenta “Refrescar feed”.
+              </Text>
+            )}
+          </View>
+        }
       />
 
       {/* Modal crear */}
@@ -837,36 +1033,74 @@ export default function AdminPromotionsScreen() {
             autoCapitalize="none"
           />
 
-          <Text style={{ marginTop: 12, marginBottom: 6 }}>Imagen provisional (elige 1 de 3)</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {BANNERS.map((b) => {
-              const active = form.bannerKey === b.key;
-              return (
-                <TouchableOpacity
-                  key={b.key}
-                  onPress={() => setForm({ ...form, bannerKey: b.key })}
-                  style={{ marginRight: 12, borderWidth: 2, borderColor: active ? '#111' : 'transparent', borderRadius: 8 }}
-                >
-                  <Image source={{ uri: b.url }} style={{ width: 120, height: 80, borderRadius: 6 }} />
-                  <Text style={{ textAlign: 'center', marginTop: 4 }}>{b.key}</Text>
-                </TouchableOpacity>
-              );
-            })}
-            <TouchableOpacity
-              onPress={() => setForm({ ...form, bannerKey: 'none' })}
-              style={{
-                justifyContent: 'center',
-                alignItems: 'center',
-                width: 100,
-                borderWidth: 1,
-                borderColor: '#E5E7EB',
-                borderRadius: 8,
-                marginLeft: 12,
-              }}
-            >
-              <Text style={{ color: '#6B7280', textAlign: 'center' }}>Sin banner</Text>
-            </TouchableOpacity>
-          </ScrollView>
+          {/* ---- Selección de banner dinámica ---- */}
+          <Text style={{ marginTop: 12, marginBottom: 6, fontWeight: '700' }}>Elegir banner (dinámico)</Text>
+          {visibleBannerCandidates.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {visibleBannerCandidates.map((b) => {
+                const active = form.bannerKey && form.bannerKey.toLowerCase() === b.key.toLowerCase();
+                return (
+                  <TouchableOpacity
+                    key={`${b.source}-${b.key}`}
+                    onPress={() => applyBannerCandidate(b)}
+                    style={{
+                      marginRight: 12,
+                      borderWidth: 2,
+                      borderColor: active ? '#111' : 'transparent',
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      width: 140,
+                    }}
+                  >
+                    {b.imageUrl ? (
+                      <Image source={{ uri: cacheBust(b.imageUrl, 'cand') }} style={{ width: 140, height: 78 }} />
+                    ) : (
+                      <View style={{ width: 140, height: 78, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="image-outline" size={18} color="#9CA3AF" />
+                      </View>
+                    )}
+                    <View style={{ padding: 6 }}>
+                      <Text numberOfLines={1} style={{ fontSize: 12, fontWeight: '700' }}>{b.key}</Text>
+                      <Text style={{ fontSize: 10, color: '#6B7280' }}>{b.source}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : (
+            <Text style={{ color: '#6B7280' }}>No hay banners detectados en el feed.</Text>
+          )}
+
+          <Text style={{ marginTop: 12 }}>bannerKey (manual / override)</Text>
+          <FormInput
+            value={form.bannerKey}
+            onChangeText={(v: string) => setForm({ ...form, bannerKey: v })}
+            placeholder="p.ej. hero_semana_1"
+            autoCapitalize="none"
+          />
+
+          <Text style={{ marginTop: 8 }}>Imagen del banner (opcional, URL pública)</Text>
+          <FormInput
+            value={form.bannerImageUrl}
+            onChangeText={(v: string) => setForm({ ...form, bannerImageUrl: v })}
+            placeholder="https://cdn.tuapp.com/hero.webp"
+            autoCapitalize="none"
+          />
+
+          {/* Preview con cache-bust */}
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ marginBottom: 6, color: '#6B7280' }}>Vista previa</Text>
+            {previewBannerUrl ? (
+              <Image
+                source={{ uri: previewBannerUrl }}
+                style={{ width: '100%', height: 160, borderRadius: 10, backgroundColor: '#F3F4F6' }}
+              />
+            ) : (
+              <View style={{ width: '100%', height: 160, borderRadius: 10, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="image-outline" size={24} color="#9CA3AF" />
+              </View>
+            )}
+          </View>
 
           <View style={{ flexDirection: 'row', marginTop: 16 }}>
             <TouchableOpacity
