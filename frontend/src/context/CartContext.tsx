@@ -8,8 +8,15 @@ import React, {
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  resolveEffectiveFromFeed,
+  type FeedSlotItem,
+  type PublishedPromoOverlay,
+} from '../lib/promotionsOverlay';
 
-// ===== Tipos =====
+/* =====================================================================
+ * Tipos
+ * ===================================================================== */
 export type CartItem = {
   productId: number;        // ID normalizado a number
   name: string;             // siempre presente (override | nombre producto | fallback)
@@ -31,8 +38,18 @@ export type AddItemOpts = {
   promoSource?: 'overlay' | 'system';
 };
 
+export type FeedOpInput = {
+  slotItem: FeedSlotItem;
+  overlay?: PublishedPromoOverlay | null;
+  // opcional para controlar stock desde el feed (p.ej. bundles)
+  stockOverride?: number;
+  // opcional para categorizar (si el feed la trae)
+  categoryOverride?: string | null;
+};
+
 export type CartState = {
   items: CartItem[];
+
   /**
    * Agrega al carrito. Acepta:
    * - add(productDto, qty?, opts?)
@@ -43,14 +60,31 @@ export type CartState = {
   remove: (productId: number) => void;
   setQty: (productId: number, qty: number) => void; // qty <= 0 elimina
   clear: () => void;
+
+  // Derivados
   count: number;    // total de unidades
   subtotal: number; // sum(price*qty)
+
+  // ===== Helpers para Feed =====
+  addFromFeed: (input: FeedOpInput) => void;
+  decrementFromFeed: (input: FeedOpInput) => void;  // botón "−"
+  removeFromFeed: (input: FeedOpInput) => void;     // icono "basurita"
+  qtyFromFeed: (input: FeedOpInput) => number;      // para pintar el contador
+
+  // ===== Aliases legacy (compatibilidad con pantallas antiguas) =====
+  addItem?: (productIdOrObj: any, deltaQty?: number, opts?: AddItemOpts) => void;
+  updateQty?: (productId: number, qty: number) => void;
+  removeItem?: (productId: number) => void;
+  decrement?: (productId: number) => void;
+  lines?: CartItem[]; // alias de items
 };
 
 const STORAGE_KEY = '@expolicores/cart:v1';
 const BIG_STOCK = 999_999; // stock virtual cuando no llega desde backend
 
-// ===== Utils internas =====
+/* =====================================================================
+ * Utils internas
+ * ===================================================================== */
 function normalizeStock(input?: number | null): number {
   return Number.isFinite(input as number) && (input as number) >= 0
     ? (input as number)
@@ -77,12 +111,7 @@ function toNumberId(idLike: any): number | null {
  *  5) 0
  */
 function defaultUnitPriceFromProduct(p: any): number {
-  const cands = [
-    p?.price,
-    p?.priceB2C,
-    p?.pricePublic,
-    p?.priceB2B,
-  ];
+  const cands = [p?.price, p?.priceB2C, p?.pricePublic, p?.priceB2B];
   for (const v of cands) {
     const n = Number(v);
     if (Number.isFinite(n) && n >= 0) return Math.floor(n);
@@ -164,7 +193,9 @@ function normalizeIncomingToCartLineBase(
   };
 }
 
-// ===== Contexto =====
+/* =====================================================================
+ * Contexto
+ * ===================================================================== */
 const CartCtx = createContext<CartState | null>(null);
 
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -201,7 +232,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items)).catch(() => {});
   }, [items]);
 
-  // ===== Acciones =====
+  /* ================= Acciones base ================ */
   const add: CartState['add'] = (item: any, qty = 1, opts?: AddItemOpts) => {
     const base = normalizeIncomingToCartLineBase(item, opts);
     const inc = Math.max(1, Math.floor(qty)); // mínimo 1 al agregar
@@ -281,7 +312,108 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const clear: CartState['clear'] = () => setItems([]);
 
-  // Derivados
+  /* ============== Helpers para Feed (Agregar / − / 🗑) ============== */
+  const addFromFeed: CartState['addFromFeed'] = ({ slotItem, overlay, stockOverride, categoryOverride }) => {
+    const { effectiveProductId, priceOverride } = resolveEffectiveFromFeed({ slotItem, overlay });
+    const pid = toNumberId(effectiveProductId) ?? 0;
+
+    // nombre/imagen de overlay si existen
+    const nameOverride = overlay?.name;
+    const imageOverride = overlay?.imageUrl;
+
+    add(
+      pid,
+      1,
+      {
+        priceOverride: typeof priceOverride === 'number' ? priceOverride : undefined,
+        nameOverride,
+        imageOverride,
+        stockOverride,
+        categoryOverride,
+        promoSource: 'overlay',
+      }
+    );
+  };
+
+  const qtyFromFeed: CartState['qtyFromFeed'] = ({ slotItem, overlay }) => {
+    const { effectiveProductId } = resolveEffectiveFromFeed({ slotItem, overlay });
+    const pid = toNumberId(effectiveProductId) ?? -1;
+    const line = items.find(it => it.productId === pid);
+    return line?.qty ?? 0;
+  };
+
+  const decrementFromFeed: CartState['decrementFromFeed'] = ({ slotItem, overlay }) => {
+    const { effectiveProductId } = resolveEffectiveFromFeed({ slotItem, overlay });
+    const pid = toNumberId(effectiveProductId) ?? -1;
+    setItems(prev => {
+      const i = prev.findIndex(p => p.productId === pid);
+      if (i < 0) return prev;
+      const next = [...prev];
+      const newQty = (next[i].qty ?? 1) - 1;
+      if (newQty <= 0) {
+        return next.filter(p => p.productId !== pid);
+      }
+      next[i] = { ...next[i], qty: newQty };
+      return next;
+    });
+  };
+
+  const removeFromFeed: CartState['removeFromFeed'] = ({ slotItem, overlay }) => {
+    const { effectiveProductId } = resolveEffectiveFromFeed({ slotItem, overlay });
+    const pid = toNumberId(effectiveProductId) ?? -1;
+    remove(pid);
+  };
+
+  /* ============== Aliases legacy para compatibilidad ============== */
+  const addItem: CartState['addItem'] = (productIdOrObj: any, deltaQty = 1, opts?: AddItemOpts) => {
+    // Si llega un objeto producto, úsalo tal cual con delta
+    if (typeof productIdOrObj === 'object' && productIdOrObj) {
+      const base = normalizeIncomingToCartLineBase(productIdOrObj, opts);
+      if (deltaQty >= 0) return add({ ...base }, deltaQty, opts);
+      // delta negativo => bajar cantidad
+      setItems(prev => {
+        const i = prev.findIndex(p => p.productId === base.productId);
+        if (i < 0) return prev;
+        const next = [...prev];
+        const newQty = (next[i].qty ?? 1) + Math.floor(deltaQty);
+        if (newQty <= 0) return next.filter(p => p.productId !== base.productId);
+        next[i] = { ...next[i], qty: newQty };
+        return next;
+      });
+      return;
+    }
+
+    // Si llega un id (string/number)
+    const pid = toNumberId(productIdOrObj) ?? 0;
+    if (deltaQty >= 0) return add(pid, deltaQty, opts);
+
+    // delta negativo => bajar cantidad
+    setItems(prev => {
+      const i = prev.findIndex(p => p.productId === pid);
+      if (i < 0) return prev;
+      const next = [...prev];
+      const newQty = (next[i].qty ?? 1) + Math.floor(deltaQty);
+      if (newQty <= 0) return next.filter(p => p.productId !== pid);
+      next[i] = { ...next[i], qty: newQty };
+      return next;
+    });
+  };
+
+  const updateQty: CartState['updateQty'] = (productId, qty) => setQty(productId, qty);
+  const removeItem: CartState['removeItem'] = (productId) => remove(productId);
+  const decrement: CartState['decrement'] = (productId) => {
+    setItems(prev => {
+      const i = prev.findIndex(p => p.productId === productId);
+      if (i < 0) return prev;
+      const next = [...prev];
+      const newQty = (next[i].qty ?? 1) - 1;
+      if (newQty <= 0) return next.filter(p => p.productId !== productId);
+      next[i] = { ...next[i], qty: newQty };
+      return next;
+    });
+  };
+
+  /* =================== Derivados =================== */
   const subtotal = useMemo(
     () => items.reduce((s, it) => s + it.price * it.qty, 0),
     [items],
@@ -291,7 +423,25 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [items],
   );
 
-  const value: CartState = { items, add, remove, setQty, clear, subtotal, count };
+  const value: CartState = {
+    items,
+    add,
+    remove,
+    setQty,
+    clear,
+    subtotal,
+    count,
+    addFromFeed,
+    decrementFromFeed,
+    removeFromFeed,
+    qtyFromFeed,
+    // aliases legacy
+    addItem,
+    updateQty,
+    removeItem,
+    decrement,
+    lines: items,
+  };
 
   return <CartCtx.Provider value={value}>{children}</CartCtx.Provider>;
 }

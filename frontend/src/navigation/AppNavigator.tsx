@@ -47,6 +47,9 @@ import AdminBusinessApplicationsScreen from '../screens/AdminBusinessApplication
 import PromoDetailScreen from '../screens/PromoDetailScreen';
 import AdminPromotionsScreen from '../screens/AdminPromotionsScreen';
 
+/** ========== Catálogo ========== */
+import CatalogScreen from '../screens/CatalogScreen';
+
 /** ================= Buttons en header ================= */
 import HeaderAddress from '../components/HeaderAddress';
 
@@ -169,8 +172,14 @@ const linking: LinkingOptions<any> = {
   prefixes: ['app://', 'expolicores://'],
   config: {
     screens: {
+      // Colecciones “especiales” (ej: promos-b2c) que ya usabas
       Catalog: {
         path: 'collection/:slug',
+        parse: { slug: (v: string) => String(v) },
+      },
+      // NUEVO: categorías del catálogo → usa la MISMA pantalla Catalog pero con otro path
+      CatalogByCategory: {
+        path: 'collection/cat/:slug',
         parse: { slug: (v: string) => String(v) },
       },
       ProductDetail: {
@@ -212,7 +221,7 @@ export default function AppNavigator() {
   );
 
   if (booting) {
-  return (
+    return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator />
       </View>
@@ -226,7 +235,7 @@ export default function AppNavigator() {
     </View>
   );
 
-    return (
+  return (
     <NavigationContainer
       ref={navigationRef}
       onReady={handleReady}
@@ -270,7 +279,7 @@ export default function AppNavigator() {
               })}
             />
 
-            {/* MARKET/CATÁLOGO */}
+            {/* MARKET */}
             <RootStack.Screen
               name="Market"
               component={MarketScreen}
@@ -279,11 +288,24 @@ export default function AppNavigator() {
                 headerRight: () => headerRightCommon(navigation),
               })}
             />
+
+            {/* CATALOGO (colecciones “especiales” por slug) */}
             <RootStack.Screen
               name="Catalog"
-              component={MarketScreen}
+              component={CatalogScreen}
               options={({ navigation }) => ({
-                title: 'Mercado',
+                title: 'Catálogo',
+                headerRight: () => headerRightCommon(navigation),
+              })}
+            />
+
+            {/* CATALOGO por CATEGORÍA (misma pantalla, path distinto) */}
+            {/* @ts-expect-error: añade en RootStackParamList si usas tipos estrictos */}
+            <RootStack.Screen
+              name="CatalogByCategory"
+              component={CatalogScreen}
+              options={({ navigation }) => ({
+                title: 'Catálogo',
                 headerRight: () => headerRightCommon(navigation),
               })}
             />

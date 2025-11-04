@@ -10,6 +10,7 @@ import {
   TextInput,
   Keyboard,
   Alert,
+  ScrollView,
   type DimensionValue,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
@@ -114,7 +115,7 @@ function findOverlayForItem(
   return undefined;
 }
 
-// (Temporal) Solo remoto
+// (Temporal) Solo remoto (se conserva tu recorte a 3 para UI)
 function mergeOverlayRemoteOnly(_local: OverlayItem[], remote: OverlayItem[]): OverlayItem[] {
   return Array.isArray(remote) ? remote.slice(0, 3) : [];
 }
@@ -179,13 +180,13 @@ export default function FeedScreen() {
   const [overlay, setOverlay] = useState<OverlayItem[]>([]);
   const FEED_CACHE_KEY = 'feed:last:v2';
 
-  // Cart helpers
-  const cartContext = (useCart() as any) ?? {};
-  const { addItem, addToCart } = cartContext as any;
-  const addCart = addItem ?? addToCart ?? cartContext?.add;
+  // Cart helpers (conservamos compat para add existente)
+  const cart = (useCart() as any) ?? {};
+  const { addItem, addToCart } = cart as any;
+  const addCart = addItem ?? addToCart ?? cart?.add;
 
-  // 🚚 acepta overrides desde el feed
-  const addFromFeed = useCallback(
+  // 🚚 agrega desde feed (fallback legacy por ID)
+  const addFromFeedLegacy = useCallback(
     async (item: { productId?: string; priceOverride?: number; nameOverride?: string }) => {
       try {
         const pid = Number(item?.productId);
@@ -358,23 +359,36 @@ export default function FeedScreen() {
       if (!url) return;
       try {
         const u = new URL(url);
-        thePath: {
-          const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
+        const path = u.pathname.startsWith('/') ? u.pathname.slice(1) : u.pathname;
 
-          if (u.host === 'collection' || path.startsWith('collection/')) {
-            const slug =
-              (u.host === 'collection' ? path : path.replace('collection/', '')) ||
-              path.split('/').pop();
-            if (slug) navigation.navigate('Catalog', { slug });
-            break thePath;
-          }
-          if (u.host === 'product' || path.startsWith('product/')) {
-            const productId =
-              (u.host === 'product' ? path : path.replace('product/', '')) ||
-              path.split('/').pop();
-            if (productId) navigation.navigate('ProductDetail', { productId });
-            break thePath;
-          }
+        // collection/cat/:slug  → CatalogByCategory
+        if (u.host === 'collection' && path.startsWith('cat/')) {
+          const slug = path.replace(/^cat\//, '').trim();
+          if (slug) navigation.navigate('CatalogByCategory', { slug });
+          return;
+        }
+        if (path.startsWith('collection/cat/')) {
+          const slug = path.replace(/^collection\/cat\//, '').trim();
+          if (slug) navigation.navigate('CatalogByCategory', { slug });
+          return;
+        }
+
+        // collection/:slug → Catalog
+        if (u.host === 'collection' || path.startsWith('collection/')) {
+          const slug =
+            (u.host === 'collection' ? path : path.replace(/^collection\//, '')) ||
+            path.split('/').pop();
+          if (slug) navigation.navigate('Catalog', { slug });
+          return;
+        }
+
+        // product/:id → ProductDetail
+        if (u.host === 'product' || path.startsWith('product/')) {
+          const productId =
+            (u.host === 'product' ? path : path.replace(/^product\//, '')) ||
+            path.split('/').pop();
+          if (productId) navigation.navigate('ProductDetail', { productId });
+          return;
         }
       } catch {}
     },
@@ -484,7 +498,7 @@ export default function FeedScreen() {
                 overlay={overlay}
                 onDeeplink={handleDeeplink}
                 onItemPress={(p) => navigation.navigate('PromoDetail', { promoItem: p })}
-                onAddToCart={(p) => addFromFeed(p as any)}
+                onAddToCart={(p) => addFromFeedLegacy(p as any)}
               />
             )}
             // @ts-ignore typings viejos
@@ -727,6 +741,7 @@ const SlotRenderer = React.memo(function SlotRenderer({
           overlay={overlay}
           onItemPress={onItemPress}
           onAddToCart={(p) => onAddToCart(p)}
+          onDeeplink={onDeeplink}
         />
       );
     default:
@@ -748,6 +763,7 @@ const HeroSlot = React.memo(function HeroSlot({
   onDeeplink: (url?: string) => void;
   onAddToCart: (p: AddToCartPayload) => void;
 }) {
+  const cart = (useCart() as any) ?? {};
   const onCta = useTapOnce(() => {
     const url = slot.cta?.deeplink || 'app://collection/promos-b2c';
     onDeeplink(url);
@@ -761,6 +777,22 @@ const HeroSlot = React.memo(function HeroSlot({
     (slotBannerKey && overlay.find((o) => o.bannerKey === slotBannerKey)) ||
     overlay.find((o) => sameImageHeuristic(o.imageUrl, heroImg)) ||
     undefined;
+
+  const handleAdd = () => {
+    // Preferir helpers del carrito si existen
+    if (cart?.addFromFeed && ov?.productId) {
+      const slotItem = { productId: ov.productId, image: img, bannerKey: slotBannerKey } as any;
+      return cart.addFromFeed({ slotItem, overlay: ov, categoryOverride: null });
+    }
+    // Fallback legacy
+    if (ov?.productId) {
+      onAddToCart({
+        productId: ov.productId,
+        priceOverride: ov.price,
+        nameOverride: ov.name,
+      });
+    }
+  };
 
   return (
     <View style={{ backgroundColor: colors.bg, paddingHorizontal: spacing.md }}>
@@ -813,13 +845,7 @@ const HeroSlot = React.memo(function HeroSlot({
           ) : null}
           {!!ov.productId && (
             <TouchableOpacity
-              onPress={() =>
-                onAddToCart({
-                  productId: ov.productId,
-                  priceOverride: ov.price,
-                  nameOverride: ov.name,
-                })
-              }
+              onPress={handleAdd}
               style={{
                 alignSelf: 'flex-start',
                 backgroundColor: '#111',
@@ -844,13 +870,62 @@ const CollectionSlot = React.memo(function CollectionSlot({
   overlay,
   onItemPress,
   onAddToCart,
+  onDeeplink,
 }: {
   slot: FeedSlot;
   userRole: 'B2B' | 'B2C';
   overlay: OverlayItem[];
   onItemPress: (p: FeedItem) => void;
   onAddToCart: (p: AddToCartPayload) => void;
+  onDeeplink: (url?: string) => void;
 }) {
+  // Soporte de chips (categorías/atajos)
+  if (slot.layout === 'chips') {
+    return (
+      <View style={{ backgroundColor: colors.bg }}>
+        {(slot.title || slot.subtitle) && (
+          <View style={{ paddingHorizontal: spacing.md, marginBottom: spacing.sm }}>
+            {slot.title ? (
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{slot.title}</Text>
+            ) : null}
+            {slot.subtitle ? (
+              <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 2 }}>
+                {slot.subtitle}
+              </Text>
+            ) : null}
+          </View>
+        )}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: spacing.md }}
+        >
+          {(slot.items ?? []).map((chip, idx) => (
+            <TouchableOpacity
+              key={chip.id ?? `chip-${idx}`}
+              onPress={() => onDeeplink((chip as any).deeplink)}
+              activeOpacity={0.85}
+              style={{
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 999,
+                backgroundColor: '#F3F4F6',
+                borderWidth: 1,
+                borderColor: colors.border,
+                marginRight: 8,
+              }}
+            >
+              <Text style={{ color: colors.text, fontWeight: '600' }}>
+                {(chip as any).title ?? 'Ver'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Colecciones de productos
   const itemsRaw = (slot.items ?? []).filter((it) => !!it.image && !!it.image.trim());
 
   const itemsWithOverrides = itemsRaw.map((it) => {
@@ -869,6 +944,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
 
     return {
       item: { ...it, productId: effectiveProductId },
+      overlay: ov, // <-- pasamos el overlay completo
       promoNameOverride: ov?.name,
       promoPriceOverride: typeof ov?.price === 'number' ? ov.price : undefined,
       promoProductIdOverride: ov?.productId ?? effectiveProductId,
@@ -909,6 +985,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
             return (
               <ProductMiniCard
                 item={itemForCard}
+                overlay={row.overlay}
                 pricingView={slot.pricingView}
                 userRole={userRole}
                 width={CARD_W}
@@ -945,6 +1022,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
               <View style={{ width: CARD_W, marginRight: index % COLS === 0 ? COL_GAP : 0 }}>
                 <ProductMiniCard
                   item={itemForCard}
+                  overlay={row.overlay}
                   pricingView={slot.pricingView}
                   userRole={userRole}
                   width={CARD_W}
@@ -967,6 +1045,25 @@ const CollectionSlot = React.memo(function CollectionSlot({
           windowSize={5}
         />
       )}
+
+      {/* CTA opcional (ej. "Ver más") */}
+      {slot.cta?.label && slot.cta?.deeplink ? (
+        <View style={{ paddingHorizontal: spacing.md, marginTop: spacing.sm }}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => onDeeplink(slot.cta?.deeplink)}
+            style={{
+              alignSelf: 'flex-start',
+              backgroundColor: colors.primary,
+              paddingHorizontal: spacing.lg,
+              paddingVertical: spacing.sm,
+              borderRadius: radius.md,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>{slot.cta.label}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -976,6 +1073,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
 // ======================================================================
 const ProductMiniCard = React.memo(function ProductMiniCard({
   item,
+  overlay,
   pricingView,
   userRole,
   width,
@@ -986,6 +1084,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   onAddToCart,
 }: {
   item: FeedItem;
+  overlay?: OverlayItem;
   pricingView: PricingView;
   userRole: 'B2B' | 'B2C';
   width: number;
@@ -1007,13 +1106,44 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   // Cart
   const cart = (useCart() as any) ?? {};
   const cartItems: Array<any> = cart?.items ?? cart?.lines ?? [];
+
+  // slotItem para helpers del carrito
+  const slotItem = useMemo(
+    () => ({
+      id: (item as any)?.id,
+      productId: (item as any)?.productId,
+      image: item.image,
+    }),
+    [item],
+  );
+
+  // Qty: preferir qtyFromFeed si existe (respeta bundles/override)
   const qty = useMemo(() => {
+    if (cart?.qtyFromFeed) {
+      try {
+        return Number(cart.qtyFromFeed({ slotItem, overlay })) || 0;
+      } catch {
+        // fallback abajo
+      }
+    }
     if (!pidStr) return 0;
     const line = cartItems.find((l) => String(l?.productId ?? l?.id) === String(pidStr));
     return Number(line?.qty ?? 0);
-  }, [cartItems, pidStr]);
+  }, [cart?.qtyFromFeed, slotItem, overlay, cartItems, pidStr]);
 
-  const tryDecrement = () => {
+  // Acciones
+  const handlePlus = () => {
+    if (cart?.addFromFeed) {
+      return cart.addFromFeed({ slotItem, overlay, categoryOverride: null });
+    }
+    onAddToCart(); // fallback legacy
+  };
+
+  const handleMinus = () => {
+    if (cart?.decrementFromFeed) {
+      return cart.decrementFromFeed({ slotItem, overlay });
+    }
+    // Fallback legacy
     if (!pidStr) return;
     const next = Math.max(0, qty - 1);
     const attempts: Array<() => any> = [
@@ -1032,7 +1162,11 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     }
   };
 
-  const tryRemove = () => {
+  const handleRemove = () => {
+    if (cart?.removeFromFeed) {
+      return cart.removeFromFeed({ slotItem, overlay });
+    }
+    // Fallback legacy
     if (!pidStr) return;
     const attempts: Array<() => any> = [
       () => cart.removeItem?.(pidKey),
@@ -1046,10 +1180,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
         return;
       } catch {}
     }
-  };
-
-  const handlePlus = () => {
-    onAddToCart();
   };
 
   // Precio activo (respeta override)
@@ -1162,7 +1292,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           >
             {/* eliminar / menos */}
             <TouchableOpacity
-              onPress={qty <= 1 ? tryRemove : tryDecrement}
+              onPress={qty <= 1 ? handleRemove : handleMinus}
               activeOpacity={0.85}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={{
