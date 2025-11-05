@@ -15,23 +15,21 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.expolicores.app",
+      "buildNumber": "1",
       "infoPlist": {
-        "NSUserTrackingUsageDescription": "No rastreamos. Solo usamos notificaciones para actualizar el estado de tu pedido.",
-        "UIBackgroundModes": [
-          "remote-notification"
-        ]
+        "UIBackgroundModes": ["remote-notification"],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.expolicores.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": [
-        "POST_NOTIFICATIONS"
-      ],
+      "permissions": ["POST_NOTIFICATIONS"],
       "notification": {
         "icon": "./assets/notification-icon.png",
         "color": "#D72638",

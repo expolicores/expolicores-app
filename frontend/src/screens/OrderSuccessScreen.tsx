@@ -3,6 +3,7 @@ import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useNotifications } from '../context/NotificationsContext';
+import { presentLocalNotification } from '../lib/notifications';
 
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();
@@ -109,6 +110,16 @@ export default function OrderSuccessScreen() {
       <TouchableOpacity onPress={() => ensurePermission()} style={{ marginTop: 12 }}>
         <Text>Forzar registro notificaciones</Text>
       </TouchableOpacity>
+
+      {/* Botón de prueba de notificación local (solo en desarrollo) */}
+      {__DEV__ && (
+        <TouchableOpacity
+          onPress={() => presentLocalNotification('Expolicores', 'Prueba local OK')}
+          style={{ marginTop: 12 }}
+        >
+          <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         onPress={openWhatsApp}
