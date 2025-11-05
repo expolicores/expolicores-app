@@ -983,7 +983,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
   // Filtramos los que no tengan image (el card no renderiza sin image)
   const itemsFiltered = itemsRaw.filter((it) => !!it.image && !!it.image.trim());
 
-  // En colecciones desde overlay, ya tenemos nombre/precio; en colecciones JSON, buscamos overlay por heurística
+  // ---------- Precio desde JSON por rol/pricingView + overlay como prioridad ----------
   const itemsWithOverrides = itemsFiltered.map((it) => {
     const ov = useOverlaySource
       ? undefined
@@ -1000,16 +1000,34 @@ const CollectionSlot = React.memo(function CollectionSlot({
         ? String((it as any).productId)
         : undefined;
 
+    // Precio desde JSON según pricingView/rol
+    const jsonPriceForRole: number | undefined =
+      typeof (it as any).priceB2C === 'number' || typeof (it as any).priceB2B === 'number'
+        ? (slot.pricingView === 'B2B_DEFAULT'
+            ? (it as any).priceB2B ?? (it as any).priceB2C
+            : slot.pricingView === 'B2C_ONLY'
+            ? (it as any).priceB2C
+            : slot.pricingView === 'PUBLIC_REFERENCE'
+            ? (it as any).priceB2C
+            : // COMPARATIVE / otros
+              (userRole === 'B2B'
+                ? (it as any).priceB2B ?? (it as any).priceB2C
+                : (it as any).priceB2C))
+        : undefined;
+
     return {
       item: { ...it, productId: effectiveProductId },
       overlay: ov,
+      // Nombre: overlay > (si venía un título en overlaySource) > nada
       promoNameOverride: ov?.name ?? (useOverlaySource ? (it as any).title : undefined),
+      // Precio: overlay > JSON por rol/pricingView
       promoPriceOverride:
         typeof ov?.price === 'number'
           ? ov.price
-          : useOverlaySource && typeof (it as any).priceB2C === 'number'
-          ? (it as any).priceB2C
+          : typeof jsonPriceForRole === 'number'
+          ? jsonPriceForRole
           : undefined,
+      jsonPriceForRole, // 👈 lo preservamos para el add-to-cart
       promoProductIdOverride: ov?.productId ?? effectiveProductId,
       effectiveId: ov?.productId ?? effectiveProductId,
     };
@@ -1061,7 +1079,8 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 onAddToCart={() =>
                   onAddToCart({
                     productId: productIdEffective as any,
-                    priceOverride: row.promoPriceOverride,
+                    // 👇 prioridad: overlay > json (la card ya hará fallback a BD para mostrar)
+                    priceOverride: row.promoPriceOverride ?? row.jsonPriceForRole,
                     nameOverride: row.promoNameOverride,
                   })
                 }
@@ -1100,7 +1119,8 @@ const CollectionSlot = React.memo(function CollectionSlot({
                   onAddToCart={() =>
                     onAddToCart({
                       productId: productIdEffective as any,
-                      priceOverride: row.promoPriceOverride,
+                      // 👇 prioridad: overlay > json
+                      priceOverride: row.promoPriceOverride ?? row.jsonPriceForRole,
                       nameOverride: row.promoNameOverride,
                     })
                   }
@@ -1230,7 +1250,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
 
   // Acciones
   const handlePlus = () => {
-    // Siempre enrutar por onAddToCart (helper unificado garantiza name/price)
+    // Siempre enrutar por onAddToCart (closure ya trae priceOverride/nameOverride)
     onAddToCart();
   };
 

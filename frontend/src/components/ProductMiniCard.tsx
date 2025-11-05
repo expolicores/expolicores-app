@@ -1,11 +1,11 @@
 // frontend/src/components/ProductMiniCard.tsx
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import formatCurrency from '../lib/formatCurrency';
 import { getProductById, type FeedItem, type PricingView } from '../lib/api';
 
-// Tokens locales (ligeros) para mantener estilo consistente
+// ---------- UI tokens (ligeros) ----------
 const spacing = { xs: 8, sm: 12 };
 const radius = { md: 12 };
 const colors = {
@@ -19,14 +19,20 @@ const colors = {
   info: '#0EA5E9',
 };
 
-// Alto fijo como en el Feed
+// Alto fijo igual que en Feed
 const CARD_H = 240;
 
-// Cache volátil de producto para completar name/price cuando el feed no lo trae
-const productCache = new Map<
-  string,
-  { name?: string; price?: number; b2bPrice?: number }
->();
+// ---------- Cache-busting de imágenes ----------
+const FEED_BUILD = process.env.EXPO_PUBLIC_FEED_BUILD || (Platform.OS === 'web' ? 'web' : 'dev');
+function withCacheBust(uri?: string, key?: string | number) {
+  if (!uri) return '';
+  const v = key ?? FEED_BUILD;
+  if (!v) return uri;
+  return `${uri}${uri.includes('?') ? '&' : '?'}v=${encodeURIComponent(String(v))}`;
+}
+
+// ---------- Cache volátil de producto para completar datos ----------
+const productCache = new Map<string, { name?: string; price?: number; b2bPrice?: number }>();
 
 type Props = {
   item: FeedItem;
@@ -50,12 +56,18 @@ type Props = {
   promoNameOverride?: string;
   promoPriceOverride?: number;
 
+  /** Cache-bust key para la imagen (p.ej. publishedAt o productId) */
+  cacheKey?: string | number;
+
   onPress?: () => void;
 
   /** Callbacks de carrito (desacoplados) */
-  onAdd?: () => void;      // +1
-  onMinus?: () => void;    // -1
-  onRemove?: () => void;   // quitar línea
+  /** +1 (acepta overrides opcionales; si el callback ignora args, no afecta) */
+  onAdd?: (opts?: { priceOverride?: number; nameOverride?: string }) => void;
+  /** -1 */
+  onMinus?: () => void;
+  /** quitar línea */
+  onRemove?: () => void;
 };
 
 function ProductMiniCardBase({
@@ -67,13 +79,13 @@ function ProductMiniCardBase({
   effectiveProductId,
   promoNameOverride,
   promoPriceOverride,
+  cacheKey,
   onPress,
   onAdd,
   onMinus,
   onRemove,
 }: Props) {
   if (!item?.image?.trim()) return null;
-  const img = item.image.trim();
 
   // Id efectivo del producto para completar datos si faltan
   const baseId = (item as any)?.id ?? (item as any)?.productId;
@@ -82,7 +94,7 @@ function ProductMiniCardBase({
       ? String(effectiveProductId ?? baseId)
       : undefined;
 
-  // Fallback de detalle si el feed no trae nombre/precio
+  // ---------- Lazy price desde BD si no hay overlay ni JSON ----------
   const [fallback, setFallback] = useState<{
     name?: string;
     price?: number;
@@ -99,8 +111,8 @@ function ProductMiniCardBase({
       return;
     }
 
-    const needsName =
-      !item.title && !item.subtitle && !promoNameOverride;
+    // Solo pedimos a la BD si realmente falta algo:
+    const needsName = !item.title && !item.subtitle && !promoNameOverride;
     const needsPrice =
       promoPriceOverride == null &&
       item.priceB2C == null &&
@@ -111,11 +123,7 @@ function ProductMiniCardBase({
     (async () => {
       try {
         const p = await getProductById(Number(pidStr));
-        const payload = {
-          name: p?.name,
-          price: p?.price,
-          b2bPrice: p?.b2bPrice,
-        };
+        const payload = { name: p?.name, price: p?.price, b2bPrice: p?.b2bPrice };
         productCache.set(pidStr, payload);
         if (mounted) setFallback(payload);
       } catch {
@@ -136,31 +144,28 @@ function ProductMiniCardBase({
     promoPriceOverride,
   ]);
 
-  // Precio activo (override > feed > fallback detalle)
+  // Precio activo (prioridad: override > feed/JSON según pricingView > BD fallback)
   const priceActive = useMemo(() => {
     if (typeof promoPriceOverride === 'number') return promoPriceOverride;
 
-    // del feed
-    if (typeof item.priceB2C === 'number') {
-      if (pricingView === 'B2C_ONLY') return item.priceB2C;
-      if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
-      if (pricingView === 'COMPARATIVE') return userRole === 'B2B'
+    // precios entregados por el feed/JSON
+    if (pricingView === 'B2B_DEFAULT') return item.priceB2B;
+    if (pricingView === 'B2C_ONLY') return item.priceB2C;
+    if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
+    if (pricingView === 'COMPARATIVE') {
+      return userRole === 'B2B'
         ? (item.priceB2B ?? item.priceB2C)
         : item.priceB2C;
     }
-    if (pricingView === 'B2B_DEFAULT') return item.priceB2B;
 
-    // fallback de detalle si el feed no lo trae
-    if (userRole === 'B2B' && typeof fallback?.b2bPrice === 'number') {
-      return fallback.b2bPrice;
-    }
-    if (typeof fallback?.price === 'number') {
-      return fallback.price;
-    }
+    // fallback desde BD si lo anterior no resolvió
+    if (userRole === 'B2B' && typeof fallback?.b2bPrice === 'number') return fallback.b2bPrice;
+    if (typeof fallback?.price === 'number') return fallback.price;
 
     return undefined;
   }, [pricingView, userRole, item.priceB2B, item.priceB2C, promoPriceOverride, fallback]);
 
+  // Precio de referencia secundario (cuando aplica)
   const secondaryLine = useMemo(() => {
     if (promoPriceOverride != null) return undefined;
     const refB2C = item.priceB2C ?? fallback?.price;
@@ -185,6 +190,16 @@ function ProductMiniCardBase({
   const titleToShow =
     promoNameOverride || item.title || item.subtitle || fallback?.name;
 
+  // ---------- Usar el precio resuelto también al AGREGAR ----------
+  // Si el callback de arriba (Feed) ya envía overrides, esto no molesta.
+  // Si NO los envía, aquí garantizamos mandar el unitPrice correcto.
+  const handleAdd = () => {
+    onAdd?.({
+      priceOverride: typeof priceActive === 'number' ? priceActive : undefined,
+      nameOverride: titleToShow,
+    });
+  };
+
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
       <View
@@ -201,13 +216,13 @@ function ProductMiniCardBase({
         pointerEvents="box-none"
       >
         <Image
-          source={{ uri: img }}
+          source={{ uri: withCacheBust(item.image.trim(), cacheKey ?? pidStr) }}
           style={{ width: '100%', height: 130, backgroundColor: colors.bgAlt }}
           contentFit="cover"
           transition={120}
           cachePolicy="memory-disk"
           onError={(e) => {
-            console.log('[image error][product]', pidStr, img, e?.nativeEvent);
+            console.log('[image error][product]', pidStr, item.image, e?.nativeEvent);
           }}
         />
 
@@ -307,7 +322,7 @@ function ProductMiniCardBase({
 
             {/* plus (+) */}
             <TouchableOpacity
-              onPress={onAdd}
+              onPress={handleAdd}
               activeOpacity={0.9}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={{
@@ -324,7 +339,7 @@ function ProductMiniCardBase({
           </View>
         ) : (
           <TouchableOpacity
-            onPress={onAdd}
+            onPress={handleAdd}
             activeOpacity={0.85}
             style={{
               position: 'absolute',
