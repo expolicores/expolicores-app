@@ -101,6 +101,29 @@ export class ProductsService {
     return rows.map((r) => r.category as string);
   }
 
+  async findPublicBasicsByIds(ids: number[]) {
+    if (!ids.length) return [];
+
+    const rows = await this.prisma.product.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        price: true,
+        b2bPrice: true,
+        stock: true,
+      },
+    });
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((row): row is (typeof rows)[number] => !!row)
+      .map((row) => ({
+        ...row,
+        b2bPrice: row.b2bPrice ?? row.price,
+      }));
+  }
+
   // ---------- Búsqueda + filtros + orden + paginación ----------
   private resolveOrderBy(sort: SortOption | undefined): Prisma.ProductOrderByWithRelationInput {
     switch (sort) {
