@@ -1,36 +1,46 @@
-# ===== Build =====
-FROM node:20-alpine AS build
+# ========== Builder ==========
+FROM node:20-alpine AS builder
 WORKDIR /app
 
-# 1) Dependencias
+# 1) Dependencias de dev (incluye nest cli)
 COPY package*.json ./
 RUN npm ci
 
-# 2) Copia SOLO el esquema primero y genera Prisma Client
+# 2) Prisma client (tipos) antes del build
 COPY prisma ./prisma
-# Prisma no necesita conectarse para generate, pero a veces exige la var.
+# Var dummy para permitir "prisma generate" sin DB real
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
 RUN npx prisma generate
 
-# 3) Copia el resto del código y compila a /app/dist
+# 3) Código y build
 COPY . .
-RUN npm run build   # ← ahora sí compila porque @prisma/client ya existe con tipos
+# Compila a /app/dist
+RUN npm run build
 
-# ===== Runtime =====
-FROM node:20-alpine AS prod
+# 4) Sanity check: debe existir dist/main.js
+RUN test -f dist/main.js || (echo "❌ dist/main.js NO existe" && ls -la && ls -la dist || true && exit 1)
+
+# ========== Runtime ==========
+FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=3000
 
-# Solo deps de producción
+# Copiamos solo lo necesario
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Artefactos compilados y prisma (por si usas migraciones en runtime)
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
+# Artefactos del build
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+
+# Prisma runtime (cliente ya viene en node_modules)
+# Si por alguna razón faltara .prisma, descomenta las 2 líneas siguientes:
+# COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+# COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Sanity check: dist/main.js existe en runtime
+RUN test -f dist/main.js || (echo "❌ dist/main.js NO está en runtime" && ls -la && ls -la dist || true && exit 1)
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
