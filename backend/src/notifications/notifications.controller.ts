@@ -11,14 +11,14 @@ import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { NotificationsService } from './notifications.service';
 
-// ✅ Auth (paths según tu repo)
+// Auth
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
-// ✅ Prisma
+// Prisma
 import { PrismaService } from '../prisma/prisma.service';
 
-// ✅ Expo Push
+// Expo Push
 import { Expo, ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 
 type ReqWithRaw = Request & { rawBody?: string | Buffer };
@@ -94,10 +94,18 @@ export class NotificationsController {
    */
   @Post('push/test')
   @UseGuards(JwtAuthGuard)
-  async pushTest(@CurrentUser() me: { id: string }) {
+  async pushTest(@CurrentUser() me: any) {
+    // ⚠️ Aseguramos que userId sea number (Prisma espera Int)
+    const userId: number =
+      typeof me?.id === 'string' ? parseInt(me.id, 10) : (me?.id as number);
+
+    if (!Number.isFinite(userId)) {
+      throw new BadRequestException('Usuario inválido para push test');
+    }
+
     // 1) Traer tokens del usuario
     const tokens = await this.prisma.userPushToken.findMany({
-      where: { userId: me.id },
+      where: { userId }, // <-- ahora es number
       select: { token: true },
     });
 
@@ -136,20 +144,14 @@ export class NotificationsController {
           } else {
             invalid++;
             const details = (ticket as any)?.details;
-            const error = (ticket as any)?.message || 'unknown';
-
             // Limpieza conservadora de tokens zombis
             if (details?.error === 'DeviceNotRegistered' && to) {
               await this.prisma.userPushToken.deleteMany({ where: { token: to } });
             }
-
-            // Log opcional
-            // console.warn('Expo ticket error', { error, details, to });
           }
         }
-      } catch (err) {
-        // Log opcional
-        // console.error('Expo send error', err);
+      } catch {
+        // noop (evitamos romper QA por error puntual de red)
       }
     }
 
