@@ -310,6 +310,41 @@ export async function fetchProductByCodeOrId(productId: string | number, opts: R
   return getProductById(num, opts);
 }
 
+export type ProductPricePatch = {
+  price?: number;
+  b2bPrice?: number;
+};
+
+export async function fetchAdminProducts(opts: RequestOpts = {}): Promise<AdminProduct[]> {
+  const resp = await api.get<AdminProduct[]>('/products/admin', {
+    signal: opts.signal,
+    headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache', Expires: '0' },
+  });
+  const rows = Array.isArray(resp.data) ? resp.data : [];
+  return rows.map((item) => ({
+    ...item,
+    b2bPrice: item.b2bPrice ?? item.price,
+  }));
+}
+
+export async function updateProductPricing(
+  productId: number,
+  payload: ProductPricePatch,
+): Promise<AdminProduct> {
+  if (!Number.isFinite(productId) || productId <= 0) {
+    throw new Error('productId inválido');
+  }
+
+  const { data } = await api.patch<AdminProduct>(`/products/${productId}`, payload, {
+    headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache', Expires: '0' },
+  });
+
+  return {
+    ...data,
+    b2bPrice: data.b2bPrice ?? data.price,
+  };
+}
+
 /* ================= Favorites ================= */
 
 export async function fetchFavorites(opts: RequestOpts = {}): Promise<Product[]> {

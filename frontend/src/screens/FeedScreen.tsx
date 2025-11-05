@@ -170,6 +170,14 @@ function useTapOnce(cb: () => void, ms = 500) {
 // ---------- Cache volátil de detalle de productos ----------
 const productCache = new Map<string, { name?: string; price?: number; b2bPrice?: number }>();
 
+// ---------- Overrides para ProductDetail ----------
+type ProductOverrides = {
+  name?: string;
+  description?: string;
+  price?: number;
+  imageUrl?: string;
+};
+
 // ======================================================================
 // FEED SCREEN
 // ======================================================================
@@ -378,7 +386,7 @@ export default function FeedScreen() {
     [navigation, canSeeBodegaVirtual],
   );
 
-  // Deeplinks internos — todo a Catalog
+  // Deeplinks internos — todo a Catalog/ProductDetail
   const handleDeeplink = useCallback(
     (url?: string) => {
       if (!url) return;
@@ -487,7 +495,14 @@ export default function FeedScreen() {
             userRole={slotUserRole}
             overlay={overlay}
             onDeeplink={handleDeeplink}
-            onItemPress={(p) => navigation.navigate('PromoDetail', { promoItem: p })}
+            // 👇 Navegar a ProductDetail con overrides calculados desde el slot
+            onItemPress={(p) =>
+              navigation.navigate('ProductDetail', {
+                productId: String(p.productId),
+                overrides: p.overrides, // { name?, description?, price?, imageUrl? }
+                from: 'feed',
+              })
+            }
             onAddToCart={(p) => addFromFeed(p as any)}
           />
         )}
@@ -723,6 +738,7 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
 // Slot renderer
 // ======================================================================
 type AddToCartPayload = { productId?: string; priceOverride?: number; nameOverride?: string };
+type ItemPressPayload = { productId: string | number; overrides?: ProductOverrides };
 
 const SlotRenderer = React.memo(function SlotRenderer({
   slot,
@@ -736,7 +752,7 @@ const SlotRenderer = React.memo(function SlotRenderer({
   userRole: 'B2B' | 'B2C';
   overlay: OverlayItem[];
   onDeeplink: (url?: string) => void;
-  onItemPress: (p: FeedItem) => void;
+  onItemPress: (p: ItemPressPayload) => void;
   onAddToCart: (p: AddToCartPayload) => void;
 }) {
   switch (slot.type) {
@@ -884,7 +900,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
   slot: FeedSlot;
   userRole: 'B2B' | 'B2C';
   overlay: OverlayItem[];
-  onItemPress: (p: FeedItem) => void;
+  onItemPress: (p: ItemPressPayload) => void;
   onAddToCart: (p: AddToCartPayload) => void;
   onDeeplink: (url?: string) => void;
 }) {
@@ -934,7 +950,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
     );
   }
 
-  // ------------------- Fuente overlay para promos + fallback a JSON -------------------
+  // ------------------- Fuente overlay para promos (ACTIVAS) con visual 100% del JSON -------------------
   const useOverlaySource =
     (slot as any).source === 'overlay' ||
     (((slot.id || '') as string).toLowerCase().startsWith('promos_') &&
@@ -943,38 +959,49 @@ const CollectionSlot = React.memo(function CollectionSlot({
   let itemsRaw: Array<any> = [];
 
   if (useOverlaySource) {
-    // Mapa de imagen de respaldo por id/productId desde el JSON del slot
-    const fallbackImageById = new Map<string, string>();
+    // Index de items del JSON por id/productId para tomar textos/imagen/precio visuales
+    const jsonById = new Map<string, any>();
     for (const it of slot.items ?? []) {
-      const id = String(((it as any).id ?? (it as any).productId) ?? '').trim();
-      if (id && it.image) fallbackImageById.set(id, it.image);
+      const key = String(((it as any).id ?? (it as any).productId) ?? '').trim();
+      if (key) jsonById.set(key, it);
     }
 
+    // Solo overlay activos; visual desde JSON cuando exista matching
     const built = (overlay || [])
       .map((ov) => {
         const pid = (ov?.productId ?? '').trim();
         if (!pid) return null;
+        const conf = jsonById.get(pid);
 
-        const img =
-          ov.imageUrl ||
-          fallbackImageById.get(pid) ||
-          '';
+        // Si hay matching en JSON, tomamos TODO lo visual del JSON
+        if (conf) {
+          const item: FeedItem = {
+            id: pid,
+            productId: pid,
+            image: withCacheBust(conf.image, ov.publishedAt ?? pid),
+            title: (conf as any).title,
+            priceB2C: (conf as any).priceB2C,
+            priceB2B: (conf as any).priceB2B,
+            subtitle: (conf as any).subtitle,
+            description: (conf as any).description,
+          };
+          return item;
+        }
 
-        if (!img) return null;
-
-        const item: FeedItem = {
+        // Si no hay matching, como último recurso mostramos overlay (para no perder promos activas)
+        const fallbackItem: FeedItem = {
           id: pid,
           productId: pid,
-          image: withCacheBust(img, ov.publishedAt ?? pid),
+          image: withCacheBust(ov.imageUrl ?? '', ov.publishedAt ?? pid),
           title: ov.name,
           priceB2C: ov.price,
         };
-        return item;
+        return fallbackItem;
       })
       .filter(Boolean) as FeedItem[];
 
-    // Fallback si no hay overlay activo
-    itemsRaw = built.length > 0 ? built : (slot.items ?? []);
+    // Para source=overlay NO hacemos fallback al JSON si no hay overlay: la sección queda vacía (solo activas)
+    itemsRaw = built;
   } else {
     // Colecciones de productos del feed (respetamos lo que venga del JSON)
     itemsRaw = (slot.items ?? []);
@@ -983,15 +1010,11 @@ const CollectionSlot = React.memo(function CollectionSlot({
   // Filtramos los que no tengan image (el card no renderiza sin image)
   const itemsFiltered = itemsRaw.filter((it) => !!it.image && !!it.image.trim());
 
-  // ---------- Precio desde JSON por rol/pricingView + overlay como prioridad ----------
+  // ---------- Precio/NOMBRE desde JSON, overlay SOLO si falta algo (lógica de carrito y fallback de price) ----------
   const itemsWithOverrides = itemsFiltered.map((it) => {
     const ov = useOverlaySource
-      ? undefined
-      : findOverlayForItem(overlay, {
-          image: it.image,
-          productId: (it as any).productId,
-          id: (it as any).id,
-        });
+      ? findOverlayForItem(overlay, { image: it.image, productId: (it as any).productId, id: (it as any).id })
+      : findOverlayForItem(overlay, { image: it.image, productId: (it as any).productId, id: (it as any).id });
 
     const effectiveProductId =
       (it as any).id != null
@@ -1015,19 +1038,22 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 : (it as any).priceB2C))
         : undefined;
 
+    // NOMBRE SIEMPRE desde JSON cuando exista
+    const nameFromJson = (it as any).title as string | undefined;
+
     return {
       item: { ...it, productId: effectiveProductId },
       overlay: ov,
-      // Nombre: overlay > (si venía un título en overlaySource) > nada
-      promoNameOverride: ov?.name ?? (useOverlaySource ? (it as any).title : undefined),
-      // Precio: overlay > JSON por rol/pricingView
+      // Visual SIEMPRE prioriza JSON
+      promoNameOverride: nameFromJson ?? undefined,
+      // Precio: JSON primero; si falta, usamos overlay.price como fallback
       promoPriceOverride:
-        typeof ov?.price === 'number'
-          ? ov.price
-          : typeof jsonPriceForRole === 'number'
+        typeof jsonPriceForRole === 'number'
           ? jsonPriceForRole
+          : typeof ov?.price === 'number'
+          ? ov.price
           : undefined,
-      jsonPriceForRole, // 👈 lo preservamos para el add-to-cart
+      jsonPriceForRole, // para add-to-cart y overrides
       promoProductIdOverride: ov?.productId ?? effectiveProductId,
       effectiveId: ov?.productId ?? effectiveProductId,
     };
@@ -1050,7 +1076,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
 
       {isCarousel ? (
         <FlashList
-          key={`col-${slot.id}-h`} // fuerza remount si cambia a grid
+          key={`col-${slot.id}-h`}
           horizontal
           showsHorizontalScrollIndicator={false}
           data={itemsWithOverrides}
@@ -1065,6 +1091,15 @@ const CollectionSlot = React.memo(function CollectionSlot({
             const productIdEffective =
               row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
             const itemForCard: FeedItem = { ...row.item, productId: productIdEffective as any };
+
+            // Overrides para ProductDetail (100% desde JSON cuando haya)
+            const overrides: ProductOverrides = {
+              name: (row.item as any).title ?? row.promoNameOverride,
+              description: (row.item as any).description,
+              price: row.promoPriceOverride ?? row.jsonPriceForRole,
+              imageUrl: (row.item as any).image,
+            };
+
             return (
               <ProductMiniCard
                 item={itemForCard}
@@ -1072,16 +1107,21 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 pricingView={slot.pricingView}
                 userRole={userRole}
                 width={CARD_W}
-                promoNameOverride={row.promoNameOverride}
+                promoNameOverride={row.promoNameOverride ?? (row.item as any).title}
                 promoPriceOverride={row.promoPriceOverride}
                 effectiveProductId={productIdEffective as any}
-                onPress={() => onItemPress(row.item)}
+                onPress={() =>
+                  onItemPress({
+                    productId: productIdEffective as any,
+                    overrides,
+                  })
+                }
                 onAddToCart={() =>
                   onAddToCart({
                     productId: productIdEffective as any,
-                    // 👇 prioridad: overlay > json (la card ya hará fallback a BD para mostrar)
+                    // prioridad visual JSON; si no existe, overlay; BD queda solo para lógica
                     priceOverride: row.promoPriceOverride ?? row.jsonPriceForRole,
-                    nameOverride: row.promoNameOverride,
+                    nameOverride: row.promoNameOverride ?? (row.item as any).title,
                   })
                 }
               />
@@ -1090,7 +1130,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
         />
       ) : (
         <FlashList
-          key={`col-${slot.id}-v`} // fuerza remount si cambia a carousel
+          key={`col-${slot.id}-v`}
           data={itemsWithOverrides}
           numColumns={COLS}
           // @ts-ignore typings viejos
@@ -1104,6 +1144,15 @@ const CollectionSlot = React.memo(function CollectionSlot({
             const productIdEffective =
               row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
             const itemForCard: FeedItem = { ...row.item, productId: productIdEffective as any };
+
+            // Overrides para ProductDetail
+            const overrides: ProductOverrides = {
+              name: (row.item as any).title ?? row.promoNameOverride,
+              description: (row.item as any).description,
+              price: row.promoPriceOverride ?? row.jsonPriceForRole,
+              imageUrl: (row.item as any).image,
+            };
+
             return (
               <View style={{ width: CARD_W, marginRight: index % COLS === 0 ? COL_GAP : 0 }}>
                 <ProductMiniCard
@@ -1112,16 +1161,20 @@ const CollectionSlot = React.memo(function CollectionSlot({
                   pricingView={slot.pricingView}
                   userRole={userRole}
                   width={CARD_W}
-                  promoNameOverride={row.promoNameOverride}
+                  promoNameOverride={row.promoNameOverride ?? (row.item as any).title}
                   promoPriceOverride={row.promoPriceOverride}
                   effectiveProductId={productIdEffective as any}
-                  onPress={() => onItemPress(row.item)}
+                  onPress={() =>
+                    onItemPress({
+                      productId: productIdEffective as any,
+                      overrides,
+                    })
+                  }
                   onAddToCart={() =>
                     onAddToCart({
                       productId: productIdEffective as any,
-                      // 👇 prioridad: overlay > json
                       priceOverride: row.promoPriceOverride ?? row.jsonPriceForRole,
-                      nameOverride: row.promoNameOverride,
+                      nameOverride: row.promoNameOverride ?? (row.item as any).title,
                     })
                   }
                 />

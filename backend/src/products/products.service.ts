@@ -35,6 +35,40 @@ export class ProductsService {
     return this.prisma.product.delete({ where: { id } });
   }
 
+  async getPriceList(audience: 'B2C' | 'B2B') {
+    const orderBy: Prisma.ProductOrderByWithRelationInput =
+      audience === 'B2B' ? { updatedAt: 'desc' } : { name: 'asc' };
+
+    const select = {
+      id: true,
+      name: true,
+      price: true,
+      b2bPrice: true,
+      imageUrl: true,
+      category: true,
+      stock: true,
+      description: true,
+      createdAt: true,
+      updatedAt: true,
+    } satisfies Prisma.ProductSelect;
+
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.product.count(),
+      this.prisma.product.findMany({
+        select,
+        orderBy,
+      }),
+    ]);
+
+    return {
+      total,
+      items: items.map((item) => ({
+        ...item,
+        b2bPrice: item.b2bPrice ?? item.price,
+      })),
+    };
+  }
+
   // ---------- Catálogo publico ----------
   async listPublic() {
     const items = await this.prisma.product.findMany({

@@ -1,5 +1,5 @@
 // src/screens/ProductDetailScreen.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -34,6 +34,13 @@ type ProductDetail = {
   isFavorite?: boolean;
 };
 
+type RouteOverrides = {
+  name?: string;
+  description?: string;
+  price?: number;
+  imageUrl?: string;
+} | undefined;
+
 async function fetchProduct(id: number, signal?: AbortSignal): Promise<ProductDetail> {
   const res = await api.get(`/products/${id}`, { signal });
   return res.data;
@@ -42,11 +49,16 @@ async function fetchProduct(id: number, signal?: AbortSignal): Promise<ProductDe
 export default function ProductDetailScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
-  const id = Number(route.params?.id);
+
+  // Acepta `productId` (desde Feed) o `id` (otras rutas)
+  const routeId = route.params?.productId ?? route.params?.id;
+  const id = Number(routeId);
+  const overrides: RouteOverrides = route.params?.overrides;
 
   const { data, isLoading, isRefetching, isError, error, refetch } = useQuery({
     queryKey: ["product", id],
     queryFn: ({ signal }) => fetchProduct(id, signal),
+    enabled: Number.isFinite(id),
     networkMode: "offlineFirst",
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
@@ -63,12 +75,35 @@ export default function ProductDetailScreen() {
   const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
   const [qty, setQty] = useState(1);
 
+  const isB2B = user?.role === "BUSINESS" || user?.role === "B2B" || user?.role === "ADMIN";
+
+  // Datos finales para UI (API → override por nombre/desc/imagen; precio: override solo para mostrar)
+  const product = data as ProductDetail | undefined;
+
+  const unitPriceFromAPI = useMemo(() => {
+    if (!product) return undefined;
+    return isB2B ? (typeof product.b2bPrice === "number" ? product.b2bPrice : product.price) : product.price;
+  }, [product, isB2B]);
+
+  const display = {
+    name: overrides?.name ?? product?.name ?? "",
+    description: overrides?.description ?? product?.description ?? "",
+    // Sólo para UI: permite que una promo fuerce el precio mostrado sin tocar el precio que va al carrito
+    price: typeof overrides?.price === "number" ? overrides.price : unitPriceFromAPI,
+    imageUrl: resolveProductImageUri(overrides?.imageUrl ?? product?.imageUrl ?? null),
+    category: product?.category ?? null,
+    stock: product?.stock ?? 0,
+    refPrice: product?.price, // referencia público
+    id: product?.id ?? id,
+  };
+
+  // Header
   useEffect(() => {
-    if (data?.name) navigation.setOptions({ title: "Detalle" });
-  }, [data, navigation]);
+    if (display.name) navigation.setOptions({ title: "Detalle" });
+  }, [display.name, navigation]);
 
   // Loading skeleton
-  if (isLoading) {
+  if (isLoading && !product) {
     return (
       <View style={{ padding: 16 }}>
         <View style={{ width: "100%", height: 220, borderRadius: 16, backgroundColor: "#e5e7eb" }} />
@@ -82,72 +117,87 @@ export default function ProductDetailScreen() {
     );
   }
 
-  // Error / 404
-  if (isError) {
+  // Error / 404 (si hay overrides al menos mostramos una vista mínima sin poder agregar)
+  if (isError && !product) {
     const status = (error as any)?.response?.status;
-    const msg = status === 404 ? "Este producto ya no esta disponible." : "No pudimos cargar el producto.";
-    return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <Text style={{ color: status === 404 ? "#6b7280" : "#c1121f", marginBottom: 12 }}>{msg}</Text>
-        <ActivityIndicator />
-      </View>
-    );
+    const hasFallback = !!overrides;
+    if (!hasFallback) {
+      const msg = status === 404 ? "Este producto ya no está disponible." : "No pudimos cargar el producto.";
+      return (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <Text style={{ color: status === 404 ? "#6b7280" : "#c1121f", marginBottom: 12 }}>{msg}</Text>
+          <ActivityIndicator />
+        </View>
+      );
+    }
   }
 
-  // UI principal
-  const p = data!;
-  const isB2B =
-    user?.role === "BUSINESS" || user?.role === "B2B" || user?.role === "ADMIN";
-  const unitPrice = isB2B ? (typeof p.b2bPrice === "number" ? p.b2bPrice : p.price) : p.price;
-  const formattedPrice = formatCurrency(unitPrice);
-  const referencePrice = formatCurrency(p.price);
-  const isFavorite = favoriteIds.has(p.id) || p.isFavorite === true;
+  // Si no hubo error crítico, seguimos con la UI principal
+  const p = product;
+  const formattedPrice = typeof display.price === "number" ? formatCurrency(display.price) : "—";
+  const referencePrice = typeof display.refPrice === "number" ? formatCurrency(display.refPrice) : undefined;
 
-  // ← ya NO usamos useMemo (evita romper el orden de hooks)
+  const isFavorite = (p && favoriteIds.has(p.id)) || p?.isFavorite === true;
+
   const productForToggle: Product = {
-    ...p,
-    price: unitPrice,
+    ...(p as any),
+    id: display.id,
+    name: display.name,
+    price: typeof display.price === "number" ? display.price : display.refPrice ?? 0,
     isFavorite: true,
+    imageUrl: display.imageUrl,
   };
 
-  const stockTotal = p.stock ?? 0;
+  const stockTotal = display.stock || 0;
 
   // Cantidad ya reservada en el carrito
-  const inCartQty = items.find((i) => i.productId === p.id)?.qty ?? 0;
+  const inCartQty = items.find((i) => i.productId === display.id)?.qty ?? 0;
 
   // Disponible (UI)
   const remaining = Math.max(0, stockTotal - inCartQty);
   const remainingAfterSelection = Math.max(0, remaining - qty);
-  const productImageUri = resolveProductImageUri(p.imageUrl);
 
   const clampQty = (q: number) => {
     if (remaining <= 0) return 1;
     return Math.min(Math.max(1, q), remaining);
-    // Nota: adicionalmente hacemos clamp en handleAddToCart por si cambia el stock
   };
 
   const handleToggleFavorite = () => {
     if (!isAuthenticated) {
-      navigation.navigate("Login", { message: "Inicia sesion para guardar favoritos" });
+      navigation.navigate("Login", { message: "Inicia sesión para guardar favoritos" });
       return;
     }
     toggleFavorite(productForToggle);
   };
 
   const handleAddToCart = () => {
+    if (!p) {
+      Alert.alert("No disponible", "Aún no pudimos cargar el producto desde el servidor.");
+      return;
+    }
     if (remaining <= 0) {
-      Alert.alert("Sin stock", "No hay mas unidades disponibles para agregar.");
+      Alert.alert("Sin stock", "No hay más unidades disponibles para agregar.");
       return;
     }
     const finalQty = clampQty(qty);
+
+    // Para el carrito usamos SIEMPRE el precio del backend si existe (evita inconsistencias),
+    // y si por alguna razón no está, caemos al precio mostrado (override) como último recurso.
+    const priceForCart =
+      typeof unitPriceFromAPI === "number"
+        ? unitPriceFromAPI
+        : typeof display.price === "number"
+        ? display.price
+        : p.price;
+
     add(
       {
         productId: p.id,
-        name: p.name,
-        price: unitPrice,
-        imageUrl: productImageUri,
+        name: display.name || p.name,
+        price: priceForCart,
+        imageUrl: display.imageUrl,
         stock: stockTotal || 99,
-        category: p.category ?? null,
+        category: display.category ?? null,
       },
       finalQty,
     );
@@ -156,7 +206,7 @@ export default function ProductDetailScreen() {
 
     Alert.alert(
       "Agregado al carrito",
-      `${finalQty} x ${p.name}`,
+      `${finalQty} x ${display.name || p.name}`,
       [
         { text: "Seguir comprando", style: "cancel" },
         { text: "Ir al carrito", onPress: () => navigation.navigate("Cart") },
@@ -164,6 +214,8 @@ export default function ProductDetailScreen() {
       { cancelable: true },
     );
   };
+
+  const canAdd = !!p && remaining > 0;
 
   return (
     <ScrollView
@@ -185,7 +237,7 @@ export default function ProductDetailScreen() {
       >
         {/* Imagen */}
         <Image
-          source={{ uri: productImageUri }}
+          source={{ uri: display.imageUrl }}
           style={{ width: "100%", aspectRatio: 16 / 9 }}
           resizeMode="cover"
         />
@@ -194,7 +246,7 @@ export default function ProductDetailScreen() {
         <View style={{ padding: 16 }}>
           <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
             <Text style={{ fontSize: 20, fontWeight: "700", flex: 1, marginBottom: 4 }} numberOfLines={2}>
-              {p.name}
+              {display.name || "Producto"}
             </Text>
             <Pressable
               onPress={handleToggleFavorite}
@@ -208,35 +260,46 @@ export default function ProductDetailScreen() {
             </Pressable>
           </View>
 
-          <Text style={{ fontSize: 18, color: "#111827", marginBottom: isB2B ? 4 : 12 }}>{formattedPrice}</Text>
-          {isB2B ? (
-            <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>Precio cliente: {referencePrice}</Text>
+          <Text style={{ fontSize: 18, color: "#111827", marginBottom: isB2B ? 4 : 12 }}>
+            {formattedPrice}
+          </Text>
+          {isB2B && referencePrice ? (
+            <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
+              Precio cliente: {referencePrice}
+            </Text>
           ) : null}
-          {p.category ? <Text style={{ color: "#6b7280", marginBottom: 6 }}>Categoria: {p.category}</Text> : null}
+          {display.category ? (
+            <Text style={{ color: "#6b7280", marginBottom: 6 }}>Categoría: {display.category}</Text>
+          ) : null}
 
-          <Text style={{ color: "#374151", lineHeight: 20 }}>{p.description || "Sin descripcion."}</Text>
+          <Text style={{ color: "#374151", lineHeight: 20 }}>
+            {display.description || "Sin descripción."}
+          </Text>
 
           {/* Estado de stock con desglose */}
-          <View style={{ marginTop: 12 }}>
-            <Text style={{ color: remaining > 0 ? "#059669" : "#dc2626", fontWeight: "600" }}>
-              {remaining > 0
-                ? `Stock disponible ahora: ${remaining} unidad${remaining === 1 ? "" : "es"}`
-                : `Sin stock disponible`}
-            </Text>
-            {inCartQty > 0 && (
-              <Text style={{ color: "#6b7280", marginTop: 2 }}>
-                En tu carrito: {inCartQty} unidad{inCartQty === 1 ? "" : "es"}
+          {typeof stockTotal === "number" ? (
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ color: remaining > 0 ? "#059669" : "#dc2626", fontWeight: "600" }}>
+                {remaining > 0
+                  ? `Stock disponible ahora: ${remaining} unidad${remaining === 1 ? "" : "es"}`
+                  : `Sin stock disponible`}
               </Text>
-            )}
-            {remaining > 0 && qty > 0 && (
-              <Text style={{ color: "#6b7280", marginTop: 2 }}>
-                Si agregas {qty}, quedarian {remainingAfterSelection} unidad{remainingAfterSelection === 1 ? "" : "es"}.
-              </Text>
-            )}
-          </View>
+              {inCartQty > 0 && (
+                <Text style={{ color: "#6b7280", marginTop: 2 }}>
+                  En tu carrito: {inCartQty} unidad{inCartQty === 1 ? "" : "es"}
+                </Text>
+              )}
+              {remaining > 0 && qty > 0 && (
+                <Text style={{ color: "#6b7280", marginTop: 2 }}>
+                  Si agregas {qty}, quedarían {remainingAfterSelection} unidad
+                  {remainingAfterSelection === 1 ? "" : "es"}.
+                </Text>
+              )}
+            </View>
+          ) : null}
 
           {/* Selector de cantidad */}
-          {remaining > 0 && (
+          {canAdd && (
             <View style={{ marginTop: 16, flexDirection: "row", alignItems: "center" }}>
               <TouchableOpacity
                 onPress={() => setQty((q) => clampQty(q - 1))}
@@ -275,18 +338,18 @@ export default function ProductDetailScreen() {
           {/* Botón Agregar al carrito */}
           <TouchableOpacity
             onPress={handleAddToCart}
-            disabled={remaining <= 0}
+            disabled={!canAdd}
             style={{
               marginTop: 16,
-              backgroundColor: remaining > 0 ? "#059669" : "#9ca3af",
+              backgroundColor: canAdd ? "#059669" : "#9ca3af",
               paddingVertical: 14,
               borderRadius: 14,
             }}
             accessibilityRole="button"
-            accessibilityLabel={`Agregar ${p.name} al carrito`}
+            accessibilityLabel={`Agregar ${display.name || "producto"} al carrito`}
           >
             <Text style={{ color: "white", textAlign: "center", fontWeight: "600" }}>
-              {remaining > 0 ? "Agregar al carrito" : "Sin stock"}
+              {canAdd ? "Agregar al carrito" : "Sin stock"}
             </Text>
           </TouchableOpacity>
         </View>

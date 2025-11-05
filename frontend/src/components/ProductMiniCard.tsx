@@ -5,7 +5,7 @@ import { Image } from 'expo-image';
 import formatCurrency from '../lib/formatCurrency';
 import { getProductById, type FeedItem, type PricingView } from '../lib/api';
 
-// ---------- UI tokens (ligeros) ----------
+// ---------- UI tokens ----------
 const spacing = { xs: 8, sm: 12 };
 const radius = { md: 12 };
 const colors = {
@@ -23,7 +23,9 @@ const colors = {
 const CARD_H = 240;
 
 // ---------- Cache-busting de imágenes ----------
-const FEED_BUILD = process.env.EXPO_PUBLIC_FEED_BUILD || (Platform.OS === 'web' ? 'web' : 'dev');
+const FEED_BUILD =
+  process.env.EXPO_PUBLIC_FEED_BUILD || (Platform.OS === 'web' ? 'web' : 'dev');
+
 function withCacheBust(uri?: string, key?: string | number) {
   if (!uri) return '';
   const v = key ?? FEED_BUILD;
@@ -32,7 +34,10 @@ function withCacheBust(uri?: string, key?: string | number) {
 }
 
 // ---------- Cache volátil de producto para completar datos ----------
-const productCache = new Map<string, { name?: string; price?: number; b2bPrice?: number }>();
+const productCache = new Map<
+  string,
+  { name?: string; price?: number; b2bPrice?: number }
+>();
 
 type Props = {
   item: FeedItem;
@@ -52,7 +57,7 @@ type Props = {
   /** Id efectivo si difiere de item.id/productId (por ejemplo por overlay) */
   effectiveProductId?: string;
 
-  /** Overrides desde overlay/promo */
+  /** Overrides desde overlay/promo o desde JSON */
   promoNameOverride?: string;
   promoPriceOverride?: number;
 
@@ -94,7 +99,7 @@ function ProductMiniCardBase({
       ? String(effectiveProductId ?? baseId)
       : undefined;
 
-  // ---------- Lazy price desde BD si no hay overlay ni JSON ----------
+  // ---------- Lazy price/name desde BD solo si FALTAN en JSON/overlays ----------
   const [fallback, setFallback] = useState<{
     name?: string;
     price?: number;
@@ -154,12 +159,13 @@ function ProductMiniCardBase({
     if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
     if (pricingView === 'COMPARATIVE') {
       return userRole === 'B2B'
-        ? (item.priceB2B ?? item.priceB2C)
+        ? item.priceB2B ?? item.priceB2C
         : item.priceB2C;
     }
 
     // fallback desde BD si lo anterior no resolvió
-    if (userRole === 'B2B' && typeof fallback?.b2bPrice === 'number') return fallback.b2bPrice;
+    if (userRole === 'B2B' && typeof fallback?.b2bPrice === 'number')
+      return fallback.b2bPrice;
     if (typeof fallback?.price === 'number') return fallback.price;
 
     return undefined;
@@ -190,9 +196,7 @@ function ProductMiniCardBase({
   const titleToShow =
     promoNameOverride || item.title || item.subtitle || fallback?.name;
 
-  // ---------- Usar el precio resuelto también al AGREGAR ----------
-  // Si el callback de arriba (Feed) ya envía overrides, esto no molesta.
-  // Si NO los envía, aquí garantizamos mandar el unitPrice correcto.
+  // Usar el precio resuelto también al AGREGAR
   const handleAdd = () => {
     onAdd?.({
       priceOverride: typeof priceActive === 'number' ? priceActive : undefined,
