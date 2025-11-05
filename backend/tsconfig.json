@@ -15,21 +15,15 @@
     "allowSyntheticDefaultImports": true,
 
     "strict": true,
-    "strictPropertyInitialization": false,   // 👈 agrega esto
+    "strictPropertyInitialization": false,
     "skipLibCheck": true,
     "noImplicitAny": false,
+
     "types": ["node"],
-    "sourceMap": false,
+    "sourceMap": true,
     "incremental": true,
-    "baseUrl": ".",
-
-    "compilerOptions": {
-    "resolveJsonModule": true,
-    "esModuleInterop": true
-  }
-
+    "baseUrl": "."
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.e2e-spec.ts"]
 }
-
