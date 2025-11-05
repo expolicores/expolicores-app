@@ -338,20 +338,19 @@ export class OrdersService {
     return `+57${digits}`;
   }
 
-  // Mensajes para estados
+  // Mensajes para estados soportados por tu enum actual
   private messageForStatus(
     status: OrderStatus,
     orderId: number,
   ): { title: string; body: string } | null {
     switch (status) {
-      case 'CONFIRMADO':
-        return { title: 'Pedido confirmado', body: `#${orderId} está en preparación.` };
       case 'EN_CAMINO':
         return { title: 'En camino', body: `#${orderId} ya va en camino.` };
       case 'ENTREGADO':
         return { title: 'Entregado', body: `#${orderId} ha sido entregado. ¡Gracias!` };
       case 'CANCELADO':
         return { title: 'Pedido cancelado', body: `#${orderId} fue cancelado.` };
+      // Si luego agregas otros estados que quieras notificar, añádelos aquí.
       default:
         return null;
     }
