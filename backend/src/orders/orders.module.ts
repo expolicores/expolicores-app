@@ -1,13 +1,13 @@
-// src/orders/orders.module.ts
+// backend/src/orders/orders.module.ts
 import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { OrderNotificationsController } from './notifications.controller';
 
 import { PrismaModule } from '../prisma/prisma.module';
 import { WhatsAppModule } from '../notifications/whatsapp.module';
-import { OrderNotificationsController } from './notifications.controller';
+import { NotificationsModule } from '../notifications/notifications.module'; // ← exporta PushService
 
-// 👇 agrega ConfigModule.forFeature(shippingConfig)
 import { ConfigModule } from '@nestjs/config';
 import shippingConfig from '../config/shipping';
 
@@ -15,7 +15,8 @@ import shippingConfig from '../config/shipping';
   imports: [
     PrismaModule,
     WhatsAppModule,
-    ConfigModule.forFeature(shippingConfig), // <- hace visible CONFIGURATION(shipping)
+    NotificationsModule,                 // ← habilita inyección de PushService en OrdersService
+    ConfigModule.forFeature(shippingConfig),
   ],
   controllers: [OrdersController, OrderNotificationsController],
   providers: [OrdersService],

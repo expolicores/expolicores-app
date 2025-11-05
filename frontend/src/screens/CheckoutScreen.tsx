@@ -22,6 +22,10 @@ import { useAuth } from '../context/AuthContext';
 import { useSelectedAddress } from '../hooks/useSelectedAddress';
 import type { Address } from '../types/address';
 
+// ⬇️ NUEVO: helpers de notificaciones (local) y permiso
+import { presentLocalNotification } from '../lib/notifications';
+import { useNotifications } from '../context/NotificationsContext';
+
 export default function CheckoutScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
@@ -29,6 +33,9 @@ export default function CheckoutScreen() {
   const isB2BPriceUser = role === 'ADMIN' || role === 'B2B';
 
   const { items: cartItems, clear, remove } = useCart();
+
+  // Notifs (permiso best-effort para locales)
+  const { status: notifStatus, ensurePermission } = useNotifications();
 
   // === precios consistentes según rol ===
   const getUnitPriceForItem = (item: any) => {
@@ -116,7 +123,21 @@ export default function CheckoutScreen() {
   // === Mutación: crear orden ===
   const createOrderMutation = useMutation({
     mutationFn: async (payload: CreateOrderDto) => (await api.post('/orders', payload)).data,
-    onSuccess: (order: OrderSuccess) => {
+    onSuccess: async (order: OrderSuccess) => {
+      // 🔔 Local inmediata (best-effort). Intentamos permiso si aún no está otorgado.
+      try {
+        if (notifStatus !== 'granted') {
+          await ensurePermission().catch(() => {});
+        }
+        await presentLocalNotification(
+          'Pedido creado',
+          `Recibimos tu pedido #${order.id} por ${currency(order.total)}`
+        );
+      } catch {
+        // noop: no bloquea el flujo si falla la local
+      }
+
+      // Limpia carrito y navega a éxito
       clear();
       navigation.replace('OrderSuccess', {
         orderId: order.id,
