@@ -11,6 +11,10 @@ COPY package*.json ./
 # 2) Prisma primero (para que generate tenga schema)
 COPY prisma ./prisma
 
+# 4) Generar Prisma Client (no requiere DB real)
+ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
+RUN npx prisma generate --schema=prisma/schema.prisma
+
 # 3) Instalar deps
 RUN npm ci
 
@@ -21,6 +25,11 @@ RUN npx prisma generate --schema=prisma/schema.prisma
 # 5) Copiar código y compilar
 COPY . .
 RUN npm run build
+
+# 👇 Diagnóstico: ¿se emitió dist/prisma?
+RUN echo "== DIST ==" && ls -la dist && \
+    echo "== DIST/PRISMA ==" && (ls -la dist/prisma || true) && \
+    node -e "const fs=require('fs'); if(!fs.existsSync('./dist/prisma/prisma.service.js')){console.error('FALTA dist/prisma/prisma.service.js'); process.exit(2)}"
 
 # ===== Runtime =====
 FROM node:20-alpine AS prod
@@ -41,3 +50,4 @@ COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
+
