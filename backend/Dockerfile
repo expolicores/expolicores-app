@@ -2,30 +2,32 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# 1) Dependencias
-COPY package*.json ./
-RUN npm ci
+# (Opcional) cache-bust para forzar reinstalar deps cuando lo necesites
+ARG CACHE_BUST=2025-11-06-02
 
-# 2) Copia SOLO el esquema primero y genera Prisma Client
+# 1) Dependencias (usa lockfile)
+COPY package*.json ./
+RUN npm ci --ignore-scripts
+
+# 2) Prisma Client (no requiere DB viva para 'generate')
 COPY prisma ./prisma
-# Prisma no necesita conectarse para generate, pero a veces exige la var.
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
 RUN npx prisma generate
 
 # 3) Copia el resto del código y compila a /app/dist
 COPY . .
-RUN npm run build   # ← ahora sí compila porque @prisma/client ya existe con tipos
+RUN npm run build   # @prisma/client ya existe con tipos
 
 # ===== Runtime =====
 FROM node:20-alpine AS prod
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Solo deps de producción
+# Solo dependencias de producción (usa lockfile)
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
-# Artefactos compilados y prisma (por si usas migraciones en runtime)
+# Artefactos compilados y binarios de Prisma para runtime
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
