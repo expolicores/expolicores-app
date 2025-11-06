@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    // ... Tus opciones ya estaban bien aquí ...
     "module": "commonjs",
     "target": "ES2021",
     "lib": ["ES2021"],
@@ -8,16 +7,7 @@
     "resolveJsonModule": true,
     "rootDir": "./src",
     "outDir": "./dist",
-    "baseUrl": "./src", // 👈 CAMBIO CRÍTICO: El base URL debe ser 'src'
 
-    // ----------------------------------------
-    // RUTA DE ALIAS AÑADIDA PARA RESOLVER 'src/...'
-    "paths": {
-      "src/*": ["*"] 
-    },
-    // ----------------------------------------
-
-    "forceConsistentCasingInFileNames": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
 
@@ -30,7 +20,18 @@
     "noImplicitAny": false,
     "types": ["node"],
     "sourceMap": true,
-    "incremental": true
+    "incremental": true,
+    "forceConsistentCasingInFileNames": true,
+    
+    // ----------------------------------------------------------------------------------------------------------
+    // --- CAMBIO CRÍTICO: BASEURL y PATHS corregidos para RESOLUCIÓN en tiempo de ejecución ---
+    "baseUrl": ".", // La raíz del proyecto es /app
+    "paths": {
+      // Mapea cualquier import 'src/...' a la carpeta compilada 'dist/...'
+      // ESTO ES LO QUE ARREGLA EL ERROR DE DOCKER.
+      "src/*": ["dist/*"] 
+    }
+    // ----------------------------------------------------------------------------------------------------------
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
