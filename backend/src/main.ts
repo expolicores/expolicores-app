@@ -16,12 +16,9 @@ async function bootstrap() {
   const config = app.get(ConfigService);
 
   // ===== Global Prefix (opcional) =====
-  // Si defines GLOBAL_PREFIX=api en Railway, todo quedará en /api/*
-  const prefixEnv = (config.get<string>('GLOBAL_PREFIX') || '').trim();
+  const prefixEnv = (config.get<string>('GLOBAL_PREFIX') || process.env.GLOBAL_PREFIX || '').trim();
   const globalPrefix = prefixEnv ? prefixEnv.replace(/^\/+|\/+$/g, '') : '';
-  if (globalPrefix) {
-    app.setGlobalPrefix(globalPrefix);
-  }
+  if (globalPrefix) app.setGlobalPrefix(globalPrefix);
 
   // ===== Raw body (webhooks) =====
   app.use(
@@ -53,13 +50,12 @@ async function bootstrap() {
   app.useGlobalFilters(new PrismaClientExceptionFilter());
 
   // ===== CORS =====
-  // En prod: ORIGINS_CSV="https://lo-que-sea.com,https://otra.com"
   const nodeEnv = (config.get<string>('NODE_ENV') || process.env.NODE_ENV || 'development').toLowerCase();
   const originsCsv = (config.get<string>('ORIGINS_CSV') || process.env.ORIGINS_CSV || '').trim();
   const origins =
     nodeEnv === 'production' && originsCsv
       ? originsCsv.split(',').map((s) => s.trim()).filter(Boolean)
-      : true; // dev: permitir cualquiera (útil para Expo Go y pruebas)
+      : true;
 
   app.enableCors({
     origin: origins,
@@ -78,21 +74,16 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  // Si hay globalPrefix, Swagger quedará en /<prefix>/docs
   SwaggerModule.setup('docs', app, document, { useGlobalPrefix: true });
 
   // ===== Puerto/host =====
-  // En Railway/Nixpacks/Docker, hay que bindear SIEMPRE a 0.0.0.0
-  const port =
-    Number(config.get('PORT')) ||
-    Number(process.env.PORT) ||
-    3000;
-  const host: '0.0.0.0' = '0.0.0.0';
+  const port = Number(config.get('PORT')) || Number(process.env.PORT) || 3000;
+  const host = (config.get<string>('HOST') || process.env.HOST || '0.0.0.0') as '0.0.0.0' | '127.0.0.1';
 
   await app.listen(port, host);
 
   // ===== Logs de arranque =====
-  const baseUrl = await app.getUrl(); // p.ej. http://0.0.0.0:3000 (Railway hace proxy)
+  const baseUrl = await app.getUrl();
   const prefixStr = globalPrefix ? `/${globalPrefix}` : '';
   const commit =
     process.env.RAILWAY_GIT_COMMIT_SHA ||
@@ -103,9 +94,7 @@ async function bootstrap() {
 
   console.log(`🚀 API escuchando en ${baseUrl}${prefixStr} (env=${nodeEnv}, commit=${commit}, builtAt=${builtAt})`);
   console.log(`📚 Swagger: ${baseUrl}${prefixStr}/docs`);
-  console.log(
-    `🌐 CORS origins: ${Array.isArray(origins) ? origins.join(', ') : 'ANY (dev)'}`
-  );
+  console.log(`🌐 CORS origins: ${Array.isArray(origins) ? origins.join(', ') : 'ANY (dev)'}`);
 }
 
 bootstrap();
