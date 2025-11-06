@@ -15,13 +15,14 @@
     "allowSyntheticDefaultImports": true,
 
     "strict": true,
-    "strictPropertyInitialization": false,   // 👈 agrega esto
+    "strictPropertyInitialization": false,
     "skipLibCheck": true,
     "noImplicitAny": false,
     "types": ["node"],
-    "sourceMap": false,
+    "sourceMap": true, // Dejamos en true, aunque 'build' lo pone en false
     "incremental": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "forceConsistentCasingInFileNames": true // 👈 NUEVO: Fuerza la consistencia de rutas para Node/Linux
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
