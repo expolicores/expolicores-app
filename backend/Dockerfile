@@ -1,46 +1,42 @@
-# ========== Builder ==========
-FROM node:20-alpine AS builder
+# ===== Base =====
+FROM node:20-alpine AS base
 WORKDIR /app
 
-# 1) Dependencias de dev (incluye nest cli)
+# ===== Build stage =====
+FROM base AS build
+
+# 1) Dependencias
 COPY package*.json ./
 RUN npm ci
 
-# 2) Prisma client (tipos) antes del build
+# 2) Prisma schema y generar Prisma Client
 COPY prisma ./prisma
-# Var dummy para permitir "prisma generate" sin DB real
+# Si tu build requiere DATABASE_URL para generate, puedes setear un dummy:
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
 RUN npx prisma generate
 
-# 3) Código y build
+# 3) Copiar código y compilar Nest
 COPY . .
-# Compila a /app/dist
 RUN npm run build
 
-# 4) Sanity check: debe existir dist/main.js
-RUN test -f dist/main.js || (echo "❌ dist/main.js NO existe" && ls -la && ls -la dist || true && exit 1)
-
-# ========== Runtime ==========
-FROM node:20-alpine AS runtime
-WORKDIR /app
+# ===== Runtime stage =====
+FROM base AS prod
 ENV NODE_ENV=production
-ENV PORT=3000
 
-# Copiamos solo lo necesario
+# Copiamos package.json/lock para instalar deps prod
 COPY package*.json ./
-RUN npm ci --omit=dev
 
-# Artefactos del build
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/prisma ./prisma
+# Copiamos el schema (por si corres migraciones o lo necesitas para diagnósticos)
+COPY prisma ./prisma
 
-# Prisma runtime (cliente ya viene en node_modules)
-# Si por alguna razón faltara .prisma, descomenta las 2 líneas siguientes:
-# COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-# COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# 4) Instalar solo deps de producción **sin scripts** (evita postinstall prisma generate)
+RUN npm ci --omit=dev --ignore-scripts
 
-# Sanity check: dist/main.js existe en runtime
-RUN test -f dist/main.js || (echo "❌ dist/main.js NO está en runtime" && ls -la && ls -la dist || true && exit 1)
+# 5) Artefactos del build y Prisma Client generado en la etapa build
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
