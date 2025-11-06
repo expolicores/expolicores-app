@@ -1,6 +1,2 @@
-# Solo indica el root (este archivo está en /backend)
-[service]
-root = "."
-
-# ❌ NO pongas buildCommand ni startCommand aquí.
-# Deja que Railway use el Dockerfile: backend/Dockerfile
+[build]
+builder = "NIXPACKS"

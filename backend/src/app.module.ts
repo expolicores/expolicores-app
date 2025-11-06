@@ -9,7 +9,6 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { AddressesModule } from './addresses/addresses.module';
-import { AppVersionController } from './app.version.controller';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
 import { FavoritesModule } from './favorites/favorites.module';
@@ -49,8 +48,8 @@ import { PromotionsModule } from './promotions/promotions.module';
     FavoritesModule,
 
     // Módulos B2B
-    BodegaModule, // Bodega Virtual (protegido por roles/estatus)
-    BusinessModule, // gestión de solicitudes B2B
+    BodegaModule,     // Bodega Virtual (protegido por roles/estatus)
+    BusinessModule,   // gestión de solicitudes B2B
 
     // Geocoding / Cobertura
     GeoModule,
@@ -61,7 +60,7 @@ import { PromotionsModule } from './promotions/promotions.module';
     // Promociones (incluye /promotions/overlays)
     PromotionsModule,
   ],
-  controllers: [AppController, AppVersionController],
+  controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}

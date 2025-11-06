@@ -2,33 +2,30 @@
   "name": "backend",
   "version": "0.0.1",
   "description": "Expolicores API (NestJS + Prisma)",
+  "author": "",
   "private": true,
   "license": "UNLICENSED",
   "engines": {
     "node": ">=18.18"
   },
   "scripts": {
-    "postinstall": "prisma generate",
     "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
-
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-
-    "db:generate": "prisma generate",
+    "prisma:seed": "prisma db seed",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force --skip-seed",
+    "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "prisma:seed": "prisma db seed",
     "seed": "ts-node --transpile-only src/prisma/seed.ts",
     "reset:pass": "tsx scripts/reset-password.ts"
   },
@@ -51,7 +48,6 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "dotenv": "^17.2.1",
-    "expo-server-sdk": "^4.0.0",
     "express": "^5.1.0",
     "morgan": "^1.10.1",
     "passport": "^0.7.0",
@@ -96,7 +92,9 @@
     "moduleFileExtensions": ["js", "json", "ts"],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
-    "transform": { "^.+\\.(t|j)s$": "ts-jest" },
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
     "collectCoverageFrom": ["**/*.(t|j)s"],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"

@@ -1,42 +1,36 @@
-# ===== deps =====
-FROM node:20-alpine AS deps
-WORKDIR /app
-COPY package*.json ./
-# Instalamos sin ejecutar scripts (evita prisma postinstall)
-RUN npm ci --ignore-scripts
-
-# ===== build =====
+# ===== Build =====
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# Traemos node_modules de deps
-COPY --from=deps /app/node_modules ./node_modules
+# 1) Dependencias
 COPY package*.json ./
+RUN npm ci
 
-# Prisma schema y client
+# 2) Copia SOLO el esquema primero y genera Prisma Client
 COPY prisma ./prisma
-# Dummy para prisma generate (no conecta a DB)
+# Prisma no necesita conectarse para generate, pero a veces exige la var.
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
 RUN npx prisma generate
 
-# Código y build de Nest
+# 3) Copia el resto del código y compila a /app/dist
 COPY . .
-RUN npm run build
+RUN npm run build   # ← ahora sí compila porque @prisma/client ya existe con tipos
 
-# Dejamos solo dependencias de producción
-RUN npm prune --omit=dev --ignore-scripts
-
-# ===== runtime =====
-FROM node:20-alpine
+# ===== Runtime =====
+FROM node:20-alpine AS prod
 WORKDIR /app
 ENV NODE_ENV=production
-# Importamos artefactos y deps ya podadas
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/prisma ./prisma
+
+# Solo deps de producción
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Artefactos compilados y prisma (por si usas migraciones en runtime)
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
-# Railway expone 8080 por defecto; Nest leerá PORT
-ENV PORT=8080
-EXPOSE 8080
-
+EXPOSE 3000
 CMD ["node", "dist/main.js"]

@@ -15,16 +15,14 @@
     "allowSyntheticDefaultImports": true,
 
     "strict": true,
-    "strictPropertyInitialization": false,
+    "strictPropertyInitialization": false,   // 👈 agrega esto
     "skipLibCheck": true,
     "noImplicitAny": false,
-
     "types": ["node"],
-    "sourceMap": true,
+    "sourceMap": false,
     "incremental": true,
     "baseUrl": "."
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts", "**/*.e2e-spec.ts"]
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
 }
-

@@ -3,33 +3,28 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module';
 
-// Controladores existentes (sms/whatsapp webhooks, etc.)
 import { NotificationsController } from './notifications.controller';
-// Servicios existentes (sms/otros)
 import { NotificationsService } from './notifications.service';
 import { SmsService } from './sms.service';
 
-// ---- PUSH (Expo/FCM) ----
+// Push (registro de tokens Expo/FCM)
 import { PushController } from './push.controller';
 import { PushService } from './push.service';
 
 @Module({
-  imports: [
-    ConfigModule, // si tienes configs por feature, puedes usar ConfigModule.forFeature(...)
-    PrismaModule, // requerido por PushService (UserPushToken)
-  ],
+  imports: [ConfigModule, PrismaModule],
   controllers: [
-    NotificationsController,
-    PushController, // /notifications/push/register, /notifications/push/test (si lo expones aquí)
+    NotificationsController, // controladores existentes (ej. sms/whatsapp webhooks)
+    PushController,          // nuevo: /notifications/push/register
   ],
   providers: [
-    NotificationsService,
-    SmsService,
-    PushService, // permite inyectar en OrdersService, etc.
+    NotificationsService, // lógica existente (sms/whatsapp u otros)
+    SmsService,           // wrapper Twilio SMS u otro proveedor
+    PushService,          // nuevo: gestión de tokens push
   ],
   exports: [
-    SmsService,
-    PushService, // <-- importante para usarlo desde OrdersModule
+    SmsService,  // ⬅️ importante para que AuthModule/OrdersModule pueda inyectarlo
+    PushService, // para enviar notifs push desde otros módulos (Orders, etc.)
   ],
 })
 export class NotificationsModule {}
