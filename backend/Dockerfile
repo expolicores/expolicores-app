@@ -22,12 +22,12 @@ RUN npm pkg set dependencies.expo-server-sdk="^4.0.0"
 RUN npm ci
 
 # 4) GENERACIÓN EXPLÍCITA DEL PRISMA CLIENT
-# Asegura que el cliente Prisma esté generado y en /app/node_modules/.prisma
 RUN npx prisma generate
 
-# 5) Copia el resto del código y COMPILA usando TSC.
+# 5) Copia el resto del código y COMPILA usando el comando de NestJS (npm run build).
+# Como ya resolvimos todos los errores de Prisma y dependencias, este debería pasar.
 COPY . .
-RUN npx tsc -p tsconfig.json
+RUN npm run build
 
 # ==================================
 # ===== STAGE 2: Runtime (Entorno de Producción) =====
@@ -42,7 +42,6 @@ ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 COPY --from=build /app/package*.json ./
 
 # B) ELIMINA el script 'postinstall' de package.json. 
-# Esto evita que Prisma se intente generar de nuevo en el runtime.
 RUN npm pkg delete scripts.postinstall
 
 # C) Instala solo dependencias de producción (usando el package.json modificado)
