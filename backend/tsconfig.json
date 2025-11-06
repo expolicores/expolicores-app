@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    // ... Tus opciones ya estaban bien aquí ...
     "module": "commonjs",
     "target": "ES2021",
     "lib": ["ES2021"],
@@ -7,7 +8,16 @@
     "resolveJsonModule": true,
     "rootDir": "./src",
     "outDir": "./dist",
+    "baseUrl": "./src", // 👈 CAMBIO CRÍTICO: El base URL debe ser 'src'
 
+    // ----------------------------------------
+    // RUTA DE ALIAS AÑADIDA PARA RESOLVER 'src/...'
+    "paths": {
+      "src/*": ["*"] 
+    },
+    // ----------------------------------------
+
+    "forceConsistentCasingInFileNames": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
 
@@ -19,10 +29,8 @@
     "skipLibCheck": true,
     "noImplicitAny": false,
     "types": ["node"],
-    "sourceMap": true, // Dejamos en true, aunque 'build' lo pone en false
-    "incremental": true,
-    "baseUrl": ".",
-    "forceConsistentCasingInFileNames": true // 👈 NUEVO: Fuerza la consistencia de rutas para Node/Linux
+    "sourceMap": true,
+    "incremental": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
