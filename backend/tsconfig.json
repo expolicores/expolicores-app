@@ -21,13 +21,6 @@
     "sourceMap": true,
     "incremental": true,
     "forceConsistentCasingInFileNames": true,
-
-    // --- CONFIGURACIÓN CRÍTICA PARA COMPILACIÓN ---
-    "baseUrl": "./src", // La base de búsqueda es la carpeta src
-    "paths": {
-      // Cuando importamos 'src/...' o cualquier cosa, la busca en la base (src)
-      "src/*": ["*"] 
-    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
