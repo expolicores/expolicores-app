@@ -10,9 +10,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { PromotionsService } from './promotions.service';
-import { Roles } from 'src/auth/decorators/roles.decorator';
-import { RolesGuard } from 'src/auth/guards/roles.guard';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 // Si ya tienes DTOs separados, mantenlos.
 // Si no, puedes usar los tipos del service.
