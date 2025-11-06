@@ -1,51 +1,47 @@
-# STAGE 1: Build (Compilación)
+# --- ETAPA DE BUILD ---
 FROM node:20-alpine AS build
 
-# Variables de entorno para NPM
-ENV NPM_CONFIG_LOGLEVEL warn
-
-# Establece el directorio de trabajo dentro del contenedor
+# 1) Copia la carpeta prisma y los archivos de dependencias
 WORKDIR /app
-
-# Copia los archivos de configuración
-COPY package*.json ./
 COPY prisma ./prisma
+COPY package*.json ./
 
-# 1) Añade dependencias de Expo y instala todo
+# 2) Instala dependencias y arregla expo-server-sdk
+# Se usa `npm ci` para instalaciones limpias y reproducibles
 RUN npm pkg set dependencies.expo-server-sdk="^4.0.0" \
     && npm ci
 
-# 2) Genera el Prisma Client (obligatorio para la compilación)
+# 3) Genera el cliente de Prisma para la arquitectura de build
 RUN npx prisma generate
 
-# 3) Copia el código fuente
+# 4) Copia todo el código fuente y compila
 COPY . .
-
-# 4) Compila el código TypeScript a JavaScript (usa el tsconfig.json)
 RUN npx tsc -p tsconfig.json
 
-# STAGE 2: Runtime (Producción)
+# --- ETAPA DE PRODUCCIÓN (Más pequeña y segura) ---
 FROM node:20-alpine AS prod
 
-# Establece el directorio de trabajo
+# 5) Directorio de trabajo
 WORKDIR /app
 
-# 5) Copia package.json y lockfile (con todas las dependencias)
+# 6) Copia solo el package.json y el package-lock.json (ya corregidos)
 COPY --from=build /app/package*.json ./
 
-# 6A) ELIMINA el script 'postinstall' para evitar que 'prisma generate' falle
-RUN npm pkg delete scripts.postinstall
+# 7) Instala dependencias de producción y elimina `postinstall` de Prisma
+# Usamos `npm ci --omit=dev` para reducir tamaño.
+RUN npm pkg delete scripts.postinstall \
+    && npm ci --omit=dev
 
-# 6B) Instala solo dependencias de producción.
-RUN npm ci --omit=dev
-
-# 7) Copia artefactos compilados y binarios de Prisma (necesarios para el runtime)
+# 8) Copia artefactos compilados y binarios de Prisma (necesarios para el runtime)
+# Copia la carpeta 'dist'
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
+# Copia los binarios de Prisma para la arquitectura final
+COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma/engines /app/node_modules/@prisma/engines
 
-# Expone el puerto (si tu app usa 3000)
+# 9) Expone el puerto y define el comando de inicio
 EXPOSE 3000
 
-# Comando de inicio: Usa la ruta relativa completa a tsconfig-paths/register para evitar el error MODULE_NOT_FOUND.
-CMD ["node", "-r", "./node_modules/tsconfig-paths/register", "dist/main.js"]
+# CMD usa el script `start:prod` del package.json, el cual incluye
+# la carga de tsconfig-paths/register para resolver rutas absolutas.
+CMD ["npm", "run", "start:prod"]
