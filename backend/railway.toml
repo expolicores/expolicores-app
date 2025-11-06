@@ -1,7 +1,6 @@
-[build]
-builder = "NIXPACKS"
+# Solo indica el root (este archivo está en /backend)
+[service]
+root = "."
 
-[deploy]
-
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 10
+# ❌ NO pongas buildCommand ni startCommand aquí.
+# Deja que Railway use el Dockerfile: backend/Dockerfile
