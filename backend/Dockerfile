@@ -33,4 +33,4 @@ COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+CMD ["/bin/sh","-lc","node -v; echo '== DIST ==' && ls -la dist || true; echo '== DIST/PRISMA ==' && ls -la dist/prisma || true; node dist/main.js"]
