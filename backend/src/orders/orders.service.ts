@@ -1,4 +1,4 @@
-// backend/src/orders/orders.service.ts
+// src/orders/orders.service.ts
 import {
   BadRequestException,
   ConflictException,
@@ -6,7 +6,6 @@ import {
   NotFoundException,
   Inject,
   ForbiddenException,
-  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './create-order.dto';
@@ -15,19 +14,15 @@ import { OrderStatus, Role } from '@prisma/client';
 import shippingConfig from '../config/shipping';
 import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
-import { validateGeo } from '../common/geo'; // ← misma lógica que /geo/validate
-import { PushService } from '../notifications/push.service'; // ← Expo Push
+import { validateGeo } from '../common/geo'; // ← usa la misma lógica que /geo/validate
 
 @Injectable()
 export class OrdersService {
-  private readonly logger = new Logger(OrdersService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     @Inject(shippingConfig.KEY)
     private readonly shipping: ConfigType<typeof shippingConfig>,
     private readonly whatsapp: WhatsAppService,
-    private readonly push: PushService, // ← inyectamos push
   ) {}
 
   private readonly orderInclude = {
@@ -93,7 +88,7 @@ export class OrdersService {
       const geo = validateGeo({ lat: address.lat as number, lng: address.lng as number });
       if (!geo.inCoverage) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
       shipping = geo.shippingCost;
-      // Para auditoría: geo.meta?.pricingMode, geo.distanceKm, etc.
+      // Si necesitas auditar: geo.meta?.pricingMode, geo.distanceKm, etc.
     }
 
     const total = subtotal + shipping;
@@ -104,7 +99,7 @@ export class OrdersService {
         data: {
           userId,
           total,
-          status: OrderStatus.RECIBIDO, // estado inicial
+          status: OrderStatus.RECIBIDO,
           items: { create: dto.items.map((i) => ({ productId: i.productId, quantity: i.quantity })) },
         },
         include: this.orderInclude,
@@ -120,19 +115,6 @@ export class OrdersService {
 
       return order;
     });
-
-    // ===== PUSH: Pedido creado (no bloquea flujo) =====
-    try {
-      await this.push.sendToUser(String(userId), {
-        title: 'Pedido creado',
-        body: `#${created.id} recibido. Te avisaremos los cambios.`,
-        data: { type: 'ORDER_CREATED', orderId: created.id },
-        priority: 'high',
-        sound: 'default',
-      });
-    } catch (e) {
-      this.logger.warn(`push ORDER_CREATED failed for user ${userId}: ${(e as Error).message}`);
-    }
 
     // ===== WhatsApp confirmación =====
     const toPhone = this.normalizeCoPhone(user.phone ?? created.user?.phone ?? '');
@@ -165,6 +147,7 @@ export class OrdersService {
       tenant: 'Expolicores Villa de Leyva',
     });
 
+    // Log idempotente de confirmación (ORDER_CREATED)
     await this.prisma.notificationLog.upsert({
       where: { orderId_type: { orderId: created.id, type: 'ORDER_CREATED' } },
       update: {
@@ -271,23 +254,6 @@ export class OrdersService {
       include: this.orderInclude,
     });
 
-    // ===== PUSH por estado (no bloquea) =====
-    try {
-      const msg = this.messageForStatus(status, order.id);
-      if (msg) {
-        await this.push.sendToUser(String(order.userId), {
-          title: msg.title,
-          body: msg.body,
-          data: { type: 'ORDER_STATUS', orderId: order.id, status },
-          priority: 'high',
-          sound: 'default',
-        });
-      }
-    } catch (e) {
-      this.logger.warn(`push STATUS_${status} failed for user ${order.userId}: ${(e as Error).message}`);
-    }
-
-    // ===== WhatsApp por estado (como estaba) =====
     if (status === 'EN_CAMINO' || status === 'ENTREGADO' || status === 'CANCELADO') {
       const toPhone = this.normalizeCoPhone(order.user?.phone ?? '');
       const res = await this.whatsapp.sendStatusUpdate({
@@ -335,22 +301,5 @@ export class OrdersService {
     if (digits.startsWith('0') && digits.length === 11) return `+57${digits.slice(1)}`;
     if (input?.startsWith('+')) return input;
     return `+57${digits}`;
-  }
-
-  // Mensajes para estados que existen en tu enum
-  private messageForStatus(
-    status: OrderStatus,
-    orderId: number,
-  ): { title: string; body: string } | null {
-    switch (status) {
-      case 'EN_CAMINO':
-        return { title: 'En camino', body: `#${orderId} ya va en camino.` };
-      case 'ENTREGADO':
-        return { title: 'Entregado', body: `#${orderId} ha sido entregado. ¡Gracias!` };
-      case 'CANCELADO':
-        return { title: 'Pedido cancelado', body: `#${orderId} fue cancelado.` };
-      default:
-        return null; // RECIBIDO u otros no generan push extra
-    }
   }
 }
