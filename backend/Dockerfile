@@ -34,7 +34,6 @@ WORKDIR /app
 COPY --from=build /app/package*.json ./
 
 # 6A) ELIMINA el script 'postinstall' para evitar que 'prisma generate' falle
-# ESTO FUE EL PASO CRÍTICO QUE FALTABA
 RUN npm pkg delete scripts.postinstall
 
 # 6B) Instala solo dependencias de producción.
@@ -48,5 +47,5 @@ COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 # Expone el puerto (si tu app usa 3000)
 EXPOSE 3000
 
-# Comando de inicio: Usa tsconfig-paths/register para resolver los alias 'src/'
-CMD ["node", "-r", "tsconfig-paths/register", "dist/main.js"]
+# Comando de inicio: Usa la ruta relativa completa a tsconfig-paths/register para evitar el error MODULE_NOT_FOUND.
+CMD ["node", "-r", "./node_modules/tsconfig-paths/register", "dist/main.js"]
