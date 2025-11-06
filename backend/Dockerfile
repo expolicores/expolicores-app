@@ -24,10 +24,12 @@ RUN npm ci
 # 4) GENERACIÓN EXPLÍCITA DEL PRISMA CLIENT
 RUN npx prisma generate
 
-# 5) Copia el resto del código y COMPILA usando el comando de NestJS (npm run build).
-# Como ya resolvimos todos los errores de Prisma y dependencias, este debería pasar.
+# 5) Copia el resto del código
 COPY . .
-RUN npm run build
+
+# 6) COMPILACIÓN FINAL: Usamos npx tsc para forzar la estructura de dist correcta.
+# Esto soluciona el error 'Cannot find module ./app.controller'
+RUN npx tsc -p tsconfig.json 
 
 # ==================================
 # ===== STAGE 2: Runtime (Entorno de Producción) =====
@@ -37,17 +39,17 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 
-# 6) CONFIGURACIÓN DE PRODUCCIÓN Y DESACTIVACIÓN DEL POSTINSTALL
+# 7) CONFIGURACIÓN DE PRODUCCIÓN Y DESACTIVACIÓN DEL POSTINSTALL
 # A) Copia package.json y lockfile desde la etapa de build
 COPY --from=build /app/package*.json ./
 
-# B) ELIMINA el script 'postinstall' de package.json. 
+# B) ELIMINA el script 'postinstall' de package.json.
 RUN npm pkg delete scripts.postinstall
 
 # C) Instala solo dependencias de producción (usando el package.json modificado)
 RUN npm ci --omit=dev
 
-# 7) Copia artefactos compilados y binarios de Prisma
+# 8) Copia artefactos compilados y binarios de Prisma
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
