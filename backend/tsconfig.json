@@ -5,15 +5,14 @@
     "lib": ["ES2021"],
     "moduleResolution": "node",
     "resolveJsonModule": true,
+    
     "rootDir": "./src",
     "outDir": "./dist",
 
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-
     "strict": true,
     "strictPropertyInitialization": false,
     "skipLibCheck": true,
@@ -22,16 +21,13 @@
     "sourceMap": true,
     "incremental": true,
     "forceConsistentCasingInFileNames": true,
-    
-    // ----------------------------------------------------------------------------------------------------------
-    // --- CAMBIO CRÍTICO: BASEURL y PATHS corregidos para RESOLUCIÓN en tiempo de ejecución ---
-    "baseUrl": ".", // La raíz del proyecto es /app
+
+    // --- CONFIGURACIÓN CRÍTICA PARA COMPILACIÓN ---
+    "baseUrl": "./src", // La base de búsqueda es la carpeta src
     "paths": {
-      // Mapea cualquier import 'src/...' a la carpeta compilada 'dist/...'
-      // ESTO ES LO QUE ARREGLA EL ERROR DE DOCKER.
-      "src/*": ["dist/*"] 
+      // Cuando importamos 'src/...' o cualquier cosa, la busca en la base (src)
+      "src/*": ["*"] 
     }
-    // ----------------------------------------------------------------------------------------------------------
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
