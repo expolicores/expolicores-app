@@ -1,0 +1,4 @@
+# railway.toml (en la RAÍZ del repo)
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
