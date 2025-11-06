@@ -1,58 +1,56 @@
-# ==================================
-# ===== STAGE 1: Build (Genera 'dist' y Prisma Client) =====
-# ==================================
+# STAGE 1: Build (Compilación)
 FROM node:20-alpine AS build
+
+# Variables de entorno para NPM
+ENV NPM_CONFIG_LOGLEVEL warn
+
+# Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Motores binarios de Prisma (Optimización)
-ENV PRISMA_CLIENT_ENGINE_TYPE=binary \
-    PRISMA_CLI_QUERY_ENGINE_TYPE=binary
-
-# 1) Copia manifiestos
+# Copia los archivos de configuración
 COPY package*.json ./
-
-# 2) COPIA EL ESQUEMA DE PRISMA (CLAVE: debe ser ANTES de npm ci)
 COPY prisma ./prisma
 
-# 3) INSTALACIÓN DE DEPENDENCIAS
-# A) Añade expo-server-sdk
-RUN npm pkg set dependencies.expo-server-sdk="^4.0.0"
+# 1) Añade dependencias de Expo y TSConfig-paths e instala
+# Usamos 'npm ci' porque ya tenemos un lockfile.
+# 'tsconfig-paths' debe estar en 'dependencies' en package.json.
+RUN npm pkg set dependencies.expo-server-sdk="^4.0.0" \
+    && npm ci
 
-# B) Instala todas las dependencias
-RUN npm ci
-
-# 4) GENERACIÓN EXPLÍCITA DEL PRISMA CLIENT
+# 2) Genera el Prisma Client (obligatorio para la compilación)
 RUN npx prisma generate
 
-# 5) Copia el resto del código
+# 3) Copia el código fuente
 COPY . .
 
-# 6) COMPILACIÓN FINAL: Usamos npx tsc para forzar la estructura de dist correcta.
-# Esto soluciona el error 'Cannot find module ./app.controller'
-RUN npx tsc -p tsconfig.json 
+# 4) Compila el código TypeScript a JavaScript (usa el tsconfig.json)
+# El comando tsc con la configuración correcta resuelve las rutas a 'dist/...'
+RUN npx tsc -p tsconfig.json
 
-# ==================================
-# ===== STAGE 2: Runtime (Entorno de Producción) =====
-# ==================================
+# STAGE 2: Runtime (Producción)
 FROM node:20-alpine AS prod
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 
-# 7) CONFIGURACIÓN DE PRODUCCIÓN Y DESACTIVACIÓN DEL POSTINSTALL
-# A) Copia package.json y lockfile desde la etapa de build
+# Establece el directorio de trabajo
+WORKDIR /app
+
+# 5) Copia package.json y lockfile (con tsconfig-paths incluido)
 COPY --from=build /app/package*.json ./
 
-# B) ELIMINA el script 'postinstall' de package.json.
-RUN npm pkg delete scripts.postinstall
-
-# C) Instala solo dependencias de producción (usando el package.json modificado)
+# 6) Instala solo dependencias de producción.
+# Esto incluye 'tsconfig-paths' y 'expo-server-sdk' si están en 'dependencies'.
+# No necesitamos eliminar el postinstall aquí, ya que no copiamos el prisma/schema.prisma, 
+# pero nos aseguramos de que no se ejecute copiando solo los archivos JS compilados.
 RUN npm ci --omit=dev
 
-# 8) Copia artefactos compilados y binarios de Prisma
+# 7) Copia artefactos compilados y binarios de Prisma (necesarios para el runtime)
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
+# Expone el puerto (si tu app usa 3000)
+# Esto es opcional, pero buena práctica.
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+
+# Comando de inicio: Usa tsconfig-paths/register para resolver los alias 'src/'
+# Se asume que tu archivo principal es main.js en la carpeta dist.
+CMD ["node", "-r", "tsconfig-paths/register", "dist/main.js"]
