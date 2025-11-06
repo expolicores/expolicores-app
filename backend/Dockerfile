@@ -15,7 +15,6 @@ COPY package*.json ./
 COPY prisma ./prisma
 
 # 3) INSTALACIÓN DE DEPENDENCIAS
-# Separamos los comandos para asegurar que la instalación de @prisma/client termine primero.
 # A) Añade expo-server-sdk
 RUN npm pkg set dependencies.expo-server-sdk="^4.0.0"
 
@@ -23,11 +22,10 @@ RUN npm pkg set dependencies.expo-server-sdk="^4.0.0"
 RUN npm ci
 
 # 4) GENERACIÓN EXPLÍCITA DEL PRISMA CLIENT
-# Ejecutamos 'prisma generate' después de que 'npm ci' haya terminado.
+# Asegura que el cliente Prisma esté generado y en /app/node_modules/.prisma
 RUN npx prisma generate
 
 # 5) Copia el resto del código y COMPILA usando TSC.
-# Usamos 'npx tsc' en lugar de 'npm run build' para garantizar que se cree 'dist'
 COPY . .
 RUN npx tsc -p tsconfig.json
 
@@ -39,8 +37,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 
-# 6) Usa el MISMO package.json y lockfile que quedaron en build
+# 6) CONFIGURACIÓN DE PRODUCCIÓN Y DESACTIVACIÓN DEL POSTINSTALL
+# A) Copia package.json y lockfile desde la etapa de build
 COPY --from=build /app/package*.json ./
+
+# B) ELIMINA el script 'postinstall' de package.json. 
+# Esto evita que Prisma se intente generar de nuevo en el runtime.
+RUN npm pkg delete scripts.postinstall
+
+# C) Instala solo dependencias de producción (usando el package.json modificado)
 RUN npm ci --omit=dev
 
 # 7) Copia artefactos compilados y binarios de Prisma
