@@ -301,9 +301,3 @@ model BundleMap {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
-
-
-generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl"] // 👈 importante para Alpine
-}
