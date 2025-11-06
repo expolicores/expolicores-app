@@ -4,25 +4,29 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# Motores binarios de Prisma (Optimización para entornos estables como Alpine)
+# Motores binarios de Prisma (Optimización)
 ENV PRISMA_CLIENT_ENGINE_TYPE=binary \
     PRISMA_CLI_QUERY_ENGINE_TYPE=binary
 
 # 1) Copia manifiestos
 COPY package*.json ./
 
-# 2) COPIA EL ESQUEMA DE PRISMA AHORA (CLAVE)
-# Esto asegura que el esquema esté presente en /app/prisma/schema.prisma
-# antes de que 'npm ci' ejecute el 'postinstall' de Prisma.
+# 2) COPIA EL ESQUEMA DE PRISMA (CLAVE: debe ser ANTES de npm ci)
 COPY prisma ./prisma
 
-# 3) Añade expo-server-sdk y regenera lockfile de forma reproducible
-# El comando 'npm ci' instalará dependencias y generará el Prisma Client (implícito)
-RUN npm pkg set dependencies.expo-server-sdk="^4.0.0" \
-  && npm install --package-lock-only \
-  && npm ci
+# 3) INSTALACIÓN DE DEPENDENCIAS
+# Separamos los comandos para asegurar que la instalación de @prisma/client termine primero.
+# A) Añade expo-server-sdk
+RUN npm pkg set dependencies.expo-server-sdk="^4.0.0"
 
-# 4) Copia el resto del código y COMPILA usando TSC.
+# B) Instala todas las dependencias
+RUN npm ci
+
+# 4) GENERACIÓN EXPLÍCITA DEL PRISMA CLIENT
+# Ejecutamos 'prisma generate' después de que 'npm ci' haya terminado.
+RUN npx prisma generate
+
+# 5) Copia el resto del código y COMPILA usando TSC.
 # Usamos 'npx tsc' en lugar de 'npm run build' para garantizar que se cree 'dist'
 COPY . .
 RUN npx tsc -p tsconfig.json
@@ -35,16 +39,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 
-# 5) Usa el MISMO package.json y lockfile que quedaron en build
+# 6) Usa el MISMO package.json y lockfile que quedaron en build
 COPY --from=build /app/package*.json ./
 RUN npm ci --omit=dev
 
-# 6) Copia artefactos compilados y binarios de Prisma
-# La carpeta 'dist' contiene el prisma.service.js compilado.
+# 7) Copia artefactos compilados y binarios de Prisma
 COPY --from=build /app/dist ./dist
-
-# Copia los binarios generados y el cliente de Prisma.
-# Esto incluye los motores de consulta necesarios.
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
