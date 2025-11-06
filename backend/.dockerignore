@@ -1,12 +1,6 @@
-# NO excluyas src/ ni nest-cli.json
 node_modules
+npm-debug.log
 dist
 .git
 .gitignore
-*.log
-npm-debug.log*
-.env
-.env.*
-coverage
-.tmp
-.DS_Store
+Dockerfile
