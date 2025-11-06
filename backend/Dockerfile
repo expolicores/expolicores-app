@@ -33,6 +33,8 @@ RUN npm pkg delete scripts.postinstall \
     && npm ci --omit=dev
 
 # 8) Copia artefactos compilados y binarios de Prisma (necesarios para el runtime)
+# COPIA CRÍTICA: Copia tsconfig.json para que tsconfig-paths pueda leer los aliases.
+COPY --from=build /app/tsconfig.json ./
 # Copia la carpeta 'dist'
 COPY --from=build /app/dist ./dist
 # Copia los binarios de Prisma para la arquitectura final
