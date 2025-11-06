@@ -2,41 +2,37 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# Prisma: usar engine binario (no WASM) y tener OpenSSL en Alpine
+# 0) (opcional) asegurar engine binario
 ENV PRISMA_CLIENT_ENGINE_TYPE=binary \
     PRISMA_CLI_QUERY_ENGINE_TYPE=binary
-RUN apk add --no-cache openssl
 
-# 1) Dependencias
+# 1) Dependencias base
 COPY package*.json ./
+# 2) Prisma primero (para que generate tenga schema)
+COPY prisma ./prisma
+
+# 3) Instalar deps
 RUN npm ci
 
-# 2) Copia SOLO el esquema primero y genera Prisma Client
-COPY prisma ./prisma
-# Prisma no necesita conectarse para generate; damos una DATABASE_URL dummy
+# 4) Generar Prisma Client (no requiere DB real)
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
-RUN npx prisma generate
+RUN npx prisma generate --schema=prisma/schema.prisma
 
-# 3) Copia el resto del código y compila a /app/dist
+# 5) Copiar código y compilar
 COPY . .
-RUN npm run build   # ← ahora sí compila porque @prisma/client ya existe con tipos
-
+RUN npm run build
 
 # ===== Runtime =====
 FROM node:20-alpine AS prod
 WORKDIR /app
 ENV NODE_ENV=production
-
-# Prisma binario y OpenSSL también en runtime
-ENV PRISMA_CLIENT_ENGINE_TYPE=binary \
-    PRISMA_CLI_QUERY_ENGINE_TYPE=binary
-RUN apk add --no-cache openssl
+ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 
 # Solo deps de producción
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Artefactos compilados y prisma (por si usas migraciones en runtime)
+# Artefactos compilados y prisma
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma

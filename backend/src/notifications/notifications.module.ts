@@ -7,24 +7,26 @@ import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 import { SmsService } from './sms.service';
 
-// Push (registro de tokens Expo/FCM)
 import { PushController } from './push.controller';
 import { PushService } from './push.service';
 
 @Module({
-  imports: [ConfigModule, PrismaModule],
+  imports: [
+    ConfigModule, // si tienes configs por feature, puedes añadir forFeature(...) en otros módulos
+    PrismaModule, // requerido por PushService (UserPushToken) y por servicios que usan DB
+  ],
   controllers: [
-    NotificationsController, // controladores existentes (ej. sms/whatsapp webhooks)
-    PushController,          // nuevo: /notifications/push/register
+    NotificationsController, // webhooks u otros endpoints de notificaciones
+    PushController,          // /notifications/push/register (y test si lo expones)
   ],
   providers: [
-    NotificationsService, // lógica existente (sms/whatsapp u otros)
-    SmsService,           // wrapper Twilio SMS u otro proveedor
-    PushService,          // nuevo: gestión de tokens push
+    NotificationsService,    // lógica existente (sms/otros)
+    SmsService,              // wrapper Twilio SMS
+    PushService,             // registro/envío de notificaciones push (Expo)
   ],
   exports: [
-    SmsService,  // ⬅️ importante para que AuthModule/OrdersModule pueda inyectarlo
-    PushService, // para enviar notifs push desde otros módulos (Orders, etc.)
+    SmsService,              // disponible para otros módulos (Auth/Orders, etc.)
+    PushService,             // disponible para OrdersService (envío push al crear/cambiar estado)
   ],
 })
 export class NotificationsModule {}
