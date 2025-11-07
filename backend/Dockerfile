@@ -1,13 +1,12 @@
 # ----------------------------------------------------------------------
 # ETAPA 1: BUILD (Compilación y generación de artefactos)
 # ----------------------------------------------------------------------
-# Utilizamos una imagen Node base para instalar dependencias de desarrollo y compilar.
 FROM node:20.19.0-alpine AS build
 
-# Establecer el directorio de trabajo dentro del contenedor
+# Establecer el directorio de trabajo
 WORKDIR /app
 
-# Copiar package.json y package-lock.json (o yarn.lock) para instalar dependencias.
+# Copiar package.json y package-lock.json
 COPY package*.json ./
 
 # Instalar TODAS las dependencias (incluyendo devDependencies para la compilación)
@@ -19,31 +18,29 @@ COPY . .
 # CRÍTICO: Compilar la aplicación
 RUN npm run build
 
-# CRÍTICO: Regenerar el cliente de Prisma para que esté listo en la imagen.
-# Esto asegura que el cliente binario coincida con el entorno Alpine del Docker.
-# Además, si has hecho cambios en el esquema como los de Promotions, esto lo asegura.
+# CRÍTICO: Regenerar el cliente de Prisma (necesario para el build)
 RUN npx prisma generate
 
 # ----------------------------------------------------------------------
 # ETAPA 2: PRODUCTION (Imagen final de ejecución)
 # ----------------------------------------------------------------------
-# Utilizamos una imagen Node más limpia y pequeña para la ejecución final
 FROM node:20.19.0-alpine AS production
 
 # Establecer el directorio de trabajo
 WORKDIR /app
 
-# Copiar solo los archivos necesarios para la ejecución
+# Copiar package.json y package-lock.json
 COPY package*.json ./
 
-# Instalar SOLO dependencias de producción (más ligero)
-RUN npm install --only=production
+# CRÍTICO: Instalar SOLO dependencias de producción, IGNORANDO SCRIPTS.
+# Esto previene que 'npx prisma generate' falle aquí, ya que el cliente
+# generado en la etapa 'build' será copiado posteriormente.
+RUN npm install --only=production --ignore-scripts
 
 # CRÍTICO: Copiar la carpeta compilada (dist) desde la etapa 'build'
 COPY --from=build /app/dist ./dist
 
 # CRÍTICO: Copiar el cliente binario de Prisma y el esquema desde la etapa 'build'
-# Esto es esencial para que Prisma pueda conectarse a la DB en runtime.
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/prisma ./prisma
 
@@ -51,5 +48,4 @@ COPY --from=build /app/prisma ./prisma
 EXPOSE 3000
 
 # Comando de inicio
-# Usamos el script start:prod simplificado que ya corregimos.
 CMD [ "npm", "run", "start:prod" ]
