@@ -1,8 +1,13 @@
 [build]
 builder = "NIXPACKS"
-# 1) Compila con tsc (build.json si existe; si no, usa tsconfig.json)
-# 2) Verifica que dist/main.js exista (si no, falla el build con diagnóstico)
-buildCommand = "npx tsc -p tsconfig.build.json || npx tsc -p tsconfig.json && (test -f dist/main.js || (echo '❌ dist/main.js no existe tras build' && ls -la && ls -la dist || true && exit 1))"
+
+# Nixpacks ya hace `npm ci` en la fase install.
+# Aquí replicamos tu orden exacto, en bash:
+# 1) limpiar tsbuildinfo
+# 2) prisma generate
+# 3) compilar con tsc -p tsconfig.json (tu receta)
+# 4) verificar que exista dist/main.js (si no, falla el build con diagnóstico)
+buildCommand = "rm -f tsconfig.tsbuildinfo tsconfig.build.tsbuildinfo && npx prisma generate && npx tsc -p tsconfig.json && (test -f dist/main.js || (echo '❌ dist/main.js no existe tras build' && ls -la && ls -la dist || true && exit 1))"
 
 [deploy]
 preDeployCommand = "npx prisma migrate deploy"
