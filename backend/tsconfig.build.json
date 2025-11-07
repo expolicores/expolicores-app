@@ -5,6 +5,7 @@
     "rootDir": "./src",
     "declaration": false
   },
+  "files": ["./src/main.ts"],
   "include": ["./src/**/*.ts"],
   "exclude": ["node_modules", "test", "dist", "**/*.spec.ts"]
 }

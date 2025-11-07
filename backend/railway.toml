@@ -1,8 +1,8 @@
 [build]
 builder = "NIXPACKS"
-# 1) compila
-# 2) valida que exista dist/main.js (si no, falla el build y vemos el error ahí, no en runtime)
-buildCommand = "npm run build && (test -f dist/main.js || (echo '❌ dist/main.js no existe tras build' && ls -la && ls -la dist || true && exit 1))"
+# 1) Compila con tsc (build.json si existe; si no, usa tsconfig.json)
+# 2) Verifica que dist/main.js exista (si no, falla el build con diagnóstico)
+buildCommand = "npx tsc -p tsconfig.build.json || npx tsc -p tsconfig.json && (test -f dist/main.js || (echo '❌ dist/main.js no existe tras build' && ls -la && ls -la dist || true && exit 1))"
 
 [deploy]
 preDeployCommand = "npx prisma migrate deploy"
