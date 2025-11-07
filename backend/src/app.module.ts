@@ -29,6 +29,9 @@ import { FeedModule } from './feed/feed.module';
 // Promotions — ADMIN (CRUD + overlays públicos)
 import { PromotionsModule } from './promotions/promotions.module';
 
+// Live Activities (ActivityKit) — servicio usado por OrdersService
+import { LiveActivitiesModule } from './live-activities/live-activities.module';
+
 @Module({
   imports: [
     // Config global (.env) + feature flags
@@ -44,6 +47,10 @@ import { PromotionsModule } from './promotions/promotions.module';
     UsersModule,
     AddressesModule,
     ProductsModule,
+
+    // Live Activities debe estar disponible para OrdersModule
+    LiveActivitiesModule,
+
     OrdersModule,
     FavoritesModule,
 

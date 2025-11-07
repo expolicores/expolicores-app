@@ -1,25 +1,24 @@
-// backend/src/orders/orders.module.ts
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-
+import { Module, forwardRef } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
-import { OrderNotificationsController } from './notifications.controller';
-
-import { PrismaModule } from '../prisma/prisma.module';
-import { WhatsAppModule } from '../notifications/whatsapp.module';
-import { NotificationsModule } from '../notifications/notifications.module'; // ← para inyectar PushService
-
-import shippingConfig from '../config/shipping';
+import { PrismaService } from '../prisma/prisma.service';
+import { WhatsAppService } from '../notifications/whatsapp.service';
+import { PushService } from '../notifications/push.service'; // o donde lo tengas
+import { LiveActivitiesModule } from '../live-activities/live-activities.module';
 
 @Module({
   imports: [
-    PrismaModule,
-    WhatsAppModule,
-    NotificationsModule,                 // ← expone PushService para OrdersService
-    ConfigModule.forFeature(shippingConfig), // ← CONFIG(shipping) disponible
+    // Usa forwardRef si hay ciclo; si no hay ciclo, puedes dejar sólo LiveActivitiesModule
+    forwardRef(() => LiveActivitiesModule),
   ],
-  controllers: [OrdersController, OrderNotificationsController],
-  providers: [OrdersService],
+  controllers: [OrdersController],
+  // prettier-ignore
+  providers: [
+    OrdersService,
+    PrismaService,
+    WhatsAppService,
+    PushService,
+  ],
+  exports: [OrdersService],
 })
 export class OrdersModule {}
