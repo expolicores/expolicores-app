@@ -17,6 +17,7 @@ import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
 import { validateGeo } from '../common/geo'; // ← misma lógica que /geo/validate
 import { PushService } from '../notifications/push.service'; // ← Expo Push
+import { LiveActivitiesService } from '../live-activities/live-activities.service'; // ← APNs Live Activity (nuevo)
 
 @Injectable()
 export class OrdersService {
@@ -27,7 +28,8 @@ export class OrdersService {
     @Inject(shippingConfig.KEY)
     private readonly shipping: ConfigType<typeof shippingConfig>,
     private readonly whatsapp: WhatsAppService,
-    private readonly push: PushService, // ← inyectamos push
+    private readonly push: PushService,
+    private readonly liveActivities: LiveActivitiesService, // ← inyectamos Live Activities
   ) {}
 
   private readonly orderInclude = {
@@ -133,6 +135,9 @@ export class OrdersService {
     } catch (e) {
       this.logger.warn(`push ORDER_CREATED failed for user ${userId}: ${(e as Error).message}`);
     }
+
+    // (Live Activities): la app iOS inicia la actividad y registra el token desde el frontend.
+    // El backend NO envía update aquí; solo responderá a cambios de estado.
 
     // ===== WhatsApp confirmación =====
     const toPhone = this.normalizeCoPhone(user.phone ?? created.user?.phone ?? '');
@@ -285,6 +290,23 @@ export class OrdersService {
       }
     } catch (e) {
       this.logger.warn(`push STATUS_${status} failed for user ${order.userId}: ${(e as Error).message}`);
+    }
+
+    // ===== Live Activities (APNs liveactivity) — no bloquea =====
+    try {
+      // Enviamos update con el nuevo estado; si no hay Live Activity registrada, el service ignora.
+      await this.liveActivities.update(order.id, {
+        orderId: order.id,
+        status, // EN_CAMINO | ENTREGADO | CANCELADO (RECIBIDO no se usa en frontend)
+      });
+
+      if (status === 'ENTREGADO' || status === 'CANCELADO') {
+        await this.liveActivities.end(order.id, status);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `liveActivity STATUS_${status} failed for order ${order.id}: ${(e as Error).message}`,
+      );
     }
 
     // ===== WhatsApp por estado (como estaba) =====

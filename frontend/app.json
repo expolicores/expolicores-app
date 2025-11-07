@@ -47,6 +47,21 @@
           "icon": "./assets/notification-icon.png",
           "color": "#D72638"
         }
+      ],
+      [
+        "@kingstinct/react-native-activity-kit",
+        {
+          "activityAttributesFile": "./ios/OrderActivityAttributes.swift",
+          "bundleIdentifier": "com.expolicores.app"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.2"
+          }
+        }
       ]
     ],
     "extra": {

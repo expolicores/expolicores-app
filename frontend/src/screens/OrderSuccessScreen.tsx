@@ -1,9 +1,10 @@
 // frontend/src/screens/OrderSuccessScreen.tsx
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useNotifications } from '../context/NotificationsContext';
 import { presentLocalNotification } from '../lib/notifications';
+import { startOrderActivity } from '../lib/liveActivity';
 
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();
@@ -23,6 +24,9 @@ export default function OrderSuccessScreen() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value || 0);
 
+  // Evita iniciar la Live Activity más de una vez
+  const startedLiveActivityRef = useRef(false);
+
   // Soft-ask de notificaciones: solo si aún no está concedido
   useEffect(() => {
     if (status === 'unknown' || status === 'denied') {
@@ -37,6 +41,24 @@ export default function OrderSuccessScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // una sola vez al entrar a esta pantalla
+
+  // Inicia la Live Activity (iOS 16.2+) y registra el pushToken en backend
+  useEffect(() => {
+    if (!orderId) return;
+    if (startedLiveActivityRef.current) return;
+    startedLiveActivityRef.current = true;
+
+    // addressShort puede venir en params si lo pasas desde Checkout
+    const addressShort: string | undefined =
+      params?.addressShort || params?.address?.short || undefined;
+
+    void startOrderActivity({
+      orderId,
+      totalCOP: total,
+      addressShort,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId, total]);
 
   const openWhatsApp = async () => {
     const message = encodeURIComponent(`Hola, consulto por mi pedido #${orderId ?? ''}.`);

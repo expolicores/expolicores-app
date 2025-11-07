@@ -44,6 +44,20 @@ enum PushPlatform {
   android
 }
 
+// === Promotions (Fase 1) ===
+enum PromotionType {
+  PRICE_OVERRIDE
+  PERCENT_OFF
+  X_FOR_Y
+  GIFT_WITH_PURCHASE
+}
+
+enum PromotionAudience {
+  ANY
+  B2C
+  B2B
+}
+
 // ---------- Modelos ----------
 model User {
   id   Int    @id @default(autoincrement())
@@ -69,13 +83,14 @@ model User {
   lastOtpSentAt DateTime?
 
   // Notificaciones push
-  pushTokens UserPushToken[]                           // relación 1:N (multi-dispositivo)
+  pushTokens UserPushToken[] // relación 1:N (multi-dispositivo)
 
   // Relaciones
   orders                  Order[]
   addresses               Address[]
   favorites               Favorite[]
-  emailVerificationTokens EmailVerificationToken[]     // inversa
+  emailVerificationTokens EmailVerificationToken[] // inversa
+  liveActivities          OrderLiveActivity[]      @relation("User_LiveActivities")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -104,33 +119,35 @@ model Order {
   user          User              @relation(fields: [userId], references: [id])
   items         OrderItem[]
   notifications NotificationLog[]
+
+  // back-relation 1:1 a Live Activity
+  liveActivity OrderLiveActivity? @relation("Order_LiveActivity")
 }
 
 model NotificationLog {
-  id         Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   // Relación con Order (opcional para callbacks “sueltos”)
-  orderId    Int?
-  order      Order?    @relation(fields: [orderId], references: [id])
+  orderId Int?
+  order   Order? @relation(fields: [orderId], references: [id])
 
   // Datos de envío
-  type       String              // p.ej. "ORDER_CONFIRMATION", "STATUS_ENTREGADO", "STATUS_CALLBACK"
-  to         String?             // "whatsapp:+57..." o "+57..." si SMS
-  ok         Boolean   @default(false)
-  sid        String?
-  error      String?
+  type  String // p.ej. "ORDER_CONFIRMATION", "STATUS_ENTREGADO", "STATUS_CALLBACK"
+  to    String? // "whatsapp:+57..." o "+57..." si SMS
+  ok    Boolean @default(false)
+  sid   String?
+  error String?
 
   // Trazabilidad Twilio
-  channel    String?             // "whatsapp" | "sms"
+  channel    String? // "whatsapp" | "sms"
   messageSid String?
   errorCode  String?
   payload    Json?
 
-  createdAt  DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   // Idempotencia por orden+tipo
   @@unique([orderId, type], map: "orderId_type")
-
   // Búsqueda por MessageSid
   @@index([messageSid])
 }
@@ -150,6 +167,7 @@ model Product {
 
   orderItems  OrderItem[]
   favorites   Favorite[]
+  promotionProducts PromotionProduct[]   // back-relation activo
 
   @@index([category])
 }
@@ -229,75 +247,71 @@ model IdempotencyKey {
 
 // ---------- Push Tokens (nuevo) ----------
 model UserPushToken {
-  id         String        @id @default(cuid())
+  id String @id @default(cuid())
 
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId     Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId Int
 
-  token      String        @unique       // Expo/FCM token
+  token      String       @unique // Expo/FCM token
   platform   PushPlatform
-  lastUsedAt DateTime      @default(now())
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  lastUsedAt DateTime     @default(now())
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
 
   @@index([userId])
 }
 
-// === Promotions (Fase 1) ===
-enum PromotionType {
-PRICE_OVERRIDE
-PERCENT_OFF
-X_FOR_Y
-GIFT_WITH_PURCHASE
-}
-
-
-enum PromotionAudience {
-ANY
-B2C
-B2B
-}
-
-
 model Promotion {
-id String @id @default(cuid())
-name String
-type PromotionType
-audience PromotionAudience @default(ANY)
-active Boolean @default(true)
-stacking Boolean @default(false)
-priority Int @default(100) // menor = más prioridad
-startsAt DateTime
-endsAt DateTime
-conditionsJson Json? // { minQty?, minSpend?, categoryIds? }
-benefitsJson Json? // { price? , percent? }
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
+  id             String            @id @default(cuid())
+  name           String
+  type           PromotionType
+  audience       PromotionAudience @default(ANY)
+  active         Boolean           @default(true)
+  stacking       Boolean           @default(false)
+  priority       Int               @default(100) // menor = más prioridad
+  startsAt       DateTime
+  endsAt         DateTime
+  conditionsJson Json?
+  benefitsJson   Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
-
-products PromotionProduct[]
+  products PromotionProduct[]
 }
-
 
 model PromotionProduct {
-id String @id @default(cuid())
-promotionId String
-productId String // FK a Product.id (asumiendo model Product { id: String @id })
-minQty Int? // si aplica
+  id           String     @id @default(cuid())
+  promotionId  String
+  productId    Int        // definitivo
+  minQty       Int?
 
+  promotion    Promotion  @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
-
-
-@@index([promotionId])
-@@index([productId])
+  @@index([promotionId])
+  @@index([productId])
 }
 
 model BundleMap {
-  bundleId   String   @id            // SKU promo (ej. "1001")
-  components Json                     // [{ productId: "3", qty: 3 }, { productId: "12", qty: 1 }]
-  active     Boolean  @default(true)  // habilitado/pausado
-  notes      String?                  // opcional: “X_FOR_Y de cerveza…”
+  bundleId   String   @id // SKU promo (ej. "1001")
+  components Json // [{ productId: 3, qty: 3 }, { productId: 12, qty: 1 }]
+  active     Boolean  @default(true) // habilitado/pausado
+  notes      String? // opcional: “X_FOR_Y de cerveza…”
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model OrderLiveActivity {
+  id         Int      @id @default(autoincrement())
+  orderId    Int      @unique
+  userId     Int
+  activityId String
+  pushToken  String
+  isEnded    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relaciones nombradas (evitan ambigüedad)
+  order Order @relation("Order_LiveActivity", fields: [orderId], references: [id], onDelete: Cascade)
+  user  User  @relation("User_LiveActivities", fields: [userId], references: [id], onDelete: Cascade)
 }

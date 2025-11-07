@@ -165,7 +165,7 @@ export class PromotionsService {
       return String(fromBenefits).trim();
     }
 
-    const firstRel = Array.isArray(p?.products) && p.products[0]?.productId
+    const firstRel = Array.isArray(p?.products) && p.products[0]?.productId != null
       ? String(p.products[0].productId)
       : null;
 
@@ -217,9 +217,10 @@ export class PromotionsService {
         benefitsJson: rest.benefits ?? undefined,
         conditionsJson: rest.conditions ?? undefined,
         products: {
+          // ⚠️ Creación anidada correcta: conectamos el Product por id (INT)
           create: products.map((p) => ({
-            productId: String(p.productId),
-            minQty: p.minQty ?? null,
+            minQty: p.minQty ?? undefined,
+            product: { connect: { id: Number(p.productId) } },
           })),
         },
       },
@@ -291,10 +292,11 @@ export class PromotionsService {
       if (products.length) {
         await this.prisma.promotionProduct.createMany({
           data: products.map((p) => ({
-            promotionId: id,
-            productId: String(p.productId),
+            promotionId: id,                       // Promotion.id (string)
+            productId: Number(p.productId),        // ⚠️ FK a Product.id (INT)
             minQty: p.minQty ?? null,
           })),
+          skipDuplicates: true,
         });
       }
     }
