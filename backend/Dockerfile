@@ -6,20 +6,26 @@ FROM node:20.19.0-alpine AS build
 # Establecer el directorio de trabajo
 WORKDIR /app
 
-# Copiar package.json y package-lock.json
+# 1. Copiar package.json y package-lock.json
 COPY package*.json ./
 
-# Instalar TODAS las dependencias (incluyendo devDependencies para la compilación)
+# 2. CRÍTICO: Copiar la carpeta 'prisma' ANTES de instalar.
+# Esto es necesario para que el script 'postinstall' pueda encontrar el schema.
+COPY prisma ./prisma
+
+# 3. Instalar TODAS las dependencias (incluyendo devDependencies para la compilación)
+# Ahora 'npm install' ejecuta 'prisma generate' sin error.
 RUN npm install
 
-# Copiar el código fuente
+# 4. Copiar el resto del código fuente
 COPY . .
 
-# CRÍTICO: Compilar la aplicación
+# 5. CRÍTICO: Compilar la aplicación
 RUN npm run build
 
-# CRÍTICO: Regenerar el cliente de Prisma (necesario para el build)
-RUN npx prisma generate
+# Opcional: Eliminar la línea 'RUN npx prisma generate' si ya se ejecutó en postinstall.
+# Pero la dejaremos si quieres asegurar que el cliente se genera específicamente en este punto.
+# RUN npx prisma generate 
 
 # ----------------------------------------------------------------------
 # ETAPA 2: PRODUCTION (Imagen final de ejecución)
@@ -32,9 +38,7 @@ WORKDIR /app
 # Copiar package.json y package-lock.json
 COPY package*.json ./
 
-# CRÍTICO: Instalar SOLO dependencias de producción, IGNORANDO SCRIPTS.
-# Esto previene que 'npx prisma generate' falle aquí, ya que el cliente
-# generado en la etapa 'build' será copiado posteriormente.
+# Instalar SOLO dependencias de producción, IGNORANDO SCRIPTS.
 RUN npm install --only=production --ignore-scripts
 
 # CRÍTICO: Copiar la carpeta compilada (dist) desde la etapa 'build'
