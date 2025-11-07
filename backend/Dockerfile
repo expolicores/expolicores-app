@@ -23,10 +23,6 @@ COPY . .
 # 5. CRÍTICO: Compilar la aplicación
 RUN npm run build
 
-# Opcional: Eliminar la línea 'RUN npx prisma generate' si ya se ejecutó en postinstall.
-# Pero la dejaremos si quieres asegurar que el cliente se genera específicamente en este punto.
-# RUN npx prisma generate 
-
 # ----------------------------------------------------------------------
 # ETAPA 2: PRODUCTION (Imagen final de ejecución)
 # ----------------------------------------------------------------------
@@ -39,6 +35,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Instalar SOLO dependencias de producción, IGNORANDO SCRIPTS.
+# Ignoramos postinstall para que Prisma no intente regenerar binarios innecesariamente.
 RUN npm install --only=production --ignore-scripts
 
 # CRÍTICO: Copiar la carpeta compilada (dist) desde la etapa 'build'
@@ -51,5 +48,5 @@ COPY --from=build /app/prisma ./prisma
 # Exponer el puerto
 EXPOSE 3000
 
-# Comando de inicio
+# Comando de inicio (usa el script simplificado en package.json)
 CMD [ "npm", "run", "start:prod" ]
