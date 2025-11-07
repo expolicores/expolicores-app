@@ -1,13 +1,9 @@
 # backend/railway.toml
 
 [build]
-# Usa Nixpacks (sin Docker)
 builder = "NIXPACKS"
-# Como la raíz del servicio ya es /backend, NO hacemos "cd backend"
-buildCommand = "npm ci && npm run build"
+buildCommand = "npm run build"   # <-- sin npm ci
 
 [deploy]
-# Aplica migraciones antes de arrancar
 preDeployCommand = "npx prisma migrate deploy"
-# Arranca Nest compilado
 startCommand = "node dist/main.js"
