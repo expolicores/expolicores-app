@@ -1,8 +1,8 @@
-# backend/railway.toml
-
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm run build"   # <-- sin npm ci
+# 1) compila
+# 2) valida que exista dist/main.js (si no, falla el build y vemos el error ahí, no en runtime)
+buildCommand = "npm run build && (test -f dist/main.js || (echo '❌ dist/main.js no existe tras build' && ls -la && ls -la dist || true && exit 1))"
 
 [deploy]
 preDeployCommand = "npx prisma migrate deploy"
