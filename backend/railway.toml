@@ -1,16 +1,35 @@
-# CRÍTICO: Este archivo debe estar en la RAÍZ de tu repositorio.
-# Esto asegura que Railway lo lea primero y aplique las reglas antes de intentar un Dockerfile.
+# /backend/railway.toml
+
+$schema = "https://railway.com/railway.schema.json"
 
 [build]
-# Indica a Railway que use el sistema de build automático de Node.js (Nixpacks).
-# Esto ignora el Dockerfile y nos da un build más estable.
-builder = "NIXPACKS"
+# Fuerza el builder “Railpack” (no Dockerfile).
+builder = "RAILPACK"
 
-# CRÍTICO: Indica a Nixpacks que busque el 'package.json' y el código
-# fuente dentro de la carpeta 'backend'.
-rootDirectory = "backend"
+# Compila Nest: instala deps y transpila a dist/
+buildCommand = "npm ci && npm run build"
 
-# Define explícitamente el comando que Railway debe ejecutar para iniciar
-# el servicio DESPUÉS de la compilación, asegurando que use tu script de producción.
-[start]
-cmd = "npm run start:prod"
+# Opcional: paths que al cambiar disparan build
+watchPatterns = [
+  "src/**",
+  "prisma/**",
+  "package.json",
+  "tsconfig*.json"
+]
+
+[deploy]
+# Ejecuta migraciones antes de arrancar
+preDeployCommand = ["npx prisma migrate deploy"]
+
+# Arranque del servicio (Nest compilado)
+startCommand = "node dist/main.js"
+
+# Healthcheck (ajústalo a tu endpoint)
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+
+# Política de reinicio (sugerido)
+restartPolicyType = "ALWAYS"
+
+# Escalado simple (opcional)
+numReplicas = 1
