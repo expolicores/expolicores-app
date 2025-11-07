@@ -1,2 +1,9 @@
+# Este archivo DEBE estar en la raíz de tu repositorio.
+
 [build]
+# Indica a Railway que use el sistema de build automático (Nixpacks).
 builder = "NIXPACKS"
+
+# CRÍTICO: Indica que el código fuente (package.json, etc.) 
+# se encuentra dentro de la carpeta 'backend'.
+rootDirectory = "backend"
