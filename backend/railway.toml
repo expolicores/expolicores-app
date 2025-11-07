@@ -1,35 +1,13 @@
-# /backend/railway.toml
-
-$schema = "https://railway.com/railway.schema.json"
+# backend/railway.toml
 
 [build]
-# Fuerza el builder “Railpack” (no Dockerfile).
-builder = "RAILPACK"
-
-# Compila Nest: instala deps y transpila a dist/
+# Usa Nixpacks (builder por defecto de Railway), no Docker
+builder = "NIXPACKS"
+# Compila Nest a dist/
 buildCommand = "npm ci && npm run build"
 
-# Opcional: paths que al cambiar disparan build
-watchPatterns = [
-  "src/**",
-  "prisma/**",
-  "package.json",
-  "tsconfig*.json"
-]
-
 [deploy]
-# Ejecuta migraciones antes de arrancar
-preDeployCommand = ["npx prisma migrate deploy"]
-
+# Corre migraciones antes de iniciar
+preDeployCommand = "npx prisma migrate deploy"
 # Arranque del servicio (Nest compilado)
 startCommand = "node dist/main.js"
-
-# Healthcheck (ajústalo a tu endpoint)
-healthcheckPath = "/health"
-healthcheckTimeout = 300
-
-# Política de reinicio (sugerido)
-restartPolicyType = "ALWAYS"
-
-# Escalado simple (opcional)
-numReplicas = 1
