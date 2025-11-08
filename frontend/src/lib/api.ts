@@ -1,5 +1,5 @@
 // frontend/src/lib/api.ts
-import axios, { AxiosError, type AxiosInstance } from 'axios';
+import axios, { AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 import { Platform } from 'react-native';
 import { ENV } from '../config/env';
 
@@ -13,7 +13,7 @@ import type {
   OrderWithUser,
 } from '../types/order';
 
-/* ================= Base URL ================= */
+/* ================= Base URL (SIN PREFIJO GLOBAL) ================= */
 
 function isAbsoluteHttpUrl(v?: string | null) {
   if (!v) return false;
@@ -24,7 +24,7 @@ function normalizeBaseUrl(input?: string | null): string | undefined {
   let v = input.trim();
   if (!v) return undefined;
   if (!isAbsoluteHttpUrl(v)) v = `https://${v}`;
-  return v.replace(/\/+$/, '');
+  return v.replace(/\/+$/, ''); // sin trailing slash
 }
 
 const RAW_API_BASE_URL =
@@ -37,6 +37,7 @@ const API_BASE_URL =
   normalizeBaseUrl(RAW_API_BASE_URL) ||
   (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');
 
+// No usamos prefijo tipo /api. Si algún día decides usarlo, agrega EXPO_PUBLIC_API_PREFIX y concaténalo aquí.
 const API_TIMEOUT_MS = Number(ENV.API_TIMEOUT_MS ?? 15000);
 
 console.log('[API] BASE_URL =>', API_BASE_URL, '| timeout =', API_TIMEOUT_MS, 'ms');
@@ -54,7 +55,19 @@ export const api: AxiosInstance = axios.create({
   },
 });
 
-/* ================= Request interceptor (no sobreescribir headers) ================= */
+/** Util para depurar: arma URL absoluta del request */
+function absoluteUrl(cfg?: InternalAxiosRequestConfig): string {
+  if (!cfg) return '(no config)';
+  const base = (cfg.baseURL || '').replace(/\/+$/, '');
+  const path = (cfg.url || '').replace(/^\/+/, '');
+  try {
+    return new URL(path, base ? base + '/' : undefined).toString();
+  } catch {
+    return `${base}/${path}`;
+  }
+}
+
+/* ================= Depuración HTTP ================= */
 
 const DEBUG_HTTP =
   (ENV as any).DEBUG_HTTP ??
@@ -66,6 +79,8 @@ const DEBUG_HTTP_VERBOSITY =
 const lastLogAt: Record<string, number> = {};
 const DEDUPE_MS = 800;
 const NOISY_PATHS = [/^\/auth\/me$/, /^\/orders\/my$/];
+
+/* ================= Request interceptor (no sobreescribir headers) ================= */
 
 api.interceptors.request.use((config) => {
   const method = (config.method || 'get').toLowerCase();
@@ -93,7 +108,6 @@ api.interceptors.request.use((config) => {
 
   if (config.data != null && !isFormData) {
     if (!has('Content-Type')) set('Content-Type', 'application/json');
-    // Axios serializa solo si le pasas objeto + content-type json; para blindarnos:
     if (typeof config.data !== 'string') {
       try {
         config.data = JSON.stringify(config.data);
@@ -116,7 +130,7 @@ api.interceptors.request.use((config) => {
           (typeof (H as any).get === 'function' && (H as any).get('Authorization')) ||
           (config.headers as any)?.Authorization ||
           (config.headers as any)?.authorization;
-        console.log('[API] ->', method, config.url, 'auth:', !!authHdr);
+        console.log('[API] ->', method.toUpperCase(), absoluteUrl(config), 'auth:', !!authHdr);
         lastLogAt[key] = now;
       }
     }
@@ -125,13 +139,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-/* ================= Response interceptor (normaliza error) ================= */
+/* ================= Response interceptor (normaliza error y muestra URL absoluta) ================= */
 
 export type ApiErrorShape = {
   status: number;
   message: string;
   details?: any;
+  url?: string;
 };
+
 api.interceptors.response.use(
   (r) => r,
   (err: AxiosError) => {
@@ -141,8 +157,11 @@ api.interceptors.response.use(
       (Array.isArray(data?.message) ? data.message.join(', ') : data?.message) ||
       err.message ||
       'Error de red';
-    const apiErr: ApiErrorShape = { status, message, details: data };
-    if (__DEV__) console.warn('[API ERROR]', apiErr);
+    const url = absoluteUrl(err.config as any);
+
+    const apiErr: ApiErrorShape = { status, message, details: data, url };
+    // Siempre mostramos URL absoluta para cazar prefijos/base equivocada
+    console.warn('[API ERROR]', apiErr);
     return Promise.reject(apiErr);
   },
 );
@@ -154,7 +173,6 @@ export function setAuthToken(token: string | null | undefined) {
   _token = token ?? null;
   const val = _token ? `Bearer ${_token}` : undefined;
   if (val) {
-    // set en ambos por compatibilidad de mayúsculas
     (api.defaults.headers.common as any)['Authorization'] = val;
     (api.defaults.headers.common as any)['authorization'] = val;
   } else {
@@ -510,7 +528,6 @@ export type PricingView = 'B2C_ONLY' | 'B2B_DEFAULT' | 'COMPARATIVE' | 'PUBLIC_R
 export type SlotType = 'hero' | 'collection' | 'nav' | 'chips' | 'editorial';
 
 export interface FeedItem {
-  /** En algunos feeds usas "productId"; en otros cambiastes a "id". Dejamos ambos opcionales. */
   productId?: string;
   id?: string | number;
   title?: string;
@@ -562,20 +579,16 @@ export async function fetchFeed(opts?: {
 }
 
 /* ============== Promotions Overlay (REMOTO) ============== */
-/** Respuesta del endpoint remoto para overlays (ver backend GET /promotions/overlays) */
+
 export interface RemoteOverlayItem {
   id: string;
   name: string;
   productId: string;      // string numérica
   price?: number;         // PRICE_OVERRIDE (opcional)
-  imageUrl?: string;      // opcional si se guarda en metadata
+  imageUrl?: string;      // opcional
   bannerKey?: string;     // opcional
 }
 
-/**
- * Obtiene hasta 3 overlays vigentes según la audiencia (B2C | B2B).
- * El front los fusionará con el overlay local para que todos los devices vean lo mismo.
- */
 export async function fetchRemoteOverlay(audience: 'B2C' | 'B2B'): Promise<RemoteOverlayItem[]> {
   const { data } = await api.get<RemoteOverlayItem[]>('/promotions/overlays', {
     params: { audience },
