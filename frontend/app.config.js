@@ -18,12 +18,15 @@ module.exports = () => ({
     ios: {
       supportsTablet: true,
       bundleIdentifier: "com.expolicores.app",
-      buildNumber: "1.0.10",
+      buildNumber: "1.0.14",
       infoPlist: {
         UIBackgroundModes: ["remote-notification"],
         ITSAppUsesNonExemptEncryption: false,
-        // Recomendado para Live Activities (el entitlement lo añade el plugin)
         NSSupportsLiveActivities: true,
+      },
+      // Fuerza APNs prod para TestFlight y Live Activities por push
+      entitlements: {
+        "aps-environment": "production",
       },
     },
 
@@ -36,12 +39,9 @@ module.exports = () => ({
       },
       edgeToEdgeEnabled: true,
       permissions: ["POST_NOTIFICATIONS"],
-      // Nota: icono y color de notificaciones se configuran en el plugin expo-notifications (abajo)
     },
 
-    web: {
-      favicon: "./assets/favicon.png",
-    },
+    web: { favicon: "./assets/favicon.png" },
 
     plugins: [
       "expo-secure-store",
@@ -55,8 +55,7 @@ module.exports = () => ({
       [
         "@kingstinct/react-native-activity-kit",
         {
-          // Guarda este archivo en la RAÍZ del proyecto, no dentro de /ios
-          activityAttributesFile: "./OrderActivityAttributes.swift",
+          activityAttributesFile: "./ios/OrderActivityAttributes.swift",
           bundleIdentifier: "com.expolicores.app",
         },
       ],
@@ -64,8 +63,8 @@ module.exports = () => ({
         "expo-build-properties",
         {
           ios: {
-            // Importante: usar versiones reales de iOS SDK (no 26.x)
-            deploymentTarget: "17.5",
+            // ⬆️ Sube target para NitroActivityKit
+            deploymentTarget: "26.0",
             useFrameworks: "static",
           },
         },
@@ -73,9 +72,7 @@ module.exports = () => ({
     ],
 
     extra: {
-      eas: {
-        projectId: "1d03fcea-24a8-42d2-b3d8-c1a50919ac11",
-      },
+      eas: { projectId: "1d03fcea-24a8-42d2-b3d8-c1a50919ac11" },
     },
 
     owner: "expolicores",
