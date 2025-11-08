@@ -31,7 +31,10 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "seed": "ts-node --transpile-only src/prisma/seed.ts",
-    "reset:pass": "tsx scripts/reset-password.ts"
+    "reset:pass": "tsx scripts/reset-password.ts",
+    "clean:orders:user": "tsx scripts/cleanup-orders.ts --userId=",
+    "clean:orders:id": "tsx scripts/cleanup-orders.ts --orderId=",
+    "clean:orders:dry": "tsx scripts/cleanup-orders.ts --userId= --dryRun=true"
   },
   "prisma": {
     "seed": "ts-node --transpile-only src/prisma/seed.ts"

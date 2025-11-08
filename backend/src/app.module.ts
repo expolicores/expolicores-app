@@ -1,7 +1,7 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-
+import { LogsModule } from './logs/logs.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -46,6 +46,7 @@ import { LiveActivitiesModule } from './live-activities/live-activities.module';
     AuthModule,
     UsersModule,
     AddressesModule,
+    LogsModule,
     ProductsModule,
 
     // Live Activities debe estar disponible para OrdersModule

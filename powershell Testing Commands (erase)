@@ -1,24 +1,32 @@
-$API_BASE = "https://expolicores-app-production.up.railway.app"
-$TOKEN    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImVtYWlsIjoibmVnb2Npb0BleHBvbGljb3Jlcy5jb20iLCJyb2xlIjoiQjJCIiwiaWF0IjoxNzYxNzg0MjM2LCJleHAiOjE3NjIzODkwMzZ9.hmnqcrAIal5Fvm-HXV65L94MIqZh40dQjyiO2BvM-GM"
-$H = @{ Authorization = "Bearer $TOKEN" }
+$env:DATABASE_URL = "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway"
 
-# Si NO usas prefijo global:
-Invoke-RestMethod -Uri "$API_BASE/promotions/overlays?audience=B2C" -Headers $H -Method GET | ConvertTo-Json -Depth 6
+# 1) cuántas migraciones hay en DB
+'SELECT COUNT(*) FROM "_prisma_migrations";' |
+  npx prisma db execute --stdin --url $env:DATABASE_URL
 
-# Si SÍ usas 'api' como prefijo global:
-# Invoke-RestMethod -Uri "$API_BASE/api/promotions/overlays?audience=B2C" -Headers $H -Method GET | ConvertTo-Json -Depth 6
+# 2) listado de migraciones aplicadas
+@'
+SELECT migration_name, finished_at
+FROM "_prisma_migrations"
+ORDER BY started_at;
+'@ | npx prisma db execute --stdin --url $env:DATABASE_URL
 
+# 3) tipos de columnas en PromotionProduct
+@"
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name='PromotionProduct'
+  AND column_name IN ('productId','productId_int');
+"@ | npx prisma db execute --stdin --url $env:DATABASE_URL
 
-
-
-
-
-
-
-
-
-
---------------
-
-
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjIsImVtYWlsIjoibmVnb2Npb0BleHBvbGljb3Jlcy5jb20iLCJyb2xlIjoiQjJCIiwiaWF0IjoxNzYxNzg0MjM2LCJleHAiOjE3NjIzODkwMzZ9.hmnqcrAIal5Fvm-HXV65L94MIqZh40dQjyiO2BvM-GM
+# 4) conteos rápidos
+@'
+SELECT ''Product'' AS tbl, COUNT(*) FROM "Product"
+UNION ALL
+SELECT ''Order'', COUNT(*) FROM "Order"
+UNION ALL
+SELECT ''User'', COUNT(*) FROM "User"
+UNION ALL
+SELECT ''PromotionProduct'', COUNT(*) FROM "PromotionProduct";
+'@ | npx prisma db execute --stdin --url $env:DATABASE_URL

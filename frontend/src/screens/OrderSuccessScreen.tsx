@@ -1,9 +1,20 @@
 // frontend/src/screens/OrderSuccessScreen.tsx
 import React, { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Linking,
+  Alert,
+  Platform,
+} from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
+
 import { useNotifications } from '../context/NotificationsContext';
 import { presentLocalNotification } from '../lib/notifications';
+import { api } from '../lib/api';
 import { startOrderActivity } from '../lib/liveActivity';
 
 export default function OrderSuccessScreen() {
@@ -21,6 +32,7 @@ export default function OrderSuccessScreen() {
   const shipping: number =
     rawShipping ?? (rawSubtotal !== undefined ? Math.max(rawTotal - rawSubtotal, 0) : 0);
   const total: number = rawTotal || subtotal + shipping;
+
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value || 0);
 
@@ -42,21 +54,51 @@ export default function OrderSuccessScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // una sola vez al entrar a esta pantalla
 
-  // Inicia la Live Activity (iOS 16.2+) y registra el pushToken en backend
+  // Inicia la Live Activity (iOS 16.2+) y registra en backend — con guard para Expo Go y logs remotos
   useEffect(() => {
     if (!orderId) return;
     if (startedLiveActivityRef.current) return;
     startedLiveActivityRef.current = true;
 
+    const isExpoGo = Constants.appOwnership === 'expo';
+    const ctx = { scope: 'LA', orderId, platform: Platform.OS, isDevice: Device.isDevice, isExpoGo };
+
     // addressShort puede venir en params si lo pasas desde Checkout
     const addressShort: string | undefined =
       params?.addressShort || params?.address?.short || undefined;
 
-    void startOrderActivity({
-      orderId,
-      totalCOP: total,
-      addressShort,
-    });
+    (async () => {
+      try {
+        await api.post('/logs/client', { ...ctx, step: 'BEGIN' });
+
+        // Guards previos para no gastar builds innecesarios:
+        if (Platform.OS !== 'ios' || !Device.isDevice) {
+          await api.post('/logs/client', { ...ctx, step: 'SKIP_NOT_IOS_OR_DEVICE' });
+          return;
+        }
+        if (isExpoGo) {
+          // En Expo Go no existe ActivityKit; confirmamos que el flujo sí llegó hasta aquí
+          await api.post('/logs/client', { ...ctx, step: 'SKIP_EXPO_GO', reason: 'No ActivityKit in Expo Go' });
+          return;
+        }
+
+        // Llamada real: el helper debe manejar startActivity + pushToken + POST /live-activities/register
+        await api.post('/logs/client', { ...ctx, step: 'START_CALL' });
+        await startOrderActivity({
+          orderId,
+          totalCOP: total,
+          addressShort,
+        });
+        await api.post('/logs/client', { ...ctx, step: 'START_CALL_RETURNED' });
+      } catch (err: any) {
+        await api.post('/logs/client', {
+          ...ctx,
+          step: 'ERR',
+          message: String(err?.message ?? err),
+          stack: String(err?.stack ?? ''),
+        });
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId, total]);
 
