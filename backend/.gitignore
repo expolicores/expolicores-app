@@ -4,7 +4,7 @@
 /build
 
 # Logs
-logs
+#logs #comento temporalmente para ver si esto si me permite subir ahora el modulo de logs creado el 08-11-25
 *.log
 npm-debug.log*
 pnpm-debug.log*
