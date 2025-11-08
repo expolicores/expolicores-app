@@ -15,9 +15,9 @@ import { OrderStatus, Role } from '@prisma/client';
 import shippingConfig from '../config/shipping';
 import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
-import { validateGeo } from '../common/geo'; // ← misma lógica que /geo/validate
-import { PushService } from '../notifications/push.service'; // ← Expo Push
-import { LiveActivitiesService } from '../live-activities/live-activities.service'; // ← APNs Live Activity (nuevo)
+import { validateGeo } from '../common/geo';
+import { PushService } from '../notifications/push.service';
+import { LiveActivitiesService } from '../live-activities/live-activities.service';
 
 @Injectable()
 export class OrdersService {
@@ -29,7 +29,7 @@ export class OrdersService {
     private readonly shipping: ConfigType<typeof shippingConfig>,
     private readonly whatsapp: WhatsAppService,
     private readonly push: PushService,
-    private readonly liveActivities: LiveActivitiesService, // ← inyectamos Live Activities
+    private readonly liveActivities: LiveActivitiesService,
   ) {}
 
   private readonly orderInclude = {
@@ -61,7 +61,7 @@ export class OrdersService {
 
     const hasGeo = typeof address.lat === 'number' && typeof address.lng === 'number';
 
-    // ===== Productos y subtotal (respeta B2B/ADMIN) =====
+    // ===== Productos y subtotal =====
     if (!dto.items || dto.items.length === 0) throw new BadRequestException('EMPTY_CART');
 
     const ids = dto.items.map((i) => i.productId);
@@ -89,13 +89,12 @@ export class OrdersService {
       subtotal += unitPrice * it.quantity;
     }
 
-    // ===== Envío (MISMA lógica que Checkout: validateGeo) =====
-    let shipping = this.shipping.min; // fallback sin geo
+    // ===== Envío (misma lógica de /geo/validate) =====
+    let shipping = this.shipping.min;
     if (hasGeo) {
       const geo = validateGeo({ lat: address.lat as number, lng: address.lng as number });
       if (!geo.inCoverage) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
       shipping = geo.shippingCost;
-      // Para auditoría: geo.meta?.pricingMode, geo.distanceKm, etc.
     }
 
     const total = subtotal + shipping;
@@ -106,7 +105,7 @@ export class OrdersService {
         data: {
           userId,
           total,
-          status: OrderStatus.RECIBIDO, // estado inicial
+          status: OrderStatus.RECIBIDO,
           items: { create: dto.items.map((i) => ({ productId: i.productId, quantity: i.quantity })) },
         },
         include: this.orderInclude,
@@ -123,7 +122,7 @@ export class OrdersService {
       return order;
     });
 
-    // ===== PUSH: Pedido creado (no bloquea flujo) =====
+    // ===== PUSH: Pedido creado (no bloquea) =====
     try {
       await this.push.sendToUser(String(userId), {
         title: 'Pedido creado',
@@ -136,8 +135,8 @@ export class OrdersService {
       this.logger.warn(`push ORDER_CREATED failed for user ${userId}: ${(e as Error).message}`);
     }
 
-    // (Live Activities): la app iOS inicia la actividad y registra el token desde el frontend.
-    // El backend NO envía update aquí; solo responderá a cambios de estado.
+    // Live Activities: el frontend iOS inicia la Activity y llama /live-activities/register.
+    // Aquí NO enviamos update aún; lo haremos cuando cambie el estado.
 
     // ===== WhatsApp confirmación =====
     const toPhone = this.normalizeCoPhone(user.phone ?? created.user?.phone ?? '');
@@ -189,7 +188,7 @@ export class OrdersService {
       },
     });
 
-    // Devuelve totales explícitos para OrderSuccessScreen
+    // Totales explícitos para OrderSuccessScreen
     return { ...created, subtotal, shipping, total, address };
   }
 
@@ -276,7 +275,7 @@ export class OrdersService {
       include: this.orderInclude,
     });
 
-    // ===== PUSH por estado (no bloquea) =====
+    // ===== Expo Push por estado (no bloquea) =====
     try {
       const msg = this.messageForStatus(status, order.id);
       if (msg) {
@@ -292,21 +291,19 @@ export class OrdersService {
       this.logger.warn(`push STATUS_${status} failed for user ${order.userId}: ${(e as Error).message}`);
     }
 
-    // ===== Live Activities (APNs liveactivity) — no bloquea =====
+    // ===== Live Activities (APNs) — no bloquea =====
     try {
-      // Enviamos update con el nuevo estado; si no hay Live Activity registrada, el service ignora.
+      // Update con el nuevo estado; el service ignora si no hay LA registrada
       await this.liveActivities.update(order.id, {
         orderId: order.id,
-        status, // EN_CAMINO | ENTREGADO | CANCELADO (RECIBIDO no se usa en frontend)
+        status, // RECIBIDO | EN_CAMINO | ENTREGADO | CANCELADO
       });
 
       if (status === 'ENTREGADO' || status === 'CANCELADO') {
         await this.liveActivities.end(order.id, status);
       }
     } catch (e) {
-      this.logger.warn(
-        `liveActivity STATUS_${status} failed for order ${order.id}: ${(e as Error).message}`,
-      );
+      this.logger.warn(`liveActivity STATUS_${status} failed for order ${order.id}: ${(e as Error).message}`);
     }
 
     // ===== WhatsApp por estado (como estaba) =====
@@ -348,7 +345,7 @@ export class OrdersService {
     return { id };
   }
 
-  // E.164 CO básica (+57) para compatibilidad con Twilio WhatsApp
+  // E.164 CO básica (+57) para Twilio WhatsApp
   private normalizeCoPhone(input: string): string {
     const digits = (input || '').replace(/\D/g, '');
     if (!digits) return '+57';
@@ -359,7 +356,6 @@ export class OrdersService {
     return `+57${digits}`;
   }
 
-  // Mensajes para estados que existen en tu enum
   private messageForStatus(
     status: OrderStatus,
     orderId: number,
