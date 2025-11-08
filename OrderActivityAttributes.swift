@@ -1,4 +1,4 @@
-import ActivityKit
+//frontend/OrderActivityAttributes.swift
 import WidgetKit
 import SwiftUI
 

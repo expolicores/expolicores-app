@@ -1,14 +1,22 @@
 ﻿{
-  "cli": { "version": ">= 3.16.0" },
+  "cli": {
+    "appVersionSource": "remote"
+  },
   "build": {
     "production": {
-      "android": { "buildType": "app-bundle" },
-      "ios": { "simulator": false }
+      "ios": {
+        "image": "latest",
+        "resourceClass": "m-medium",
+        "autoIncrement": "buildNumber"
+      },
+      "env": {
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "NPM_CONFIG_IGNORE_SCRIPTS": "true",
+        "EXPO_DEBUG": "1"
+      }
     }
   },
   "submit": {
-    "production": {
-      "android": { "track": "internal" }
-    }
+    "production": {}
   }
 }
