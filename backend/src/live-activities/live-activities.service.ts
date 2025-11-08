@@ -1,10 +1,19 @@
 // src/live-activities/live-activities.service.ts
-import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, Order, OrderLiveActivity } from '@prisma/client';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { OrderLiveActivity } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { sendLiveActivityPush } from './live-apns';
 
 type ContentState = Record<string, any>;
+
+// Resultado mínimo que esperamos del push a APNs (Live Activities)
+interface PushResult {
+  status: number;
+  apnsId?: string;
+}
+
+// Shape real que devuelve Prisma cuando usamos `select: { id, userId }`
+type OrderLite = { id: number; userId: number };
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
@@ -33,12 +42,12 @@ export class LiveActivitiesService {
       throw new Error('Missing required fields for Live Activity register');
     }
 
-    const order: Order | null = await this.prisma.order.findUnique({
+    const order: OrderLite | null = await this.prisma.order.findUnique({
       where: { id: orderId },
       select: { id: true, userId: true },
     });
 
-    if (!order) throw new Error(`Order not found: ${orderId}`);
+    if (!order) throw new NotFoundException(`Order not found: ${orderId}`);
 
     // Cierra cualquier LA previa activa del mismo usuario
     const prevActives = await this.prisma.orderLiveActivity.findMany({
@@ -72,7 +81,9 @@ export class LiveActivitiesService {
       },
     });
 
-    this.logger.log(`LA.start → order=${orderId} user=${order.userId} activityId=${activityId}`);
+    this.logger.log(
+      `LA.start → order=${orderId} user=${order.userId} activityId=${activityId}`,
+    );
 
     return ola;
   }
@@ -101,7 +112,12 @@ export class LiveActivitiesService {
     };
 
     try {
-      const res = await sendLiveActivityPush(ola.pushToken, payload);
+      // Forzamos el tipo esperado del resultado para evitar el "never"
+      const res: PushResult = (await sendLiveActivityPush(
+        ola.pushToken,
+        payload,
+      )) as any;
+
       this.logger.log(
         `LA.update sent → order=${orderId} status=${res?.status ?? 'unknown'} apns-id=${res?.apnsId ?? '-'}`,
       );
@@ -118,7 +134,11 @@ export class LiveActivitiesService {
    * - Marca la fila como isEnded=true.
    * - Envía push con event=end y stale-date.
    */
-  async end(orderId: number, finalStatus = 'ENTREGADO', staleSeconds = 30 * 60): Promise<void> {
+  async end(
+    orderId: number,
+    finalStatus = 'ENTREGADO',
+    staleSeconds = 30 * 60,
+  ): Promise<void> {
     const ola = await this.prisma.orderLiveActivity.findUnique({ where: { orderId } });
     if (!ola) {
       this.logger.warn(`LA.end skipped (not found) → order=${orderId}`);
@@ -139,7 +159,11 @@ export class LiveActivitiesService {
     };
 
     try {
-      const res = await sendLiveActivityPush(ola.pushToken, payload);
+      const res: PushResult = (await sendLiveActivityPush(
+        ola.pushToken,
+        payload,
+      )) as any;
+
       this.logger.log(
         `LA.end sent → order=${orderId} status=${res?.status ?? 'unknown'} apns-id=${res?.apnsId ?? '-'}`,
       );
