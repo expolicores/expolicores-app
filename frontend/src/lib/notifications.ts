@@ -1,10 +1,11 @@
-// src/lib/notifications.ts
-// ==============================
+// frontend/src/lib/notifications.ts
+// ==================================
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
+/** Resultado estándar al pedir permisos / token de push */
 export type PushSetupResult = {
   granted: boolean;
   status: Notifications.PermissionStatus;
@@ -12,27 +13,38 @@ export type PushSetupResult = {
   reason?: string;
 };
 
-// Handler global: mostrar alerta en foreground
+/* ------------------------------------------------------------------ */
+/*  Handler global (foreground)                                        */
+/*  - iOS SDKs nuevos: shouldShowBanner/shouldShowList                 */
+/*  - Mantenemos shouldShowAlert por retro-compatibilidad              */
+/* ------------------------------------------------------------------ */
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
+    // iOS moderno
+    shouldShowBanner: true,
+    shouldShowList: true,
+    // Compat (evita warning si el runtime aún usa la clave vieja)
+    // @ts-expect-error - claves legacy
     shouldShowAlert: true,
     shouldPlaySound: false,
     shouldSetBadge: true,
   }),
 });
 
+/** Obtiene el projectId (necesario para getExpoPushTokenAsync en algunos entornos) */
 function resolveProjectId(): string | undefined {
-  // SDKs modernos requieren projectId para getExpoPushTokenAsync en algunas situaciones
-  // Lee de app.json -> extra.eas.projectId o de EAS runtime
+  // Expo SDK 49+ con EAS expone esto en runtime
   // @ts-ignore - campos opcionales según entorno
   return (
     Constants?.expoConfig?.extra?.eas?.projectId ||
     // @ts-ignore
     Constants?.easConfig?.projectId ||
+    process.env.EXPO_PUBLIC_EAS_PROJECT_ID || // por si lo expones como pública
     undefined
   );
 }
 
+/** Crea/asegura canales en Android (necesario para mostrar notificaciones) */
 export async function configureAndroidChannels() {
   if (Platform.OS !== 'android') return;
   try {
@@ -48,6 +60,7 @@ export async function configureAndroidChannels() {
   }
 }
 
+/** Solicita permisos de notificación y obtiene token Expo (si aplica) */
 export async function requestPushPermissions(): Promise<PushSetupResult> {
   try {
     if (!Device.isDevice) {
@@ -69,7 +82,7 @@ export async function requestPushPermissions(): Promise<PushSetupResult> {
     // 2) Canal Android
     await configureAndroidChannels();
 
-    // 3) Token Expo (requiere projectId en algunos entornos)
+    // 3) Token Expo
     const projectId = resolveProjectId();
     if (!projectId) {
       console.warn('[push] projectId no definido en extra.eas.projectId; intento sin projectId…');
@@ -88,12 +101,41 @@ export async function requestPushPermissions(): Promise<PushSetupResult> {
     return { granted: true, status: finalStatus, token };
   } catch (e: any) {
     console.error('[push] Error solicitando permisos/token:', e?.message ?? e);
-    // Intentar retornar estado consistente
     const { status } = await Notifications.getPermissionsAsync();
     return { granted: status === 'granted', status, reason: 'exception' };
   }
 }
 
+/** Presenta una notificación local inmediata (para tests/UX) */
+export async function presentLocalNotification(
+  title: string,
+  body: string,
+  data?: Record<string, any>
+) {
+  try {
+    // En Android usamos el canal "orders" creado arriba
+    const androidChannelId = Platform.OS === 'android' ? 'orders' : undefined;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data,
+        sound: null,
+      },
+      trigger: null, // inmediato
+    });
+
+    // iOS no necesita channelId; en Android lo toma del canal por defecto si no se pasa
+    if (androidChannelId) {
+      // No es obligatorio setear aquí; ya hicimos setNotificationChannelAsync.
+    }
+  } catch (e) {
+    console.warn('[local notif] Error enviando notificación local:', e);
+  }
+}
+
+/** Suscriptores a eventos de notificación (foreground y acciones) */
 export function addNotificationListeners(
   onReceive?: (n: Notifications.Notification) => void,
   onRespond?: (r: Notifications.NotificationResponse) => void

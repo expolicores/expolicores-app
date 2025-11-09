@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,91 +7,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ---------- Enums ----------
-enum Role {
-  ADMIN
-  B2C
-  B2B
-}
-
-// Flujo B2B (verificación documental por fuera de la app)
-enum BusinessVerificationStatus {
-  NONE
-  SUBMITTED
-  APPROVED
-  REJECTED
-}
-
-// Estado operativo interno para gestión del admin (semáforo)
-enum AdminProcessStatus {
-  PENDING
-  IN_PROGRESS
-  ATTENDED
-}
-
-enum OrderStatus {
-  RECIBIDO
-  EN_CAMINO
-  ENTREGADO
-  CANCELADO
-}
-
-// Plataforma para tokens push
-enum PushPlatform {
-  ios
-  android
-}
-
-// === Promotions (Fase 1) ===
-enum PromotionType {
-  PRICE_OVERRIDE
-  PERCENT_OFF
-  X_FOR_Y
-  GIFT_WITH_PURCHASE
-}
-
-enum PromotionAudience {
-  ANY
-  B2C
-  B2B
-}
-
-// ---------- Modelos ----------
 model User {
-  id   Int    @id @default(autoincrement())
-  name String @default("Cliente")
-
-  // Login/Contacto
-  email    String? @unique
-  phone    String? @unique
-  password String?
-
-  // Rol y estados B2B
+  id                         Int                        @id @default(autoincrement())
+  name                       String                     @default("Cliente")
+  email                      String?                    @unique
+  phone                      String?                    @unique
+  password                   String?
   role                       Role                       @default(B2C)
-  businessVerificationStatus BusinessVerificationStatus @default(NONE)
+  isPhoneVerified            Boolean                    @default(false)
+  isEmailVerified            Boolean                    @default(false)
+  otpCodeHash                String?
+  otpExpiresAt               DateTime?
+  lastOtpSentAt              DateTime?
+  createdAt                  DateTime                   @default(now())
+  updatedAt                  DateTime                   @updatedAt
   adminProcessStatus         AdminProcessStatus         @default(PENDING)
-
-  // Verificación de contacto
-  isPhoneVerified Boolean @default(false)
-  isEmailVerified Boolean @default(false)
-
-  // OTP-first
-  otpCodeHash   String?
-  otpExpiresAt  DateTime?
-  lastOtpSentAt DateTime?
-
-  // Notificaciones push
-  pushTokens UserPushToken[] // relación 1:N (multi-dispositivo)
-
-  // Relaciones
-  orders                  Order[]
-  addresses               Address[]
-  favorites               Favorite[]
-  emailVerificationTokens EmailVerificationToken[] // inversa
-  liveActivities          OrderLiveActivity[]      @relation("User_LiveActivities")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  businessVerificationStatus BusinessVerificationStatus @default(NONE)
+  addresses                  Address[]
+  emailVerificationTokens    EmailVerificationToken[]
+  favorites                  Favorite[]
+  orders                     Order[]
+  liveActivities             OrderLiveActivity[]        @relation("User_LiveActivities")
+  pushTokens                 UserPushToken[]
 }
 
 model EmailVerificationToken {
@@ -102,84 +37,68 @@ model EmailVerificationToken {
   token     String    @unique
   expiresAt DateTime
   usedAt    DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
 }
 
 model Order {
-  id        Int         @id @default(autoincrement())
-  userId    Int
-  total     Float
-  status    OrderStatus @default(RECIBIDO)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  user          User              @relation(fields: [userId], references: [id])
-  items         OrderItem[]
+  id            Int                @id @default(autoincrement())
+  userId        Int
+  total         Float
+  status        OrderStatus        @default(RECIBIDO)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
   notifications NotificationLog[]
-
-  // back-relation 1:1 a Live Activity
-  liveActivity OrderLiveActivity? @relation("Order_LiveActivity")
+  user          User               @relation(fields: [userId], references: [id])
+  items         OrderItem[]
+  liveActivity  OrderLiveActivity? @relation("Order_LiveActivity")
 }
 
 model NotificationLog {
-  id Int @id @default(autoincrement())
-
-  // Relación con Order (opcional para callbacks “sueltos”)
-  orderId Int?
-  order   Order? @relation(fields: [orderId], references: [id])
-
-  // Datos de envío
-  type  String // p.ej. "ORDER_CONFIRMATION", "STATUS_ENTREGADO", "STATUS_CALLBACK"
-  to    String? // "whatsapp:+57..." o "+57..." si SMS
-  ok    Boolean @default(false)
-  sid   String?
-  error String?
-
-  // Trazabilidad Twilio
-  channel    String? // "whatsapp" | "sms"
-  messageSid String?
+  id         Int      @id @default(autoincrement())
+  orderId    Int?
+  channel    String?
+  type       String
+  sid        String?
+  ok         Boolean  @default(false)
+  error      String?
+  to         String?
+  createdAt  DateTime @default(now())
   errorCode  String?
+  messageSid String?
   payload    Json?
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-
-  // Idempotencia por orden+tipo
   @@unique([orderId, type], map: "orderId_type")
-  // Búsqueda por MessageSid
   @@index([messageSid])
 }
 
-// Catálogo
 model Product {
-  id          Int      @id @default(autoincrement())
-  name        String
-  price       Int
-  b2bPrice    Int      @default(0)
-  stock       Int
-  description String
-  imageUrl    String?
-  category    String?  @db.VarChar(64)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  orderItems  OrderItem[]
-  favorites   Favorite[]
-  promotionProducts PromotionProduct[]   // back-relation activo
+  id                Int                @id @default(autoincrement())
+  name              String
+  price             Int
+  b2bPrice          Int                @default(0)
+  stock             Int
+  description       String
+  imageUrl          String?
+  category          String?            @db.VarChar(64)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  favorites         Favorite[]
+  orderItems        OrderItem[]
+  promotionProducts PromotionProduct[]
 
   @@index([category])
 }
 
 model OrderItem {
-  id        Int @id @default(autoincrement())
+  id        Int     @id @default(autoincrement())
   orderId   Int
   productId Int
   quantity  Int
-
-  order   Order   @relation(fields: [orderId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
 }
 
 model Address {
@@ -200,8 +119,7 @@ model Address {
   isDefault    Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id])
 }
 
 model Favorite {
@@ -209,16 +127,14 @@ model Favorite {
   userId    Int
   productId Int
   createdAt DateTime @default(now())
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, productId], name: "favorite_user_product_unique")
   @@index([userId])
   @@index([productId])
 }
 
-// (Opcional / legado) OTP por email si decides conservarlo
 model EmailOtp {
   id         String    @id @default(cuid())
   email      String
@@ -230,14 +146,13 @@ model EmailOtp {
   requestIp  String?
 
   @@index([email])
-  @@index([requestIp], map: "EmailOtp_requestIp_idx")
+  @@index([requestIp])
 }
 
-// ---------- Idempotencia ----------
 model IdempotencyKey {
-  key       String   @id // valor del header Idempotency-Key
+  key       String   @id
   orderId   Int?
-  status    String   @default("PENDING") // PENDING | DONE | FAILED
+  status    String   @default("PENDING")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -245,58 +160,54 @@ model IdempotencyKey {
   @@index([status, createdAt])
 }
 
-// ---------- Push Tokens (nuevo) ----------
 model UserPushToken {
-  id String @id @default(cuid())
-
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId Int
-
-  token      String       @unique // Expo/FCM token
+  id         String       @id @default(cuid())
+  userId     Int
+  token      String       @unique
   platform   PushPlatform
   lastUsedAt DateTime     @default(now())
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
 model Promotion {
-  id             String            @id @default(cuid())
+  id             String             @id @default(cuid())
   name           String
   type           PromotionType
-  audience       PromotionAudience @default(ANY)
-  active         Boolean           @default(true)
-  stacking       Boolean           @default(false)
-  priority       Int               @default(100) // menor = más prioridad
+  audience       PromotionAudience  @default(ANY)
+  active         Boolean            @default(true)
+  stacking       Boolean            @default(false)
+  priority       Int                @default(100)
   startsAt       DateTime
   endsAt         DateTime
   conditionsJson Json?
   benefitsJson   Json?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-
-  products PromotionProduct[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  products       PromotionProduct[]
 }
 
 model PromotionProduct {
-  id           String     @id @default(cuid())
-  promotionId  String
-  productId    Int        // definitivo
-  minQty       Int?
-
-  promotion    Promotion  @relation(fields: [promotionId], references: [id], onDelete: Cascade)
-  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  promotionId String
+  minQty      Int?
+  productId   Int
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
 
   @@index([promotionId])
   @@index([productId])
+  @@index([productId], map: "PromotionProduct_productId_int_idx")
 }
 
 model BundleMap {
-  bundleId   String   @id // SKU promo (ej. "1001")
-  components Json // [{ productId: 3, qty: 3 }, { productId: 12, qty: 1 }]
-  active     Boolean  @default(true) // habilitado/pausado
-  notes      String? // opcional: “X_FOR_Y de cerveza…”
+  bundleId   String   @id
+  components Json
+  active     Boolean  @default(true)
+  notes      String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
@@ -310,8 +221,50 @@ model OrderLiveActivity {
   isEnded    Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  order      Order    @relation("Order_LiveActivity", fields: [orderId], references: [id], onDelete: Cascade)
+  user       User     @relation("User_LiveActivities", fields: [userId], references: [id], onDelete: Cascade)
+}
 
-  // Relaciones nombradas (evitan ambigüedad)
-  order Order @relation("Order_LiveActivity", fields: [orderId], references: [id], onDelete: Cascade)
-  user  User  @relation("User_LiveActivities", fields: [userId], references: [id], onDelete: Cascade)
+enum Role {
+  ADMIN
+  B2C
+  B2B
+}
+
+enum BusinessVerificationStatus {
+  NONE
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum AdminProcessStatus {
+  PENDING
+  IN_PROGRESS
+  ATTENDED
+}
+
+enum OrderStatus {
+  RECIBIDO
+  EN_CAMINO
+  ENTREGADO
+  CANCELADO
+}
+
+enum PushPlatform {
+  ios
+  android
+}
+
+enum PromotionType {
+  PRICE_OVERRIDE
+  PERCENT_OFF
+  X_FOR_Y
+  GIFT_WITH_PURCHASE
+}
+
+enum PromotionAudience {
+  ANY
+  B2C
+  B2B
 }

@@ -1,6 +1,11 @@
 ﻿{
   "cli": { "appVersionSource": "remote" },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": { "simulator": false }
+    },
     "production": {
       "ios": {
         "image": "latest",

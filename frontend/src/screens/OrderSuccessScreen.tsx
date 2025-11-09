@@ -15,7 +15,6 @@ import Constants from 'expo-constants';
 import { useNotifications } from '../context/NotificationsContext';
 import { presentLocalNotification } from '../lib/notifications';
 import { api } from '../lib/api';
-import { startOrderActivity } from '../lib/liveActivity';
 
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();
@@ -38,8 +37,9 @@ export default function OrderSuccessScreen() {
 
   // Evita iniciar la Live Activity más de una vez
   const startedLiveActivityRef = useRef(false);
+  const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-  // Soft-ask de notificaciones: solo si aún no está concedido
+  // Soft-ask notificaciones
   useEffect(() => {
     if (status === 'unknown' || status === 'denied') {
       Alert.alert(
@@ -52,47 +52,99 @@ export default function OrderSuccessScreen() {
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // una sola vez al entrar a esta pantalla
+  }, []);
 
-  // Inicia la Live Activity (iOS 16.2+) y registra en backend — con guard para Expo Go y logs remotos
+  // Live Activities: guard + import dinámico (sin NitroModules en Expo Go)
   useEffect(() => {
     if (!orderId) return;
     if (startedLiveActivityRef.current) return;
     startedLiveActivityRef.current = true;
 
-    const isExpoGo = Constants.appOwnership === 'expo';
-    const ctx = { scope: 'LA', orderId, platform: Platform.OS, isDevice: Device.isDevice, isExpoGo };
-
-    // addressShort puede venir en params si lo pasas desde Checkout
-    const addressShort: string | undefined =
-      params?.addressShort || params?.address?.short || undefined;
+    // Expo Go => 'storeClient'; Dev Client/TestFlight => 'bare'
+    const isExpoGo = Constants.executionEnvironment === 'storeClient';
+    const ctxBase = { scope: 'LA', orderId, platform: Platform.OS, isDevice: Device.isDevice, isExpoGo };
 
     (async () => {
       try {
-        await api.post('/logs/client', { ...ctx, step: 'BEGIN' });
+        await api.post('/logs/client', { ...ctxBase, step: 'BEGIN' });
 
-        // Guards previos para no gastar builds innecesarios:
+        // Guard 1: solo iOS en dispositivo real
         if (Platform.OS !== 'ios' || !Device.isDevice) {
-          await api.post('/logs/client', { ...ctx, step: 'SKIP_NOT_IOS_OR_DEVICE' });
-          return;
-        }
-        if (isExpoGo) {
-          // En Expo Go no existe ActivityKit; confirmamos que el flujo sí llegó hasta aquí
-          await api.post('/logs/client', { ...ctx, step: 'SKIP_EXPO_GO', reason: 'No ActivityKit in Expo Go' });
+          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_NOT_IOS_OR_DEVICE' });
           return;
         }
 
-        // Llamada real: el helper debe manejar startActivity + pushToken + POST /live-activities/register
-        await api.post('/logs/client', { ...ctx, step: 'START_CALL' });
-        await startOrderActivity({
+        // Guard 2: Expo Go NO soporta ActivityKit -> NO importar
+        if (isExpoGo) {
+          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_EXPO_GO', reason: 'No ActivityKit in Expo Go' });
+          return;
+        }
+
+        // Import dinámico SOLO en Dev Client / TestFlight
+        const ActivityKit = await import('@kingstinct/react-native-activity-kit');
+        const {
+          startActivity,
+          areActivitiesEnabled,
+          pushToken: activityPushToken,
+          endActivity,
+        } = ActivityKit;
+
+        // Check de compatibilidad OS/runtime (no cortar si da false)
+        let enabled = false;
+        try {
+          enabled = !!(await areActivitiesEnabled());
+        } catch (e: any) {
+          await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED_ERR', message: String(e?.message ?? e) });
+        }
+        await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED', enabled });
+
+        // Iniciar Live Activity (aunque enabled sea false, para capturar error real si hay)
+        const attributes = { kind: 'order-tracking' };
+        const initialState = {
           orderId,
+          status: 'CREATED',
+          title: 'Pedido recibido',
+          subtitle: 'Preparando tu pedido…',
           totalCOP: total,
-          addressShort,
-        });
-        await api.post('/logs/client', { ...ctx, step: 'START_CALL_RETURNED' });
+        };
+
+        let activityId: string;
+        try {
+          activityId = await startActivity(attributes, initialState);
+        } catch (e: any) {
+          await api.post('/logs/client', {
+            ...ctxBase,
+            step: 'START_ERR',
+            message: String(e?.message ?? e),
+            name: e?.name,
+            code: e?.code,
+          });
+          return;
+        }
+        await api.post('/logs/client', { ...ctxBase, step: 'START_OK', activityId });
+
+        // Obtener token APNs específico (reintentos cortos)
+        let apnsToken = '';
+        for (let i = 0; i < 3 && !apnsToken; i++) {
+          try { apnsToken = await activityPushToken(); } catch {}
+          if (!apnsToken) await sleep(300);
+        }
+        await api.post('/logs/client', { ...ctxBase, step: 'PUSH_TOKEN', ok: !!apnsToken });
+
+        if (!apnsToken) {
+          try { await endActivity(activityId!); } catch {}
+          await api.post('/logs/client', { ...ctxBase, step: 'ERR_NO_TOKEN' });
+          return;
+        }
+
+        const addressShort: string | undefined = params?.addressShort || params?.address?.short || undefined;
+
+        // Registrar en backend
+        await api.post('/live-activities/register', { orderId, apnsToken, activityId, addressShort, totalCOP: total });
+        await api.post('/logs/client', { ...ctxBase, step: 'REGISTER_OK', activityId });
       } catch (err: any) {
         await api.post('/logs/client', {
-          ...ctx,
+          ...ctxBase,
           step: 'ERR',
           message: String(err?.message ?? err),
           stack: String(err?.stack ?? ''),
@@ -175,7 +227,6 @@ export default function OrderSuccessScreen() {
         <Text>Forzar registro notificaciones</Text>
       </TouchableOpacity>
 
-      {/* Botón de prueba de notificación local (solo en desarrollo) */}
       {__DEV__ && (
         <TouchableOpacity
           onPress={() => presentLocalNotification('Expolicores', 'Prueba local OK')}
