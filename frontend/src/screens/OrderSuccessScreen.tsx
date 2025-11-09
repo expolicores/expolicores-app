@@ -80,25 +80,48 @@ export default function OrderSuccessScreen() {
           return;
         }
 
-        // Import dinámico SOLO en Dev Client / TestFlight
-        const ActivityKit = await import('@kingstinct/react-native-activity-kit');
+        // Import dinámico SOLO en Dev Client / TestFlight — con fallback a default
+        const mod = await import('@kingstinct/react-native-activity-kit');
+        const AK: any = (mod as any).default ?? mod;
+
         const {
           startActivity,
           areActivitiesEnabled,
           pushToken: activityPushToken,
           endActivity,
-        } = ActivityKit;
+        } = AK as {
+          startActivity?: (attrs: any, state: any) => Promise<string>;
+          areActivitiesEnabled?: () => Promise<boolean>;
+          pushToken?: () => Promise<string>;
+          endActivity?: (id: string) => Promise<void>;
+        };
 
-        // Check de compatibilidad OS/runtime (no cortar si da false)
+        // Log de exports del NitroModule
+        await api.post('/logs/client', {
+          ...ctxBase,
+          step: 'NITRO_EXPORTS',
+          hasStart: !!startActivity,
+          hasEnabled: !!areActivitiesEnabled,
+          hasPushToken: !!activityPushToken,
+          hasEnd: !!endActivity,
+        });
+
+        // Si no están presentes, no seguimos (binario sin módulo)
+        if (!startActivity || !activityPushToken || !endActivity) {
+          await api.post('/logs/client', { ...ctxBase, step: 'MISSING_NITRO_FUNCS' });
+          return;
+        }
+
+        // Check de compatibilidad OS/runtime (no cortar si da false; queremos ver el error real)
         let enabled = false;
         try {
-          enabled = !!(await areActivitiesEnabled());
+          enabled = !!(await (areActivitiesEnabled?.() ?? Promise.resolve(false)));
         } catch (e: any) {
           await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED_ERR', message: String(e?.message ?? e) });
         }
         await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED', enabled });
 
-        // Iniciar Live Activity (aunque enabled sea false, para capturar error real si hay)
+        // Iniciar Live Activity
         const attributes = { kind: 'order-tracking' };
         const initialState = {
           orderId,

@@ -25,12 +25,11 @@ let currentActivityId: string | null = null;
 // Helpers internos
 // =======================
 function isNativeActivityKitRuntime(): boolean {
-  // 'standalone' → TestFlight/App Store
-  // 'guest'      → EAS Dev Client
-  // 'expo'       → Expo Go (NO soporta módulos nativos custom)
-  const owner = Constants.appOwnership;
-  const isNativeContainer = owner === 'standalone' || owner === 'guest';
-  return Platform.OS === 'ios' && isNativeContainer;
+  // executionEnvironment:
+  //  - 'storeClient' => Expo Go (NO soporta módulos nativos custom)
+  //  - 'bare'        => Dev Client / Standalone (sí soporta)
+  const isExpoGo = Constants.executionEnvironment === 'storeClient';
+  return Platform.OS === 'ios' && Device.isDevice && !isExpoGo;
 }
 
 // Carga dinámica del módulo para evitar crash en Expo Go
@@ -38,8 +37,8 @@ async function loadActivityKit(): Promise<any | undefined> {
   if (!isNativeActivityKitRuntime()) return undefined;
   try {
     const mod = await import('@kingstinct/react-native-activity-kit');
-    // Algunas versiones exponen { ActivityKit: {...} }, otras exportan directamente las funciones.
-    const AK = (mod as any).ActivityKit ?? mod;
+    // La API puede venir como export por defecto o nombrado
+    const AK = (mod as any).default ?? mod;
     return AK;
   } catch (e) {
     console.warn('[LiveActivity] ActivityKit no disponible:', e);
@@ -48,15 +47,17 @@ async function loadActivityKit(): Promise<any | undefined> {
 }
 
 // Log remoto simple hacia el backend (no bloquea flujo)
-async function remoteLog(event: string, data: Record<string, any> = {}) {
+async function remoteLog(step: string, data: Record<string, any> = {}) {
   try {
-    await api.post('/debug/logs', {
-      event,
-      data,
+    await api.post('/logs/client', {
+      scope: 'LA',
+      step,
+      ...data,
       ts: Date.now(),
       platform: Platform.OS,
       model: Device.modelName,
       appOwnership: Constants.appOwnership,
+      execEnv: Constants.executionEnvironment,
       version: Constants.expoConfig?.version,
       buildNumber: Constants.expoConfig?.ios?.buildNumber,
     });
@@ -72,21 +73,31 @@ async function remoteLog(event: string, data: Record<string, any> = {}) {
 /**
  * Verifica si Live Activities está disponible (iOS nativo + permisos).
  * En Expo Go siempre devuelve false (evita crash).
+ * Nota: si el check falla o no existe en la lib, no confíes en él; se intenta startActivity igualmente.
  */
 export async function isLiveActivityAvailable(): Promise<boolean> {
   const AK = await loadActivityKit();
   if (!AK) return false;
 
   try {
-    const available = await AK.isAvailable?.();
-    if (available === false) return false;
-
-    // 2 = denied (evitamos importar el enum de la lib)
-    const auth = await AK.getAuthorizationStatus?.();
-    return auth !== 2;
+    // Algunas versiones exponen areActivitiesEnabled(), otras usan isAvailable() + getAuthorizationStatus()
+    if (typeof AK.areActivitiesEnabled === 'function') {
+      return !!(await AK.areActivitiesEnabled());
+    }
+    if (typeof AK.isAvailable === 'function') {
+      const available = await AK.isAvailable();
+      if (available === false) return false;
+    }
+    if (typeof AK.getAuthorizationStatus === 'function') {
+      // usualmente 2 = denied
+      const auth = await AK.getAuthorizationStatus();
+      return auth !== 2;
+    }
+    // Si no hay checks, asumir disponible y que el startActivity sea la fuente de verdad
+    return true;
   } catch (e) {
     console.warn('[LiveActivity] availability check error:', e);
-    return false;
+    return true; // dejar que startActivity sea el juez real
   }
 }
 
@@ -101,18 +112,29 @@ export async function startOrderActivity(params: {
 }): Promise<{ activityId: string } | null> {
   const AK = await loadActivityKit();
   if (!AK) {
-    await remoteLog('LA_START_SKIPPED_EXPOGO', params);
+    await remoteLog('START_SKIPPED_NOT_NATIVE', params);
     return null;
   }
 
-  const available = await isLiveActivityAvailable();
-  if (!available) {
-    await remoteLog('LA_START_UNAVAILABLE', params);
-    return null;
+  // Diagnóstico de exports (para detectar builds sin nueva arquitectura)
+  await remoteLog('NITRO_EXPORTS', {
+    hasStart: typeof AK.startActivity === 'function',
+    hasEnabled: typeof AK.areActivitiesEnabled === 'function' || typeof AK.isAvailable === 'function',
+    hasPushTokenFn: typeof AK.pushToken === 'function',
+    hasUpdate: typeof AK.updateActivity === 'function',
+    hasEnd: typeof AK.endActivity === 'function',
+  });
+
+  // Check suave (no cortar si da false)
+  try {
+    const available = await isLiveActivityAvailable();
+    await remoteLog('CHECK_AVAILABLE', { available });
+  } catch {
+    // ignorar
   }
 
   try {
-    const attributes = { storeName: 'Expolicores' } as any;
+    const attributes = { kind: 'order-tracking', storeName: 'Expolicores' } as any;
     const initialState: LiveActivityState = {
       orderId: params.orderId,
       status: 'CREADO',
@@ -120,14 +142,13 @@ export async function startOrderActivity(params: {
       addressShort: params.addressShort,
     };
 
-    await remoteLog('LA_START_ATTEMPT', { orderId: params.orderId });
+    await remoteLog('START_ATTEMPT', { orderId: params.orderId });
 
     // Soporta ambas firmas:
     // - startActivity({ attributes, contentState, pushType })
     // - startActivity(attributes, contentState)
     let started:
-      | { activityId: string; pushToken?: string }
-      | { id: string; token?: string }
+      | { activityId?: string; id?: string; pushToken?: string; token?: string }
       | undefined;
 
     if (typeof AK.startActivity === 'function' && AK.startActivity.length <= 1) {
@@ -137,17 +158,33 @@ export async function startOrderActivity(params: {
         contentState: initialState,
         pushType: 'liveactivity',
       });
-    } else {
+    } else if (typeof AK.startActivity === 'function') {
       // Firma por parámetros (attributes, contentState)
       started = await AK.startActivity(attributes, initialState);
+    } else {
+      await remoteLog('START_ERR', { message: 'startActivity undefined' });
+      return null;
     }
 
-    const activityId = (started as any)?.activityId ?? (started as any)?.id;
-    const pushToken = (started as any)?.pushToken ?? (started as any)?.token;
+    const activityId = started?.activityId ?? started?.id ?? null;
+    let pushToken = started?.pushToken ?? started?.token ?? '';
 
-    currentActivityId = activityId ?? null;
+    // Si no vino token en start, intentar por función separada
+    if (!pushToken && typeof AK.pushToken === 'function') {
+      try {
+        // pequeños reintentos cortos
+        for (let i = 0; i < 3 && !pushToken; i++) {
+          pushToken = await AK.pushToken();
+          if (!pushToken) await new Promise(r => setTimeout(r, 300));
+        }
+      } catch {
+        // ignorar
+      }
+    }
 
-    await remoteLog('LA_STARTED', { orderId: params.orderId, activityId });
+    currentActivityId = activityId;
+
+    await remoteLog('START_OK', { orderId: params.orderId, activityId, hasToken: !!pushToken });
 
     // Registrar en backend el pushToken único de la Live Activity (si lo hay)
     if (activityId && pushToken) {
@@ -155,24 +192,26 @@ export async function startOrderActivity(params: {
         await api.post('/live-activities/register', {
           orderId: params.orderId,
           activityId,
-          pushToken,
+          apnsToken: pushToken,
+          addressShort: params.addressShort,
+          totalCOP: params.totalCOP,
         });
-        await remoteLog('LA_REGISTER_OK', { orderId: params.orderId, activityId });
+        await remoteLog('REGISTER_OK', { orderId: params.orderId, activityId });
       } catch (e) {
-        await remoteLog('LA_REGISTER_ERROR', {
+        await remoteLog('REGISTER_ERROR', {
           orderId: params.orderId,
           activityId,
           error: (e as Error)?.message,
         });
       }
     } else {
-      await remoteLog('LA_NO_TOKEN_OR_ID', { orderId: params.orderId });
+      await remoteLog('NO_TOKEN_OR_ID', { orderId: params.orderId, hasId: !!activityId, hasToken: !!pushToken });
     }
 
     return activityId ? { activityId } : null;
   } catch (e) {
     console.warn('[LiveActivity] start error', e);
-    await remoteLog('LA_START_ERROR', {
+    await remoteLog('START_ERROR', {
       orderId: params.orderId,
       error: (e as Error)?.message,
     });
@@ -187,7 +226,7 @@ export async function startOrderActivity(params: {
 export async function updateOrderActivity(patch: Partial<LiveActivityState>): Promise<void> {
   const AK = await loadActivityKit();
   if (!AK) {
-    await remoteLog('LA_UPDATE_SKIPPED_EXPOGO', { patch });
+    await remoteLog('UPDATE_SKIPPED_NOT_NATIVE', { patch });
     return;
   }
   if (!currentActivityId) return;
@@ -199,10 +238,10 @@ export async function updateOrderActivity(patch: Partial<LiveActivityState>): Pr
     } else {
       await AK.updateActivity(currentActivityId, patch);
     }
-    await remoteLog('LA_UPDATED', { activityId: currentActivityId, patch });
+    await remoteLog('UPDATED', { activityId: currentActivityId, patch });
   } catch (e) {
     console.warn('[LiveActivity] update error', e);
-    await remoteLog('LA_UPDATE_ERROR', {
+    await remoteLog('UPDATE_ERROR', {
       activityId: currentActivityId,
       error: (e as Error)?.message,
     });
@@ -215,7 +254,7 @@ export async function updateOrderActivity(patch: Partial<LiveActivityState>): Pr
 export async function endOrderActivity(finalState?: Partial<LiveActivityState>): Promise<void> {
   const AK = await loadActivityKit();
   if (!AK) {
-    await remoteLog('LA_END_SKIPPED_EXPOGO', { finalState });
+    await remoteLog('END_SKIPPED_NOT_NATIVE', { finalState });
     return;
   }
   if (!currentActivityId) return;
@@ -227,10 +266,10 @@ export async function endOrderActivity(finalState?: Partial<LiveActivityState>):
     } else {
       await AK.endActivity(currentActivityId, finalState ?? {});
     }
-    await remoteLog('LA_ENDED', { activityId: currentActivityId, finalState });
+    await remoteLog('ENDED', { activityId: currentActivityId, finalState });
   } catch (e) {
     console.warn('[LiveActivity] end error', e);
-    await remoteLog('LA_END_ERROR', {
+    await remoteLog('END_ERROR', {
       activityId: currentActivityId,
       error: (e as Error)?.message,
     });
