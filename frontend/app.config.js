@@ -2,9 +2,9 @@
 import { config as loadEnv } from 'dotenv';
 
 /**
- * Carga de variables de entorno determinística:
- * 1) Carga primero el archivo específico del perfil (.env.development | .env.production)
- * 2) Luego .env como base (solo rellena faltantes)
+ * Carga determinística de variables:
+ * 1) Primero el archivo del perfil (.env.development | .env.production)
+ * 2) Luego .env como base (rellena faltantes)
  */
 const PROFILE = process.env.EAS_BUILD_PROFILE ?? 'development';
 loadEnv({ path: PROFILE === 'development' ? '.env.development' : '.env.production' });
@@ -13,11 +13,19 @@ loadEnv();
 export default () => {
   const isDev = PROFILE === 'development';
 
-  // Identificadores por ambiente + scheme distinto para que el QR abra el Dev Client correcto
+  // Identificadores y naming por ambiente
   const iosBundleId = isDev ? 'com.expolicores.app.dev' : 'com.expolicores.app';
   const androidPackage = isDev ? 'com.expolicores.app.dev' : 'com.expolicores.app';
   const scheme = isDev ? 'expolicoresdev' : 'expolicores';
   const displayName = isDev ? 'Expolicores Dev' : 'Expolicores';
+
+  /**
+   * IMPORTANTE: iOS buildNumber lo pasamos por ENV para evitar "autoIncrement no soportado con app.config.js"
+   * - En CMD (Windows):
+   *   set IOS_BUILD_NUMBER=7 && npx -p eas-cli@latest eas build -p ios --profile development --clear-cache
+   * - En prod cambia a un número mayor (p.ej. 101)
+   */
+  const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER ?? (isDev ? '7' : '101');
 
   return {
     expo: {
@@ -26,15 +34,11 @@ export default () => {
       owner: 'expolicores',
       scheme,
 
-      // La SDK real la define el paquete "expo" en package.json (no es necesario fijarla aquí)
+      // La SDK se fija con "expo" en package.json (54.0.0). No se declara aquí.
       version: '1.0.0',
       orientation: 'portrait',
       icon: './assets/icon.png',
       userInterfaceStyle: 'light',
-
-      // New Architecture (Turbo/Fabric) – necesaria para módulos Nitro y buen soporte nativo
-      newArchEnabled: true,
-      experiments: { turboModules: true },
 
       splash: {
         image: './assets/splash-icon.png',
@@ -45,20 +49,26 @@ export default () => {
       ios: {
         supportsTablet: false,
         bundleIdentifier: iosBundleId,
-        // iOS mínimo requerido: Live Activities con updates por push desde 16.2
-        deploymentTarget: '16.2',
+        buildNumber: IOS_BUILD_NUMBER,
+        /**
+         * ActivityKit:
+         * - Start local: iOS 16.1+
+         * - Push updates: iOS 16.2+  ✅
+         */
+        deploymentTarget: '26.0',
         infoPlist: {
           CFBundleDisplayName: displayName,
           UIBackgroundModes: ['remote-notification'],
           ITSAppUsesNonExemptEncryption: false,
-          NSSupportsLiveActivities: true, // Live Activities habilitadas
+          NSSupportsLiveActivities: true,
         },
-        // ⚠️ No forzamos 'aps-environment' aquí; EAS lo gestiona según el perfil y la firma.
+        // 'aps-environment' lo gestiona EAS según firma y perfil (sandbox/production)
       },
+
+      runtimeVersion: { policy: 'sdkVersion' }, // usa "exposdk:54.0.0" en tiempo de ejecución
 
       android: {
         package: androidPackage,
-        // Usa tu estrategia de versionado; se deja un valor por defecto
         versionCode: isDev ? 100 : 14,
         adaptiveIcon: {
           foregroundImage: './assets/adaptive-icon.png',
@@ -70,7 +80,10 @@ export default () => {
       web: { favicon: './assets/favicon.png' },
 
       plugins: [
+        // Secure storage (opcional)
         'expo-secure-store',
+
+        // Notificaciones (Expo Push / APNs / FCM)
         [
           'expo-notifications',
           {
@@ -81,30 +94,31 @@ export default () => {
 
         /**
          * Ruta C (proveedor: expo-live-activity)
-         * - Genera la extensión de Live Activity sin abrir Xcode
-         * - Si más adelante alternas a Kingstinct, bastará con cambiar el flag EXPO_PUBLIC_LA_PROVIDER
-         *   y (si usas Ruta B) agregar el plugin de widget correspondiente.
+         * Genera extensión de Live Activity sin Xcode y habilita push-to-activity.
          */
         ['expo-live-activity', { enablePushNotifications: true }],
 
-        // Ajustes nativos del build
+        // Propiedades nativas del build
         [
           'expo-build-properties',
           {
             ios: {
-              //la unica versión iOS despues de infinitas pruebas que fue aceptada fue la 26.0 y la 26.1
-              deploymentTarget: '26.1',
+              // New Architecture ON para Nitro/ActivityKit
               newArchitecture: true,
+              // iOS mínimo requerido por Live Activities (push updates)
+              deploymentTarget: '26.0',
+              // Recomendado para varias libs nativas en EAS
               useFrameworks: 'static',
             },
             android: {
-              minSdkVersion: 26,
+              // Valor estándar; puede ser 24 o 26 según tus dispositivos objetivo
+              minSdkVersion: 24,
             },
           },
         ],
       ],
 
-      // Exponer lo mínimo necesario; EXPO_PUBLIC_* ya viajan al cliente automáticamente
+      // EXPO_PUBLIC_* pasa automático al cliente
       extra: {
         EAS_BUILD_PROFILE: PROFILE,
         eas: { projectId: '1d03fcea-24a8-42d2-b3d8-c1a50919ac11' },
@@ -112,9 +126,11 @@ export default () => {
         // Flags negocio/funcionalidad
         EXPO_PUBLIC_LA_PROVIDER: process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'expo', // "expo" | "kingstinct" | "none"
 
+        // API
         EXPO_PUBLIC_API_BASE_URL: process.env.EXPO_PUBLIC_API_BASE_URL,
         EXPO_PUBLIC_API_TIMEOUT_MS: process.env.EXPO_PUBLIC_API_TIMEOUT_MS,
 
+        // Features
         EXPO_PUBLIC_FEATURE_B2B: process.env.EXPO_PUBLIC_FEATURE_B2B,
         EXPO_PUBLIC_FEATURE_SMS_OTP: process.env.EXPO_PUBLIC_FEATURE_SMS_OTP,
         EXPO_PUBLIC_FEATURE_GEOCODING: process.env.EXPO_PUBLIC_FEATURE_GEOCODING,

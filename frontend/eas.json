@@ -1,28 +1,27 @@
 ﻿{
-  "cli": { "appVersionSource": "remote" },
+  "cli": { "appVersionSource": "local" },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "ios": {
-        "simulator": false,
-        "autoIncrement": "buildNumber"
-      },
+      "ios": { "simulator": false },
       "env": {
         "EAS_BUILD_PROFILE": "development",
         "EXPO_USE_NEW_ARCH": "1",
-        "RCT_NEW_ARCH_ENABLED": "1"
+        "RCT_NEW_ARCH_ENABLED": "1",
+        "REANIMATED_ENABLE_NEW_ARCHITECTURE": "1",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false"
       }
     },
     "production": {
-      "ios": {
-        "image": "latest",
-        "resourceClass": "m-medium",
-        "autoIncrement": "buildNumber"
-      },
+      "ios": { "image": "latest", "resourceClass": "m-medium" },
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "EXPO_DEBUG": "1"
+        "EXPO_DEBUG": "1",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false"
       }
     }
   },

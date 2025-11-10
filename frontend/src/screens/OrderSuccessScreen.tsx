@@ -55,6 +55,14 @@ export default function OrderSuccessScreen() {
   // useLiveActivity (fachada)
   const la = useLiveActivity(orderId ?? 0, orderId ? String(orderId) : undefined);
 
+  // ===== Monteo de pantalla (debug visible) =====
+  useEffect(() => {
+    console.log('[LA][ORDER_SUCCESS] mounted', {
+      provider: process.env.EXPO_PUBLIC_LA_PROVIDER,
+      orderId,
+    });
+  }, [orderId]);
+
   // ===== Soft-ask de notificaciones =====
   useEffect(() => {
     if (status === 'unknown' || status === 'denied') {
@@ -87,7 +95,7 @@ export default function OrderSuccessScreen() {
           // Fallback Ruta D (banner/aviso propio o notificación local)
           await logClient('LA/UNAVAILABLE', { reason: 'no-provider-or-ios-version-or-devclient' });
 
-          // Opcional: muestra un aviso local para que el usuario no se quede sin feedback
+          // Opcional: notificación local para feedback inmediato
           await presentLocalNotification(
             'Seguimiento de pedido',
             `Tu pedido #${orderId} está en preparación`,
@@ -206,7 +214,7 @@ export default function OrderSuccessScreen() {
             <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
           </TouchableOpacity>
 
-          {/* 🔹 Botón DEV: forzar Live Activity start + registro (tal como pediste) */}
+          {/* 🔹 Botón DEV: forzar Live Activity start + registro */}
           <TouchableOpacity
             onPress={async () => {
               if (!orderId) return;

@@ -7,7 +7,6 @@ import {
   StatusBar,
   LogBox,
 } from 'react-native';
-import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -25,56 +24,82 @@ import { CartProvider } from './src/context/CartContext';
 import { NotificationsProvider } from './src/context/NotificationsContext';
 import AppNavigator from './src/navigation/AppNavigator';
 
-/** Mantiene react-query en sync con el foco de la app (foreground/background) */
+// Mantiene react-query en sync con el foco de la app
 function onAppStateChange(status: string) {
   focusManager.setFocused(status === 'active');
 }
 
-/** Crea un QueryClient único para toda la app */
+// QueryClient global
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      staleTime: 30_000, // 30s
-      gcTime: 5 * 60 * 1000, // 5 min
+      staleTime: 30_000,
+      gcTime: 5 * 60 * 1000,
       refetchOnReconnect: true,
-      refetchOnWindowFocus: true, // usa focusManager (AppState)
+      refetchOnWindowFocus: true,
     },
     mutations: { retry: 0 },
   },
 });
 
+// Runtime derivado si no hay expo-updates
+function deriveRuntime() {
+  const cfg: any = Constants.expoConfig ?? {};
+  if (typeof cfg.runtimeVersion === 'string' && cfg.runtimeVersion.length) {
+    return cfg.runtimeVersion;
+  }
+  if (cfg.sdkVersion) return `exposdk:${cfg.sdkVersion}`;
+  return undefined;
+}
+
 export default function App() {
-  // Silenciar warnings ruidosos de NativeEventEmitter (la causa real se corrige en bus.ts)
+  // Silenciar warnings ruidosos
   LogBox.ignoreLogs([
     '`new NativeEventEmitter()` was called with a non-null argument without the required `addListener` method.',
     '`new NativeEventEmitter()` was called with a non-null argument without the required `removeListeners` method.',
   ]);
 
-  // 🔎 Verificación de build/entorno + probe del bridge nativo de ActivityKit (una sola vez)
+  // 🔎 Verificación de build/entorno + probe nativo (una sola vez)
   useEffect(() => {
-    // ===== ENTORNO (lo que llega al bundle de JS) =====
+    const rawProvider = (process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'expo') as string;
+    const provider = rawProvider.trim().toLowerCase();
+
+    // ===== ENTORNO (vars públicas) =====
     console.log('[ENVCHK]', {
-      profile: process.env.EAS_BUILD_PROFILE, // debe ser "development" en Dev Client
+      profile: process.env.EAS_BUILD_PROFILE,
       api: process.env.EXPO_PUBLIC_API_BASE_URL,
       debugHttp: process.env.EXPO_PUBLIC_DEBUG_HTTP,
-      sdk: Constants.expoConfig?.sdkVersion, // debe ser "54.0.0"
-      appId: Constants.applicationId, // com.expolicores.app.dev en dev
+      sdk: (Constants.expoConfig as any)?.sdkVersion,
+      appId: Constants.applicationId,
+      providerRaw: rawProvider,
+      providerNorm: provider,
     });
 
-    // ===== BINARIO (lo que está instalado en el dispositivo) =====
-    console.log('[BUILD] nativeApplicationVersion =', Application.nativeApplicationVersion); // "1.0.0"
-    console.log('[BUILD] nativeBuildVersion =', Application.nativeBuildVersion); // ej: "3"
-    console.log('[BUILD] applicationId =', Application.applicationId); // "com.expolicores.app.dev"
-    console.log('[LA][provider]', process.env.EXPO_PUBLIC_LA_PROVIDER);
+    // ===== BINARIO (instalado) =====
+    console.log('[BUILD]', {
+      nativeBuildVersion: Constants.nativeBuildVersion,
+      applicationId: (Constants.expoConfig as any)?.ios?.bundleIdentifier,
+    });
 
-    // Info adicional del runtime
-    // En Dev Client appOwnership puede ser null
-    // executionEnvironment puede aparecer como "bare" en Dev Client
-    // @ts-expect-error - props internas no tipadas
-    console.log('[BUILD] appOwnership =', Constants?.appOwnership ?? null);
-    // @ts-expect-error - props internas no tipadas
-    console.log('[BUILD] executionEnvironment =', Constants?.executionEnvironment ?? null);
+    // ===== RUNTIME =====
+    (async () => {
+      try {
+        // Import dinámico para no requerir tipos/paquete en compile-time
+        const Updates: any = await import('expo-updates');
+        console.log('[RUNTIME]', {
+          runtime: Updates.runtimeVersion ?? deriveRuntime(),
+          updateId: Updates.updateId ?? null,
+          channel: Updates.manifest?.channel ?? null,
+        });
+      } catch {
+        // Si no existe expo-updates, usamos el derivado
+        console.log('[RUNTIME]', {
+          runtime: deriveRuntime(),
+          note: 'expo-updates not installed',
+        });
+      }
+    })();
 
     // ===== PROBE de módulos nativos / New Architecture =====
     // @ts-ignore - flag global de RN para Turbo/Fabric
@@ -85,8 +110,8 @@ export default function App() {
       /nitro|activity|kingstinct/i.test(k),
     );
     console.log('[LA][probe] keys:', nativeKeys);
-    // @ts-ignore - acceso dinámico
-    console.log('[LA][probe] NitroActivityKit =', typeof NativeModules?.NitroActivityKit);
+    // @ts-ignore acceso dinámico
+    console.log('[LA][probe] NitroActivityKit =', typeof (NativeModules as any)?.NitroActivityKit);
 
     const sub = AppState.addEventListener('change', onAppStateChange);
     return () => sub.remove();
@@ -106,9 +131,8 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'} />
-        {/* Provider necesario para usar useQuery / useMutation */}
         <QueryClientProvider client={queryClient}>
-          {/* Mantener orden: Auth → Notifications (usa token de auth si registra push) → Cart */}
+          {/* Mantener orden: Auth → Notifications → Cart */}
           <AuthProvider>
             <NotificationsProvider>
               <CartProvider>

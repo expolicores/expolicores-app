@@ -17,14 +17,14 @@ try {
 
   // Normaliza platforms => iOS 18.2 (o el que prefieras)
   // Ej: s.platforms    = { :ios => 26.0 }
-  txt = txt.replace(/s\.platforms\s*=\s*\{\s*:ios\s*=>\s*[\d.]+\s*\}/, `s.platforms = { :ios => '18.2' }`);
+  txt = txt.replace(/s\.platforms\s*=\s*\{\s*:ios\s*=>\s*[\d.]+\s*\}/, `s.platforms = { :ios => '26.0' }`);
 
   // Por si el podspec usa deployment_target en otra línea
-  txt = txt.replace(/s\.ios\.deployment_target\s*=\s*['"]?[\d.]+['"]?/, `s.ios.deployment_target = '18.2'`);
+  txt = txt.replace(/s\.ios\.deployment_target\s*=\s*['"]?[\d.]+['"]?/, `s.ios.deployment_target = '26.0'`);
 
   if (txt !== before) {
     fs.writeFileSync(podspecPath, txt, 'utf8');
-    console.log('[patch-nitro] Patched NitroActivityKit.podspec to iOS 18.2');
+    console.log('[patch-nitro] Patched NitroActivityKit.podspec to iOS 26.0');
   } else {
     console.log('[patch-nitro] No changes applied (pattern not found).');
   }
