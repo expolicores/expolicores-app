@@ -4,7 +4,15 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "ios": { "simulator": false }
+      "ios": {
+        "simulator": false,
+        "autoIncrement": "buildNumber"
+      },
+      "env": {
+        "EAS_BUILD_PROFILE": "development",
+        "EXPO_USE_NEW_ARCH": "1",
+        "RCT_NEW_ARCH_ENABLED": "1"
+      }
     },
     "production": {
       "ios": {

@@ -2,26 +2,31 @@
 import 'dotenv/config';
 
 export default () => {
+  // Perfil que inyecta EAS (lo usamos para cambiar bundleId/scheme)
   const profile = process.env.EAS_BUILD_PROFILE ?? 'production';
   const isDevBuild = profile === 'development';
 
-  // Un solo bundle para iOS (Dev Client y TestFlight usarán el mismo):
-  const bundleId = 'com.expolicores.app';
+  // Identificadores separados por ambiente (iOS/Android) y scheme distinto para el QR
+  const bundleId = isDevBuild ? 'com.expolicores.app.dev' : 'com.expolicores.app';
+  const androidPackage = isDevBuild ? 'com.expolicores.app.dev' : 'com.expolicores.app';
+  const scheme = isDevBuild ? 'expolicoresdev' : 'expolicores';
+  const displayName = isDevBuild ? 'Expolicores Dev' : 'Expolicores';
 
   return {
     expo: {
-      // Mantener target/scheme estables
-      name: 'Expolicores',            // ← nombre del target/scheme en Xcode
+      // Target/scheme estables por perfil
+      name: displayName,
       slug: 'expolicores',
-      scheme: 'expolicores',
+      scheme,
       owner: 'expolicores',
 
       version: '1.0.0',
+      sdkVersion: "54.0.0",
       orientation: 'portrait',
       icon: './assets/icon.png',
       userInterfaceStyle: 'light',
 
-      // Nueva Arquitectura (Turbo/Nitro) requerida por ActivityKit bridge
+      // Nueva Arquitectura (requerida por el bridge de ActivityKit / Nitro)
       newArchEnabled: true,
       experiments: { turboModules: true },
 
@@ -34,23 +39,21 @@ export default () => {
       ios: {
         supportsTablet: false,
         bundleIdentifier: bundleId,
-        buildNumber: isDevBuild ? '100' : '1.0.14',
-        // Muestra un nombre distinto en el icono si quieres diferenciar builds
+        // buildNumber se maneja con appVersionSource=remote desde eas.json (se ignora aquí)
         infoPlist: {
-          CFBundleDisplayName: isDevBuild ? 'Expolicores Dev' : 'Expolicores',
+          CFBundleDisplayName: displayName,
           UIBackgroundModes: ['remote-notification'],
           ITSAppUsesNonExemptEncryption: false,
-          NSSupportsLiveActivities: true, // necesario para Live Activities
+          NSSupportsLiveActivities: true, // Habilita Live Activities
         },
-        // APNs env según el tipo de build (solo indica el entitlement)
+        // Entitlement para APNs por ambiente (dev/prod)
         entitlements: {
           'aps-environment': isDevBuild ? 'development' : 'production',
         },
       },
 
       android: {
-        // Mismo identificador para Android (package)
-        package: 'com.expolicores.app',
+        package: androidPackage,
         versionCode: isDevBuild ? 100 : 14,
         adaptiveIcon: {
           foregroundImage: './assets/adaptive-icon.png',
@@ -59,7 +62,9 @@ export default () => {
         permissions: ['POST_NOTIFICATIONS'],
       },
 
-      web: { favicon: './assets/favicon.png' },
+      web: {
+        favicon: './assets/favicon.png',
+      },
 
       plugins: [
         'expo-secure-store',
@@ -68,7 +73,7 @@ export default () => {
           { icon: './assets/notification-icon.png', color: '#D72638' },
         ],
 
-        // Plugin nativo de ActivityKit (entitlements/bridges)
+        // Plugin nativo para ActivityKit (entitlements/bridge)
         '@kingstinct/react-native-activity-kit',
 
         // Propiedades nativas de build
@@ -76,12 +81,10 @@ export default () => {
           'expo-build-properties',
           {
             ios: {
-              // iOS 16.2+ requerido por Live Activities
-              deploymentTarget: '26.0',
+              deploymentTarget: '26.1', // iOS 16.2+ requerido por Live Activities
               useFrameworks: 'static',
             },
             android: {
-              // Tu minSdk de Android permanece en 26 (no se toca)
               minSdkVersion: 26,
             },
           },
@@ -89,8 +92,19 @@ export default () => {
       ],
 
       extra: {
+        // Expuesto en el cliente para togglear comportamiento por perfil
         EAS_BUILD_PROFILE: profile,
+        // ID del proyecto en EAS
         eas: { projectId: '1d03fcea-24a8-42d2-b3d8-c1a50919ac11' },
+        // Variables públicas usadas en el front (se leen desde .env.*)
+        EXPO_PUBLIC_API_BASE_URL: process.env.EXPO_PUBLIC_API_BASE_URL,
+        EXPO_PUBLIC_API_TIMEOUT_MS: process.env.EXPO_PUBLIC_API_TIMEOUT_MS,
+        EXPO_PUBLIC_FEATURE_B2B: process.env.EXPO_PUBLIC_FEATURE_B2B,
+        EXPO_PUBLIC_FEATURE_SMS_OTP: process.env.EXPO_PUBLIC_FEATURE_SMS_OTP,
+        EXPO_PUBLIC_FEATURE_GEOCODING: process.env.EXPO_PUBLIC_FEATURE_GEOCODING,
+        EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_DEV: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_DEV,
+        EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_ANDROID: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_ANDROID,
+        EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_IOS: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_IOS,
       },
     },
   };

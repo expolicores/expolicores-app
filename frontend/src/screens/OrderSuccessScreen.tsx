@@ -16,15 +16,27 @@ import { useNotifications } from '../context/NotificationsContext';
 import { presentLocalNotification } from '../lib/notifications';
 import { api } from '../lib/api';
 
+type RouteParams = {
+  orderId?: number;
+  total?: number;
+  shipping?: number;
+  subtotal?: number;
+  addressShort?: string;
+  address?: { short?: string };
+};
+
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();
   const navigation = useNavigation<any>();
   const { status, ensurePermission } = useNotifications();
 
-  const orderId: number | undefined = params?.orderId;
-  const rawTotal = typeof params?.total === 'number' ? params.total : 0;
-  const rawShipping = typeof params?.shipping === 'number' ? params.shipping : undefined;
-  const rawSubtotal = typeof params?.subtotal === 'number' ? params.subtotal : undefined;
+  const p: RouteParams = params ?? {};
+  const orderId: number | undefined = typeof p.orderId === 'number' ? p.orderId : undefined;
+
+  // Totales
+  const rawTotal = typeof p.total === 'number' ? p.total : 0;
+  const rawShipping = typeof p.shipping === 'number' ? p.shipping : undefined;
+  const rawSubtotal = typeof p.subtotal === 'number' ? p.subtotal : undefined;
 
   const subtotal: number =
     rawSubtotal ?? (rawShipping !== undefined ? Math.max(rawTotal - rawShipping, 0) : rawTotal);
@@ -35,11 +47,25 @@ export default function OrderSuccessScreen() {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value || 0);
 
-  // Evita iniciar la Live Activity más de una vez
+  // Evitar doble inicio de Live Activity
   const startedLiveActivityRef = useRef(false);
   const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-  // Soft-ask notificaciones
+  // ===== Helpers de entorno / guards =====
+  const isExpoGo = Constants.executionEnvironment === 'storeClient';
+  const isiOS = Platform.OS === 'ios';
+  const isRealDevice = Device.isDevice === true;
+
+  const getIOSVersion = (): number => {
+    // Puede venir como "16.5.1" o número; tomamos major.minor
+    const v = Platform.Version as string | number;
+    if (typeof v === 'number') return v; // iOS 16 -> 16
+    const [maj, min] = (v ?? '0').toString().split('.').map(n => parseInt(n, 10));
+    return (maj || 0) + ((min || 0) / 10);
+  };
+  const iOSVersionOK = isiOS ? getIOSVersion() >= 16.2 : false;
+
+  // ===== Soft-ask de notificaciones =====
   useEffect(() => {
     if (status === 'unknown' || status === 'denied') {
       Alert.alert(
@@ -48,71 +74,86 @@ export default function OrderSuccessScreen() {
         [
           { text: 'Luego' },
           { text: 'Activar', onPress: () => { void ensurePermission(); } },
-        ]
+        ],
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Live Activities: guard + import dinámico (sin NitroModules en Expo Go)
+  // ===== Live Activities: guard + import dinámico =====
   useEffect(() => {
     if (!orderId) return;
     if (startedLiveActivityRef.current) return;
     startedLiveActivityRef.current = true;
 
-    // Expo Go => 'storeClient'; Dev Client/TestFlight => 'bare'
-    const isExpoGo = Constants.executionEnvironment === 'storeClient';
-    const ctxBase = { scope: 'LA', orderId, platform: Platform.OS, isDevice: Device.isDevice, isExpoGo };
+    const ctxBase = {
+      scope: 'LA',
+      orderId,
+      platform: Platform.OS,
+      isDevice: isRealDevice,
+      isExpoGo,
+      rnVersion: (global as any).__fbBatchedBridge ? 'new-arch' : 'legacy',
+    };
 
     (async () => {
       try {
         await api.post('/logs/client', { ...ctxBase, step: 'BEGIN' });
+        console.log('[LA] BEGIN Live Activity attempt...');
 
         // Guard 1: solo iOS en dispositivo real
-        if (Platform.OS !== 'ios' || !Device.isDevice) {
+        if (!isiOS || !isRealDevice) {
           await api.post('/logs/client', { ...ctxBase, step: 'SKIP_NOT_IOS_OR_DEVICE' });
+          console.log('[LA] SKIP: Not iOS or not a physical device');
           return;
         }
 
-        // Guard 2: Expo Go NO soporta ActivityKit -> NO importar
+        // Guard 2: versión de iOS mínima
+        if (!iOSVersionOK) {
+          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_IOS_VERSION', version: Platform.Version });
+          console.log('[LA] SKIP: iOS version < 16.2');
+          return;
+        }
+
+        // Guard 3: Expo Go no soporta ActivityKit
         if (isExpoGo) {
-          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_EXPO_GO', reason: 'No ActivityKit in Expo Go' });
+          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_EXPO_GO' });
+          console.log('[LA] SKIP: Expo Go environment');
           return;
         }
 
-        // Import dinámico SOLO en Dev Client / TestFlight — con fallback a default
+        // Import dinámico del bridge (Dev Client / TestFlight)
         const mod = await import('@kingstinct/react-native-activity-kit');
         const AK: any = (mod as any).default ?? mod;
+        console.log('[LA] NITRO_EXPORTS imported.');
 
         const {
           startActivity,
+          endActivity,
           areActivitiesEnabled,
           pushToken: activityPushToken,
-          endActivity,
         } = AK as {
           startActivity?: (attrs: any, state: any) => Promise<string>;
+          endActivity?: (id: string) => Promise<void>;
           areActivitiesEnabled?: () => Promise<boolean>;
           pushToken?: () => Promise<string>;
-          endActivity?: (id: string) => Promise<void>;
         };
 
-        // Log de exports del NitroModule
         await api.post('/logs/client', {
           ...ctxBase,
           step: 'NITRO_EXPORTS',
           hasStart: !!startActivity,
+          hasEnd: !!endActivity,
           hasEnabled: !!areActivitiesEnabled,
           hasPushToken: !!activityPushToken,
-          hasEnd: !!endActivity,
         });
 
-        // Si no están presentes, no seguimos (binario sin módulo)
-        if (!startActivity || !activityPushToken || !endActivity) {
+        if (!startActivity || !endActivity || !activityPushToken) {
           await api.post('/logs/client', { ...ctxBase, step: 'MISSING_NITRO_FUNCS' });
+          console.error('[LA] ERROR: Missing Nitro functions (rebuild Dev Client with the plugin).');
           return;
         }
 
-        // Check de compatibilidad OS/runtime (no cortar si da false; queremos ver el error real)
+        // Comprobación de permisos del sistema para Live Activities
         let enabled = false;
         try {
           enabled = !!(await (areActivitiesEnabled?.() ?? Promise.resolve(false)));
@@ -120,6 +161,7 @@ export default function OrderSuccessScreen() {
           await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED_ERR', message: String(e?.message ?? e) });
         }
         await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED', enabled });
+        console.log(`[LA] CHECK_ENABLED: ${enabled}`);
 
         // Iniciar Live Activity
         const attributes = { kind: 'order-tracking' };
@@ -142,29 +184,40 @@ export default function OrderSuccessScreen() {
             name: e?.name,
             code: e?.code,
           });
+          console.error(`[LA] START_ERR: ${String(e?.message ?? e)}`);
           return;
         }
         await api.post('/logs/client', { ...ctxBase, step: 'START_OK', activityId });
+        console.log(`[LA] START_OK id=${activityId}`);
 
-        // Obtener token APNs específico (reintentos cortos)
+        // Obtener APNs token de la actividad (3 reintentos breves)
         let apnsToken = '';
         for (let i = 0; i < 3 && !apnsToken; i++) {
-          try { apnsToken = await activityPushToken(); } catch {}
+          try { apnsToken = await activityPushToken(); } catch { /* noop */ }
           if (!apnsToken) await sleep(300);
         }
         await api.post('/logs/client', { ...ctxBase, step: 'PUSH_TOKEN', ok: !!apnsToken });
+        console.log(`[LA] PUSH_TOKEN: ${apnsToken ? 'OK' : 'FAIL'}`);
 
         if (!apnsToken) {
-          try { await endActivity(activityId!); } catch {}
+          try { await endActivity(activityId); } catch { /* noop */ }
           await api.post('/logs/client', { ...ctxBase, step: 'ERR_NO_TOKEN' });
+          console.error('[LA] ERR: No APNs Token, ending activity.');
           return;
         }
 
-        const addressShort: string | undefined = params?.addressShort || params?.address?.short || undefined;
+        const addressShort: string | undefined = p.addressShort || p.address?.short || undefined;
 
-        // Registrar en backend
-        await api.post('/live-activities/register', { orderId, apnsToken, activityId, addressShort, totalCOP: total });
+        // Registrar en backend para updates por APNs
+        await api.post('/live-activities/register', {
+          orderId,
+          apnsToken,
+          activityId,
+          addressShort,
+          totalCOP: total,
+        });
         await api.post('/logs/client', { ...ctxBase, step: 'REGISTER_OK', activityId });
+        console.log('[LA] REGISTER_OK. Tracking iniciado.');
       } catch (err: any) {
         await api.post('/logs/client', {
           ...ctxBase,
@@ -172,6 +225,7 @@ export default function OrderSuccessScreen() {
           message: String(err?.message ?? err),
           stack: String(err?.stack ?? ''),
         });
+        console.error(`[LA] UNHANDLED_ERR: ${String(err?.message ?? err)}`);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,6 +244,7 @@ export default function OrderSuccessScreen() {
     }
   };
 
+  // --- UI ---
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
       <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>¡Pedido creado!</Text>
@@ -252,7 +307,8 @@ export default function OrderSuccessScreen() {
 
       {__DEV__ && (
         <TouchableOpacity
-          onPress={() => presentLocalNotification('Expolicores', 'Prueba local OK')}
+          // Evita el error 'Cannot cast nil' asegurando un objeto data
+          onPress={() => presentLocalNotification('Expolicores', 'Prueba local OK', { data: { test: '1' } })}
           style={{ marginTop: 12 }}
         >
           <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
