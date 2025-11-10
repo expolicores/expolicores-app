@@ -15,18 +15,14 @@ export type PushSetupResult = {
 
 /* ------------------------------------------------------------------ */
 /*  Handler global (foreground)                                        */
-/*  - iOS SDKs nuevos: shouldShowBanner/shouldShowList                 */
-/*  - Mantenemos shouldShowAlert por retro-compatibilidad              */
+/*  - iOS modernos: shouldShowBanner / shouldShowList                  */
+/*  - Evitamos la clave legacy shouldShowAlert (quita warning)         */
 /* ------------------------------------------------------------------ */
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    // iOS moderno
     shouldShowBanner: true,
     shouldShowList: true,
-    // Compat (evita warning si el runtime aún usa la clave vieja)
-    // @ts-expect-error - claves legacy
-    shouldShowAlert: true,
-    shouldPlaySound: false,
+    shouldPlaySound: true,
     shouldSetBadge: true,
   }),
 });
@@ -37,9 +33,9 @@ function resolveProjectId(): string | undefined {
   // @ts-ignore - campos opcionales según entorno
   return (
     Constants?.expoConfig?.extra?.eas?.projectId ||
-    // @ts-ignore
+    // @ts-ignore - para backwards compat
     Constants?.easConfig?.projectId ||
-    process.env.EXPO_PUBLIC_EAS_PROJECT_ID || // por si lo expones como pública
+    process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
     undefined
   );
 }
@@ -47,7 +43,18 @@ function resolveProjectId(): string | undefined {
 /** Crea/asegura canales en Android (necesario para mostrar notificaciones) */
 export async function configureAndroidChannels() {
   if (Platform.OS !== 'android') return;
+
   try {
+    // Canal por defecto (por si algo no especifica uno)
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'General',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'default',
+      vibrationPattern: [0, 150, 150, 150],
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+
+    // Canal de pedidos (alto)
     await Notifications.setNotificationChannelAsync('orders', {
       name: 'Pedidos',
       importance: Notifications.AndroidImportance.HIGH,
@@ -56,7 +63,7 @@ export async function configureAndroidChannels() {
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
   } catch (e) {
-    console.warn('[push] No se pudo crear el canal Android:', e);
+    console.warn('[push] No se pudo crear los canales de Android:', e);
   }
 }
 
@@ -64,14 +71,25 @@ export async function configureAndroidChannels() {
 export async function requestPushPermissions(): Promise<PushSetupResult> {
   try {
     if (!Device.isDevice) {
-      return { granted: false, status: Notifications.PermissionStatus.DENIED, reason: 'simulator' };
+      return {
+        granted: false,
+        status: Notifications.PermissionStatus.DENIED,
+        reason: 'simulator',
+      };
     }
 
     // 1) Permisos (iOS y Android 13+)
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowAnnouncements: false,
+        },
+      });
       finalStatus = status;
     }
     if (finalStatus !== 'granted') {
@@ -79,7 +97,7 @@ export async function requestPushPermissions(): Promise<PushSetupResult> {
       return { granted: false, status: finalStatus };
     }
 
-    // 2) Canal Android
+    // 2) Canales Android
     await configureAndroidChannels();
 
     // 3) Token Expo
@@ -113,23 +131,26 @@ export async function presentLocalNotification(
   data?: Record<string, any>
 ) {
   try {
-    // En Android usamos el canal "orders" creado arriba
-    const androidChannelId = Platform.OS === 'android' ? 'orders' : undefined;
+    // Para Android, si quieres asegurar el canal "orders", usa un trigger con seconds=1 y channelId.
+    // En iOS, trigger=null la muestra inmediata.
+    const trigger: Notifications.NotificationTriggerInput | null =
+      Platform.OS === 'android'
+        ? {
+            channelId: 'orders',
+            seconds: 1,
+          }
+        : null;
 
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
         body,
-        data,
-        sound: null,
+        // ⚠️ Nunca null/undefined: esto causaba el crash "Cannot cast 'Optional(nil)' ..."
+        data: data ?? {},
+        sound: 'default',
       },
-      trigger: null, // inmediato
+      trigger,
     });
-
-    // iOS no necesita channelId; en Android lo toma del canal por defecto si no se pasa
-    if (androidChannelId) {
-      // No es obligatorio setear aquí; ya hicimos setNotificationChannelAsync.
-    }
   } catch (e) {
     console.warn('[local notif] Error enviando notificación local:', e);
   }
@@ -146,4 +167,12 @@ export function addNotificationListeners(
     sub1.remove();
     sub2.remove();
   };
+}
+
+/** Helper conveniente para flujos del front: asegura permiso y token en un paso */
+export async function ensurePushPermissionAndToken(): Promise<PushSetupResult> {
+  const res = await requestPushPermissions();
+  if (!res.granted || !res.token) return res;
+  // Aquí podrías registrar el token en tu backend si quieres.
+  return res;
 }

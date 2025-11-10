@@ -6,15 +6,16 @@ import {
   TouchableOpacity,
   Linking,
   Alert,
-  Platform,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import * as Device from 'expo-device';
-import Constants from 'expo-constants';
 
 import { useNotifications } from '../context/NotificationsContext';
 import { presentLocalNotification } from '../lib/notifications';
 import { api } from '../lib/api';
+
+// Ruta C: fachada + provider seleccionable (expo | kingstinct | none)
+import { useLiveActivity } from '../hooks/useLiveActivity';
+import { logClient, laStart as _laStart, registerLAOnBackend } from '../lib/liveActivityProvider';
 
 type RouteParams = {
   orderId?: number;
@@ -31,7 +32,8 @@ export default function OrderSuccessScreen() {
   const { status, ensurePermission } = useNotifications();
 
   const p: RouteParams = params ?? {};
-  const orderId: number | undefined = typeof p.orderId === 'number' ? p.orderId : undefined;
+  const orderId: number | undefined =
+    typeof p.orderId === 'number' ? p.orderId : undefined;
 
   // Totales
   const rawTotal = typeof p.total === 'number' ? p.total : 0;
@@ -48,22 +50,10 @@ export default function OrderSuccessScreen() {
     new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value || 0);
 
   // Evitar doble inicio de Live Activity
-  const startedLiveActivityRef = useRef(false);
-  const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+  const startedRef = useRef(false);
 
-  // ===== Helpers de entorno / guards =====
-  const isExpoGo = Constants.executionEnvironment === 'storeClient';
-  const isiOS = Platform.OS === 'ios';
-  const isRealDevice = Device.isDevice === true;
-
-  const getIOSVersion = (): number => {
-    // Puede venir como "16.5.1" o número; tomamos major.minor
-    const v = Platform.Version as string | number;
-    if (typeof v === 'number') return v; // iOS 16 -> 16
-    const [maj, min] = (v ?? '0').toString().split('.').map(n => parseInt(n, 10));
-    return (maj || 0) + ((min || 0) / 10);
-  };
-  const iOSVersionOK = isiOS ? getIOSVersion() >= 16.2 : false;
+  // useLiveActivity (fachada)
+  const la = useLiveActivity(orderId ?? 0, orderId ? String(orderId) : undefined);
 
   // ===== Soft-ask de notificaciones =====
   useEffect(() => {
@@ -80,152 +70,51 @@ export default function OrderSuccessScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ===== Live Activities: guard + import dinámico =====
+  // ===== Live Activities: vía fachada (Ruta C) + fallback Ruta D =====
   useEffect(() => {
     if (!orderId) return;
-    if (startedLiveActivityRef.current) return;
-    startedLiveActivityRef.current = true;
-
-    const ctxBase = {
-      scope: 'LA',
-      orderId,
-      platform: Platform.OS,
-      isDevice: isRealDevice,
-      isExpoGo,
-      rnVersion: (global as any).__fbBatchedBridge ? 'new-arch' : 'legacy',
-    };
+    if (startedRef.current) return;
+    startedRef.current = true;
 
     (async () => {
       try {
-        await api.post('/logs/client', { ...ctxBase, step: 'BEGIN' });
-        console.log('[LA] BEGIN Live Activity attempt...');
+        await logClient('LA/BEGIN', { orderId, provider: process.env.EXPO_PUBLIC_LA_PROVIDER });
 
-        // Guard 1: solo iOS en dispositivo real
-        if (!isiOS || !isRealDevice) {
-          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_NOT_IOS_OR_DEVICE' });
-          console.log('[LA] SKIP: Not iOS or not a physical device');
+        // Iniciar Live Activity (ETA inicial opcional)
+        const res = await la.start(45);
+
+        if (!res) {
+          // Fallback Ruta D (banner/aviso propio o notificación local)
+          await logClient('LA/UNAVAILABLE', { reason: 'no-provider-or-ios-version-or-devclient' });
+
+          // Opcional: muestra un aviso local para que el usuario no se quede sin feedback
+          await presentLocalNotification(
+            'Seguimiento de pedido',
+            `Tu pedido #${orderId} está en preparación`,
+            { data: { orderId } }
+          );
+
           return;
         }
 
-        // Guard 2: versión de iOS mínima
-        if (!iOSVersionOK) {
-          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_IOS_VERSION', version: Platform.Version });
-          console.log('[LA] SKIP: iOS version < 16.2');
-          return;
-        }
-
-        // Guard 3: Expo Go no soporta ActivityKit
-        if (isExpoGo) {
-          await api.post('/logs/client', { ...ctxBase, step: 'SKIP_EXPO_GO' });
-          console.log('[LA] SKIP: Expo Go environment');
-          return;
-        }
-
-        // Import dinámico del bridge (Dev Client / TestFlight)
-        const mod = await import('@kingstinct/react-native-activity-kit');
-        const AK: any = (mod as any).default ?? mod;
-        console.log('[LA] NITRO_EXPORTS imported.');
-
-        const {
-          startActivity,
-          endActivity,
-          areActivitiesEnabled,
-          pushToken: activityPushToken,
-        } = AK as {
-          startActivity?: (attrs: any, state: any) => Promise<string>;
-          endActivity?: (id: string) => Promise<void>;
-          areActivitiesEnabled?: () => Promise<boolean>;
-          pushToken?: () => Promise<string>;
-        };
-
-        await api.post('/logs/client', {
-          ...ctxBase,
-          step: 'NITRO_EXPORTS',
-          hasStart: !!startActivity,
-          hasEnd: !!endActivity,
-          hasEnabled: !!areActivitiesEnabled,
-          hasPushToken: !!activityPushToken,
-        });
-
-        if (!startActivity || !endActivity || !activityPushToken) {
-          await api.post('/logs/client', { ...ctxBase, step: 'MISSING_NITRO_FUNCS' });
-          console.error('[LA] ERROR: Missing Nitro functions (rebuild Dev Client with the plugin).');
-          return;
-        }
-
-        // Comprobación de permisos del sistema para Live Activities
-        let enabled = false;
-        try {
-          enabled = !!(await (areActivitiesEnabled?.() ?? Promise.resolve(false)));
-        } catch (e: any) {
-          await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED_ERR', message: String(e?.message ?? e) });
-        }
-        await api.post('/logs/client', { ...ctxBase, step: 'CHECK_ENABLED', enabled });
-        console.log(`[LA] CHECK_ENABLED: ${enabled}`);
-
-        // Iniciar Live Activity
-        const attributes = { kind: 'order-tracking' };
-        const initialState = {
-          orderId,
-          status: 'CREATED',
-          title: 'Pedido recibido',
-          subtitle: 'Preparando tu pedido…',
-          totalCOP: total,
-        };
-
-        let activityId: string;
-        try {
-          activityId = await startActivity(attributes, initialState);
-        } catch (e: any) {
-          await api.post('/logs/client', {
-            ...ctxBase,
-            step: 'START_ERR',
-            message: String(e?.message ?? e),
-            name: e?.name,
-            code: e?.code,
-          });
-          console.error(`[LA] START_ERR: ${String(e?.message ?? e)}`);
-          return;
-        }
-        await api.post('/logs/client', { ...ctxBase, step: 'START_OK', activityId });
-        console.log(`[LA] START_OK id=${activityId}`);
-
-        // Obtener APNs token de la actividad (3 reintentos breves)
-        let apnsToken = '';
-        for (let i = 0; i < 3 && !apnsToken; i++) {
-          try { apnsToken = await activityPushToken(); } catch { /* noop */ }
-          if (!apnsToken) await sleep(300);
-        }
-        await api.post('/logs/client', { ...ctxBase, step: 'PUSH_TOKEN', ok: !!apnsToken });
-        console.log(`[LA] PUSH_TOKEN: ${apnsToken ? 'OK' : 'FAIL'}`);
-
-        if (!apnsToken) {
-          try { await endActivity(activityId); } catch { /* noop */ }
-          await api.post('/logs/client', { ...ctxBase, step: 'ERR_NO_TOKEN' });
-          console.error('[LA] ERR: No APNs Token, ending activity.');
-          return;
-        }
-
-        const addressShort: string | undefined = p.addressShort || p.address?.short || undefined;
-
-        // Registrar en backend para updates por APNs
+        // Registrar en backend para updates por APNs (si pushToken existe)
         await api.post('/live-activities/register', {
           orderId,
-          apnsToken,
-          activityId,
-          addressShort,
+          activityId: res.activityId,
+          apnsToken: res.pushToken,
+          addressShort: p.addressShort || p.address?.short || undefined,
           totalCOP: total,
         });
-        await api.post('/logs/client', { ...ctxBase, step: 'REGISTER_OK', activityId });
-        console.log('[LA] REGISTER_OK. Tracking iniciado.');
-      } catch (err: any) {
-        await api.post('/logs/client', {
-          ...ctxBase,
-          step: 'ERR',
-          message: String(err?.message ?? err),
-          stack: String(err?.stack ?? ''),
+        await logClient('LA/REGISTER_OK', {
+          orderId,
+          activityId: res.activityId,
+          hasPushToken: !!res.pushToken,
         });
-        console.error(`[LA] UNHANDLED_ERR: ${String(err?.message ?? err)}`);
+      } catch (err: any) {
+        await logClient('LA/ERR', {
+          orderId,
+          message: String(err?.message ?? err),
+        });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -306,13 +195,43 @@ export default function OrderSuccessScreen() {
       </TouchableOpacity>
 
       {__DEV__ && (
-        <TouchableOpacity
-          // Evita el error 'Cannot cast nil' asegurando un objeto data
-          onPress={() => presentLocalNotification('Expolicores', 'Prueba local OK', { data: { test: '1' } })}
-          style={{ marginTop: 12 }}
-        >
-          <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
-        </TouchableOpacity>
+        <>
+          {/* Prueba de notificación local */}
+          <TouchableOpacity
+            onPress={() =>
+              presentLocalNotification('Expolicores', 'Prueba local OK', { data: { test: '1' } })
+            }
+            style={{ marginTop: 12 }}
+          >
+            <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
+          </TouchableOpacity>
+
+          {/* 🔹 Botón DEV: forzar Live Activity start + registro (tal como pediste) */}
+          <TouchableOpacity
+            onPress={async () => {
+              if (!orderId) return;
+              await logClient('LA/BEGIN_MANUAL', { orderId, provider: process.env.EXPO_PUBLIC_LA_PROVIDER });
+              const res = await _laStart(orderId, {
+                status: 'CREATED',
+                etaMinutes: 30,
+                orderNumber: String(orderId),
+              });
+              await registerLAOnBackend(orderId, res);
+            }}
+            style={{
+              marginTop: 12,
+              backgroundColor: '#2563eb',
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              borderRadius: 8,
+              width: '100%',
+            }}
+          >
+            <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
+              [DEV] LA Start + Register
+            </Text>
+          </TouchableOpacity>
+        </>
       )}
 
       <TouchableOpacity
