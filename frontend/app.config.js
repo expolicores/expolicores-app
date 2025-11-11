@@ -13,19 +13,15 @@ loadEnv();
 export default () => {
   const isDev = PROFILE === 'development';
 
-  // Identificadores y naming por ambiente
-  const iosBundleId = isDev ? 'com.expolicores.app.dev' : 'com.expolicores.app';
+  // ⚠️ Para forzar instalación “limpia” y evitar reciclar binarios viejos,
+  // cambiamos temporalmente el bundle y nombre en DEV.
+  const iosBundleId = isDev ? 'com.expolicores.app.dev54' : 'com.expolicores.app';
   const androidPackage = isDev ? 'com.expolicores.app.dev' : 'com.expolicores.app';
-  const scheme = isDev ? 'expolicoresdev' : 'expolicores';
-  const displayName = isDev ? 'Expolicores Dev' : 'Expolicores';
+  const scheme = isDev ? 'expolicoresdev54' : 'expolicores';
+  const displayName = isDev ? 'Expolicores Dev (NA54)' : 'Expolicores';
 
-  /**
-   * IMPORTANTE: iOS buildNumber lo pasamos por ENV para evitar "autoIncrement no soportado con app.config.js"
-   * - En CMD (Windows):
-   *   set IOS_BUILD_NUMBER=7 && npx -p eas-cli@latest eas build -p ios --profile development --clear-cache
-   * - En prod cambia a un número mayor (p.ej. 101)
-   */
-  const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER ?? (isDev ? '7' : '101');
+  // iOS buildNumber lo pasamos por ENV para evitar autoIncrement con app.config.js
+  const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER ?? (isDev ? '1' : '101');
 
   return {
     expo: {
@@ -34,8 +30,13 @@ export default () => {
       owner: 'expolicores',
       scheme,
 
-      // La SDK se fija con "expo" en package.json (54.0.0). No se declara aquí.
+      // Versión de la app
       version: '1.0.0',
+
+      // 👇 Fuerza que el binario y el manifiesto sean SDK 54
+      sdkVersion: '54.0.0',
+      runtimeVersion: { policy: 'sdkVersion' },
+
       orientation: 'portrait',
       icon: './assets/icon.png',
       userInterfaceStyle: 'light',
@@ -65,8 +66,6 @@ export default () => {
         // 'aps-environment' lo gestiona EAS según firma y perfil (sandbox/production)
       },
 
-      runtimeVersion: { policy: 'sdkVersion' }, // usa "exposdk:54.0.0" en tiempo de ejecución
-
       android: {
         package: androidPackage,
         versionCode: isDev ? 100 : 14,
@@ -80,10 +79,7 @@ export default () => {
       web: { favicon: './assets/favicon.png' },
 
       plugins: [
-        // Secure storage (opcional)
         'expo-secure-store',
-
-        // Notificaciones (Expo Push / APNs / FCM)
         [
           'expo-notifications',
           {
@@ -91,27 +87,18 @@ export default () => {
             color: '#D72638',
           },
         ],
-
-        /**
-         * Ruta C (proveedor: expo-live-activity)
-         * Genera extensión de Live Activity sin Xcode y habilita push-to-activity.
-         */
+        // Ruta C (expo-live-activity): genera la extensión sin abrir Xcode
         ['expo-live-activity', { enablePushNotifications: true }],
-
-        // Propiedades nativas del build
+        // New Architecture ON y target iOS correcto (sin useFrameworks para evitar issues de headers)
         [
           'expo-build-properties',
           {
             ios: {
-              // New Architecture ON para Nitro/ActivityKit
               newArchitecture: true,
-              // iOS mínimo requerido por Live Activities (push updates)
               deploymentTarget: '26.0',
-              // Recomendado para varias libs nativas en EAS
-              useFrameworks: 'static',
+              // useFrameworks: 'static', // (dejado fuera intencionalmente)
             },
             android: {
-              // Valor estándar; puede ser 24 o 26 según tus dispositivos objetivo
               minSdkVersion: 24,
             },
           },
@@ -124,7 +111,7 @@ export default () => {
         eas: { projectId: '1d03fcea-24a8-42d2-b3d8-c1a50919ac11' },
 
         // Flags negocio/funcionalidad
-        EXPO_PUBLIC_LA_PROVIDER: process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'expo', // "expo" | "kingstinct" | "none"
+        EXPO_PUBLIC_LA_PROVIDER: (process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'expo').trim(), // "expo" | "kingstinct" | "none"
 
         // API
         EXPO_PUBLIC_API_BASE_URL: process.env.EXPO_PUBLIC_API_BASE_URL,

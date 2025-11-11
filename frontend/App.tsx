@@ -43,6 +43,24 @@ const queryClient = new QueryClient({
   },
 });
 
+// Helpers de versión iOS
+function iosVersion(): number {
+  if (Platform.OS !== 'ios') return 0;
+  const v =
+    typeof Platform.Version === 'string'
+      ? parseFloat(Platform.Version)
+      : (Platform.Version as number);
+  return isNaN(v) ? 0 : v;
+}
+function supportsStart(): boolean {
+  // ActivityKit start local desde iOS 16.1
+  return Platform.OS === 'ios' && iosVersion() >= 16.1;
+}
+function supportsPushUpdates(): boolean {
+  // APNs liveactivity updates desde iOS 16.2
+  return Platform.OS === 'ios' && iosVersion() >= 16.2;
+}
+
 // Runtime derivado si no hay expo-updates
 function deriveRuntime() {
   const cfg: any = Constants.expoConfig ?? {};
@@ -70,22 +88,21 @@ export default function App() {
       profile: process.env.EAS_BUILD_PROFILE,
       api: process.env.EXPO_PUBLIC_API_BASE_URL,
       debugHttp: process.env.EXPO_PUBLIC_DEBUG_HTTP,
-      sdk: (Constants.expoConfig as any)?.sdkVersion,
-      appId: Constants.applicationId,
+      sdk: (Constants.expoConfig as any)?.sdkVersion, // del app.config
+      appId: (Constants.expoConfig as any)?.ios?.bundleIdentifier ?? Constants.applicationId,
       providerRaw: rawProvider,
       providerNorm: provider,
     });
 
     // ===== BINARIO (instalado) =====
     console.log('[BUILD]', {
-      nativeBuildVersion: Constants.nativeBuildVersion,
+      nativeBuildVersion: Constants.nativeBuildVersion, // puede ser undefined en Dev Client
       applicationId: (Constants.expoConfig as any)?.ios?.bundleIdentifier,
     });
 
     // ===== RUNTIME =====
     (async () => {
       try {
-        // Import dinámico para no requerir tipos/paquete en compile-time
         const Updates: any = await import('expo-updates');
         console.log('[RUNTIME]', {
           runtime: Updates.runtimeVersion ?? deriveRuntime(),
@@ -93,7 +110,6 @@ export default function App() {
           channel: Updates.manifest?.channel ?? null,
         });
       } catch {
-        // Si no existe expo-updates, usamos el derivado
         console.log('[RUNTIME]', {
           runtime: deriveRuntime(),
           note: 'expo-updates not installed',
@@ -104,14 +120,29 @@ export default function App() {
     // ===== PROBE de módulos nativos / New Architecture =====
     // @ts-ignore - flag global de RN para Turbo/Fabric
     const isTurbo = !!global.__turboModuleProxy;
-    console.log('[LA][probe] iOS?', Platform.OS, 'turbo?', isTurbo);
+    console.log('[LA][probe] iOS?', Platform.OS, 'turbo?', isTurbo, 'iOSVersion?', iosVersion());
+    console.log('[LA][probe] supportsStart?', supportsStart(), 'supportsPush?', supportsPushUpdates());
 
     const nativeKeys = Object.keys(NativeModules).filter((k) =>
-      /nitro|activity|kingstinct/i.test(k),
+      /nitro|activity|kingstinct|live|widget/i.test(k),
     );
-    console.log('[LA][probe] keys:', nativeKeys);
+    console.log('[LA][probe] native modules:', nativeKeys);
     // @ts-ignore acceso dinámico
     console.log('[LA][probe] NitroActivityKit =', typeof (NativeModules as any)?.NitroActivityKit);
+
+    // Probe directo al provider expo-live-activity
+    (async () => {
+      try {
+        const mod: any = await import('expo-live-activity');
+        console.log('[LA][probe expo-live-activity] fns =', {
+          startLiveActivity: typeof mod?.startLiveActivity,
+          updateLiveActivity: typeof mod?.updateLiveActivity,
+          stopLiveActivity: typeof mod?.stopLiveActivity,
+        });
+      } catch (e) {
+        console.log('[LA][probe expo-live-activity] import error =', String(e));
+      }
+    })();
 
     const sub = AppState.addEventListener('change', onAppStateChange);
     return () => sub.remove();
