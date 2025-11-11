@@ -2,7 +2,10 @@
 
 import React, { useMemo } from 'react';
 import { RouteProp } from '@react-navigation/native';
+import { View } from 'react-native';
 import MarketScreen from './MarketScreen';
+// ⬇️ reemplazamos el banner simple por el de progreso animado
+import { OrderProgressBanner } from '../components/OrderProgressBanner';
 
 // Tipado laxo para no forzar cambios en RootStackParamList ahora
 type AnyParams = Record<string, any>;
@@ -45,6 +48,7 @@ function mapSlugToFilters(slug?: string) {
  * - Lee params de deeplink: slug / categorySlug / sort / priceLte...
  * - Fusiona con filtros derivados del slug (si aplica)
  * - Reenvía a MarketScreen inyectando route.params combinados
+ * - Muestra un Banner in-app con el estado del último pedido (progreso animado)
  */
 export default function CatalogScreen(props: Props) {
   const { route, navigation } = props;
@@ -85,6 +89,21 @@ export default function CatalogScreen(props: Props) {
     }
   }, [navigation, incoming.slug]);
 
-  // Renderiza MarketScreen con los params combinados
-  return <MarketScreen {...props} route={mergedRoute} />;
+  /**
+   * Renderiza el banner + MarketScreen.
+   * Nota: este banner queda arriba del feed. Si tu MarketScreen dibuja la barra de búsqueda
+   * y luego los accesos “Mercado / Bodega Virtual”, el banner aparecerá sobre esos accesos,
+   * que es lo solicitado.
+   */
+  return (
+    <View style={{ flex: 1 }}>
+      {process.env.EXPO_PUBLIC_FEATURE_INAPP_ORDER_BANNER !== 'false' && (
+        <OrderProgressBanner showDeliveredWindowMin={20} />
+      )}
+
+      <View style={{ flex: 1 }}>
+        <MarketScreen {...props} route={mergedRoute} />
+      </View>
+    </View>
+  );
 }

@@ -1,21 +1,18 @@
 // frontend/src/screens/OrderSuccessScreen.tsx
 import React, { useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Linking,
-  Alert,
-} from 'react-native';
+import { View, Text, TouchableOpacity, Linking, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 
 import { useNotifications } from '../context/NotificationsContext';
 import { presentLocalNotification } from '../lib/notifications';
 import { api } from '../lib/api';
 
-// Ruta C: fachada + provider seleccionable (expo | kingstinct | none)
+// Live Activities (pausadas): mantenemos la fachada pero la gateamos por flag
 import { useLiveActivity } from '../hooks/useLiveActivity';
 import { logClient, laStart as _laStart, registerLAOnBackend } from '../lib/liveActivityProvider';
+
+// Banner in-app (reemplazo de Live Activities)
+import { OrderStatusBanner } from '../components/OrderStatusBanner';
 
 type RouteParams = {
   orderId?: number;
@@ -25,6 +22,12 @@ type RouteParams = {
   addressShort?: string;
   address?: { short?: string };
 };
+
+// Feature flags
+const FEATURE_INAPP_ORDER_BANNER =
+  process.env.EXPO_PUBLIC_FEATURE_INAPP_ORDER_BANNER !== 'false';
+const FEATURE_LIVE_ACTIVITIES =
+  process.env.EXPO_PUBLIC_FEATURE_LIVE_ACTIVITIES === 'true';
 
 export default function OrderSuccessScreen() {
   const { params } = useRoute<any>();
@@ -52,14 +55,18 @@ export default function OrderSuccessScreen() {
   // Evitar doble inicio de Live Activity
   const startedRef = useRef(false);
 
-  // useLiveActivity (fachada)
+  // useLiveActivity (fachada) — solo se iniciará si el flag lo permite
   const la = useLiveActivity(orderId ?? 0, orderId ? String(orderId) : undefined);
 
   // ===== Monteo de pantalla (debug visible) =====
   useEffect(() => {
+    const providerRaw = process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'none';
+    const providerNorm = providerRaw.trim().toLowerCase();
     console.log('[LA][ORDER_SUCCESS] mounted', {
-      provider: process.env.EXPO_PUBLIC_LA_PROVIDER,
+      providerRaw,
+      providerNorm,
       orderId,
+      FEATURE_LIVE_ACTIVITIES,
     });
   }, [orderId]);
 
@@ -78,30 +85,30 @@ export default function OrderSuccessScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ===== Live Activities: vía fachada (Ruta C) + fallback Ruta D =====
+  // ===== Live Activities (PAUSADAS): gate por flag; si está OFF, no hace nada =====
   useEffect(() => {
+    if (!FEATURE_LIVE_ACTIVITIES) return;         // <-- pausado por decisión de producto
     if (!orderId) return;
     if (startedRef.current) return;
     startedRef.current = true;
 
     (async () => {
       try {
-        await logClient('LA/BEGIN', { orderId, provider: process.env.EXPO_PUBLIC_LA_PROVIDER });
+        const providerRaw = process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'none';
+        const providerNorm = providerRaw.trim().toLowerCase();
+        await logClient('LA/BEGIN', { orderId, provider: providerNorm });
 
         // Iniciar Live Activity (ETA inicial opcional)
         const res = await la.start(45);
 
         if (!res) {
-          // Fallback Ruta D (banner/aviso propio o notificación local)
           await logClient('LA/UNAVAILABLE', { reason: 'no-provider-or-ios-version-or-devclient' });
-
-          // Opcional: notificación local para feedback inmediato
+          // Fallback local como feedback inmediato (se mantiene aunque el feature esté pausado)
           await presentLocalNotification(
             'Seguimiento de pedido',
             `Tu pedido #${orderId} está en preparación`,
             { data: { orderId } }
           );
-
           return;
         }
 
@@ -143,120 +150,132 @@ export default function OrderSuccessScreen() {
 
   // --- UI ---
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>¡Pedido creado!</Text>
-      <Text style={{ marginBottom: 16 }}>Orden #{orderId ?? '—'}</Text>
-      <Text style={{ marginBottom: 24, color: '#6b7280', textAlign: 'center' }}>
-        Te enviaremos actualizaciones del estado de tu pedido aquí en la app.
-      </Text>
+    <View style={{ flex: 1, padding: 24 }}>
+      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 20, fontWeight: '800', marginBottom: 8 }}>¡Pedido creado!</Text>
+        <Text style={{ marginBottom: 16 }}>Orden #{orderId ?? '—'}</Text>
+        <Text style={{ marginBottom: 24, color: '#6b7280', textAlign: 'center' }}>
+          Te enviaremos actualizaciones del estado de tu pedido aquí en la app.
+        </Text>
 
-      <View
-        style={{
-          width: '100%',
-          backgroundColor: '#fff',
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 16,
-          shadowColor: '#000',
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 1,
-        }}
-      >
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-          <Text style={{ color: '#4b5563' }}>Subtotal</Text>
-          <Text style={{ fontWeight: '600' }}>{formatCurrency(subtotal)}</Text>
+        <View
+          style={{
+            width: '100%',
+            backgroundColor: '#fff',
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16,
+            shadowColor: '#000',
+            shadowOpacity: 0.05,
+            shadowRadius: 8,
+            elevation: 1,
+          }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Text style={{ color: '#4b5563' }}>Subtotal</Text>
+            <Text style={{ fontWeight: '600' }}>{formatCurrency(subtotal)}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Text style={{ color: '#4b5563' }}>Envío</Text>
+            <Text style={{ fontWeight: '600' }}>{formatCurrency(shipping)}</Text>
+          </View>
+          <View style={{ height: 1, backgroundColor: '#e5e7eb', marginVertical: 8 }} />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontWeight: '700' }}>Total</Text>
+            <Text style={{ fontWeight: '700' }}>{formatCurrency(total)}</Text>
+          </View>
         </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-          <Text style={{ color: '#4b5563' }}>Envío</Text>
-          <Text style={{ fontWeight: '600' }}>{formatCurrency(shipping)}</Text>
-        </View>
-        <View style={{ height: 1, backgroundColor: '#e5e7eb', marginVertical: 8 }} />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={{ fontWeight: '700' }}>Total</Text>
-          <Text style={{ fontWeight: '700' }}>{formatCurrency(total)}</Text>
-        </View>
+
+        <Text style={{ marginBottom: 8, fontWeight: '600' }}>
+          Total pagado: {formatCurrency(total)}
+        </Text>
+
+        <TouchableOpacity
+          onPress={() => navigation.navigate('MyOrders')}
+          style={{
+            backgroundColor: '#111827',
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 8,
+            width: '100%',
+            marginTop: 16,
+          }}
+        >
+          <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
+            Ver mis pedidos
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => ensurePermission()} style={{ marginTop: 12 }}>
+          <Text>Forzar registro notificaciones</Text>
+        </TouchableOpacity>
+
+        {__DEV__ && (
+          <>
+            {/* Prueba de notificación local */}
+            <TouchableOpacity
+              onPress={() =>
+                presentLocalNotification('Expolicores', 'Prueba local OK', { data: { test: '1' } })
+              }
+              style={{ marginTop: 12 }}
+            >
+              <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
+            </TouchableOpacity>
+
+            {/* 🔹 Botón DEV: forzar Live Activity start + registro */}
+            <TouchableOpacity
+              onPress={async () => {
+                if (!orderId) return;
+                const providerRaw = process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'none';
+                const providerNorm = providerRaw.trim().toLowerCase();
+                await logClient('LA/BEGIN_MANUAL', { orderId, provider: providerNorm });
+                const res = await _laStart(orderId, {
+                  status: 'CREATED',
+                  etaMinutes: 30,
+                  orderNumber: String(orderId),
+                });
+                await registerLAOnBackend(orderId, res);
+              }}
+              style={{
+                marginTop: 12,
+                backgroundColor: '#2563eb',
+                paddingVertical: 10,
+                paddingHorizontal: 16,
+                borderRadius: 8,
+                width: '100%',
+              }}
+            >
+              <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
+                [DEV] LA Start + Register
+              </Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        <TouchableOpacity
+          onPress={openWhatsApp}
+          style={{
+            backgroundColor: '#10b981',
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 8,
+            width: '100%',
+            marginTop: 12,
+          }}
+        >
+          <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
+            Contactar por WhatsApp
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <Text style={{ marginBottom: 8, fontWeight: '600' }}>
-        Total pagado: {formatCurrency(total)}
-      </Text>
-
-      <TouchableOpacity
-        onPress={() => navigation.navigate('MyOrders')}
-        style={{
-          backgroundColor: '#111827',
-          paddingVertical: 12,
-          paddingHorizontal: 16,
-          borderRadius: 8,
-          width: '100%',
-          marginTop: 16,
-        }}
-      >
-        <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
-          Ver mis pedidos
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity onPress={() => ensurePermission()} style={{ marginTop: 12 }}>
-        <Text>Forzar registro notificaciones</Text>
-      </TouchableOpacity>
-
-      {__DEV__ && (
-        <>
-          {/* Prueba de notificación local */}
-          <TouchableOpacity
-            onPress={() =>
-              presentLocalNotification('Expolicores', 'Prueba local OK', { data: { test: '1' } })
-            }
-            style={{ marginTop: 12 }}
-          >
-            <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
-          </TouchableOpacity>
-
-          {/* 🔹 Botón DEV: forzar Live Activity start + registro */}
-          <TouchableOpacity
-            onPress={async () => {
-              if (!orderId) return;
-              await logClient('LA/BEGIN_MANUAL', { orderId, provider: process.env.EXPO_PUBLIC_LA_PROVIDER });
-              const res = await _laStart(orderId, {
-                status: 'CREATED',
-                etaMinutes: 30,
-                orderNumber: String(orderId),
-              });
-              await registerLAOnBackend(orderId, res);
-            }}
-            style={{
-              marginTop: 12,
-              backgroundColor: '#2563eb',
-              paddingVertical: 10,
-              paddingHorizontal: 16,
-              borderRadius: 8,
-              width: '100%',
-            }}
-          >
-            <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
-              [DEV] LA Start + Register
-            </Text>
-          </TouchableOpacity>
-        </>
+      {/* Banner in-app de estado del pedido (sustituto de Live Activities) */}
+      {FEATURE_INAPP_ORDER_BANNER && (
+        <View style={{ marginTop: 16 }}>
+          {/* Mantenemos una ventana un poco más amplia para OrderSuccess */}
+          <OrderStatusBanner showDeliveredWindowMin={30} />
+        </View>
       )}
-
-      <TouchableOpacity
-        onPress={openWhatsApp}
-        style={{
-          backgroundColor: '#10b981',
-          paddingVertical: 12,
-          paddingHorizontal: 16,
-          borderRadius: 8,
-          width: '100%',
-          marginTop: 12,
-        }}
-      >
-        <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
-          Contactar por WhatsApp
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 }

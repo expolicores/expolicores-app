@@ -24,7 +24,7 @@ try {
 
   if (txt !== before) {
     fs.writeFileSync(podspecPath, txt, 'utf8');
-    console.log('[patch-nitro] Patched NitroActivityKit.podspec to iOS 26.0');
+    console.log('[patch-nitro] Patched NitroActivityKit.podspec to iOS 20.1');
   } else {
     console.log('[patch-nitro] No changes applied (pattern not found).');
   }
