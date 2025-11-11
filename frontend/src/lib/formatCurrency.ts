@@ -1,13 +1,32 @@
-// frontend/src/lib/formatCurrency.ts
-const formatter = new Intl.NumberFormat('es-CO', {
-  style: 'currency',
-  currency: 'COP',
-  maximumFractionDigits: 0,
-});
+// src/lib/formatCurrency.ts
+// Helpers de formato monetario. Exporta named y default para evitar mismatches.
 
-export function formatCurrency(n: number | null | undefined): string {
-  const v = typeof n === 'number' && isFinite(n) ? n : 0;
-  return formatter.format(v);
+type IntlCurrency = 'COP' | 'USD' | 'EUR' | string;
+
+export function formatCurrency(
+  value: number,
+  currency: IntlCurrency = 'COP',
+  locale = 'es-CO',
+  maximumFractionDigits = 0
+): string {
+  // Guard por si llega null/undefined
+  if (value == null || Number.isNaN(Number(value))) return '';
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits,
+    }).format(value);
+  } catch {
+    // Fallback súper simple
+    return `${currency} ${Math.round(Number(value)).toLocaleString(locale)}`;
+  }
 }
 
-export default formatCurrency;
+/** Alias directo para COP (enteros). */
+export function formatCOP(value: number): string {
+  return formatCurrency(value, 'COP', 'es-CO', 0);
+}
+
+// Compatibilidad: algunos imports usan default
+export default formatCOP;

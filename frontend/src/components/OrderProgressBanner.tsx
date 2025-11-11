@@ -2,8 +2,7 @@
 // File: src/components/OrderProgressBanner.tsx
 // Desc: Banner de progreso del pedido con 3 hitos (Recibido → En camino → Entregado)
 //       La moto se anima según el estado. Toca para ir al tracking.
-//       Ajustado para usar ORDER_STATUS (constantes runtime) y nuevo hook useActiveOrder
-//       con polling adaptativo (activePollMs/idlePollMs).
+//       FIX: no hay hooks condicionales; useRef se llama SIEMPRE.
 // =============================
 import React, { useEffect, useMemo, useRef } from 'react';
 import {
@@ -18,7 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useActiveOrder } from '../hooks/useActiveOrder';
 import type { OrderStatus } from '../types/order';
-import { ORDER_STATUS, ORDER_STATUS_LABEL } from '../types/order';
+import { ORDER_STATUS } from '../types/order';
 import type { RootStackScreenProps } from '../navigation/types';
 
 type Props = {
@@ -28,7 +27,12 @@ type Props = {
   compact?: boolean;
 };
 
-const STEP_LABELS: Record<OrderStatus, string> = ORDER_STATUS_LABEL;
+const STEP_LABELS: Record<OrderStatus, string> = {
+  RECIBIDO: 'Recibido',
+  EN_CAMINO: 'En camino',
+  ENTREGADO: 'Entregado',
+  CANCELADO: 'Cancelado',
+};
 
 const stepIndex = (status: OrderStatus) =>
   status === ORDER_STATUS.RECIBIDO ? 0 :
@@ -39,36 +43,31 @@ export const OrderProgressBanner: React.FC<Props> = ({
   showDeliveredWindowMin = 20,
   compact = false,
 }) => {
+  // Hooks SIEMPRE
   const nav = useNavigation<RootStackScreenProps<'Catalog'>['navigation']>();
-  // Nota: el hook ahora usa activePollMs/idlePollMs (no pollMs)
-  const { order } = useActiveOrder({ showDeliveredWindowMin, activePollMs: 12000 });
+  const { order } = useActiveOrder({ showDeliveredWindowMin, pollMs: 12000 });
 
-  // Ocultarse si no hay pedido “activo” ni entregado reciente
-  if (!order) return null;
+  // useRef SIEMPRE (FIX principal)
+  const prog = useRef(new Animated.Value(0)).current;
 
-  // Progreso: 0 (recibido) → 0.5 (en camino) → 1 (entregado)
-  const targetProgress =
-    order.status === ORDER_STATUS.RECIBIDO ? 0 :
-    order.status === ORDER_STATUS.EN_CAMINO ? 0.5 : 1;
+  // Derivados memorizados (se llaman SIEMPRE; toleran order null)
+  const targetProgress = useMemo(() => {
+    if (!order) return 0; // punto inicial a la izquierda
+    if (order.status === ORDER_STATUS.RECIBIDO) return 0;
+    if (order.status === ORDER_STATUS.EN_CAMINO) return 0.5;
+    return 1; // ENTREGADO (o lo demás)
+  }, [order]);
 
-  // Animación suave del progreso
-  const prog = useRef(new Animated.Value(targetProgress)).current;
-  useEffect(() => {
-    Animated.timing(prog, {
-      toValue: targetProgress,
-      duration: 700,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false, // left/width no soportan driver nativo
-    }).start();
-  }, [targetProgress]);
-
-  // Posición horizontal de la moto dentro de la pista
-  const motoLeft = prog.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'],
-  });
+  const badgeStyle = useMemo(() => {
+    const st = order?.status;
+    if (st === ORDER_STATUS.EN_CAMINO) return styles.badgeSky;
+    if (st === ORDER_STATUS.ENTREGADO) return styles.badgeGreen;
+    if (st === ORDER_STATUS.CANCELADO) return styles.badgeRed;
+    return styles.badgeGray; // default/RECIBIDO/null
+  }, [order?.status]);
 
   const title = useMemo(() => {
+    if (!order) return '';
     if (order.status === ORDER_STATUS.RECIBIDO) return `Pedido #${order.id} recibido`;
     if (order.status === ORDER_STATUS.EN_CAMINO) return `¡Tu pedido #${order.id} va en camino!`;
     if (order.status === ORDER_STATUS.ENTREGADO) return `Pedido #${order.id} entregado`;
@@ -76,10 +75,23 @@ export const OrderProgressBanner: React.FC<Props> = ({
     return `Pedido #${order.id}`;
   }, [order]);
 
-  const badgeStyle =
-    order.status === ORDER_STATUS.EN_CAMINO ? styles.badgeSky :
-    order.status === ORDER_STATUS.ENTREGADO ? styles.badgeGreen :
-    order.status === ORDER_STATUS.CANCELADO ? styles.badgeRed : styles.badgeGray;
+  // Animación SIEMPRE montada (si no hay order, anima hacia 0)
+  useEffect(() => {
+    Animated.timing(prog, {
+      toValue: targetProgress,
+      duration: 700,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false, // left/width no soporta nativo
+    }).start();
+  }, [prog, targetProgress]);
+
+  const motoLeft = prog.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
+
+  // A PARTIR DE AQUÍ podemos condicionar el render
+  if (!order) return null;
 
   return (
     <TouchableOpacity
@@ -88,7 +100,6 @@ export const OrderProgressBanner: React.FC<Props> = ({
       style={styles.container}
       accessibilityRole="button"
       accessibilityLabel={`Estado del pedido ${order.id}: ${STEP_LABELS[order.status]}`}
-      testID="order-progress-banner"
     >
       {/* Encabezado */}
       <View style={styles.headerRow}>
@@ -157,7 +168,7 @@ const styles = StyleSheet.create({
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   badgeSky: { backgroundColor: '#0ea5e9' },   // EN_CAMINO
   badgeGreen: { backgroundColor: '#10b981' }, // ENTREGADO
-  badgeGray: { backgroundColor: '#6b7280' },  // RECIBIDO
+  badgeGray: { backgroundColor: '#6b7280' },  // RECIBIDO / default
   badgeRed: { backgroundColor: '#ef4444' },   // CANCELADO
 
   trackBox: { marginTop: 12, height: 32, justifyContent: 'center' },
@@ -190,11 +201,7 @@ const styles = StyleSheet.create({
     borderColor: '#38bdf8', borderWidth: 1,
   },
 
-  labelsRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
+  labelsRow: { marginTop: 8, flexDirection: 'row', justifyContent: 'space-between' },
   stepLabel: { fontSize: 12, color: '#64748b' },
   stepLabelCenter: { fontSize: 12, color: '#64748b', textAlign: 'center' },
   stepLabelRight: { fontSize: 12, color: '#64748b', textAlign: 'right' },

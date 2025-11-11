@@ -1,38 +1,39 @@
-// =============================
-// File: src/components/OrderStatusBanner.tsx
-// Desc: Banner compacto que muestra el último pedido activo (CREATED/EN_CAMINO)
-//       y opcionalmente ENTREGADO reciente. Ícono de motocicleta cuando EN_CAMINO.
-// =============================
+// Banner simple que muestra el último pedido y la moto 🛵 cuando va EN_CAMINO.
+// Usa ORDER_STATUS (constantes en runtime) para evitar errores de enum.
+
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { formatDistanceToNow } from 'date-fns';
-import es from 'date-fns/locale/es';
+import { useNavigation } from '@react-navigation/native';
 import { useActiveOrder } from '../hooks/useActiveOrder';
-import { formatCOP } from '../lib/formatCurrency';
 import type { RootStackScreenProps } from '../navigation/types';
-import { OrderStatus } from '../types/order';
+import type { OrderStatus } from '../types/order';
+import { ORDER_STATUS } from '../types/order';
+import { formatCOP } from '../lib/formatCurrency';
 
-export type OrderStatusBannerProps = {
-  /** Muestra ENTREGADO si fue recientemente entregado (ventana en minutos) */
+type Props = {
   showDeliveredWindowMin?: number;
-  /** Ocultar si no hay pedido activo */
   hideWhenNone?: boolean;
 };
 
-export const OrderStatusBanner: React.FC<OrderStatusBannerProps> = ({
+const STEP_LABELS: Record<OrderStatus, string> = {
+  RECIBIDO: 'Recibido',
+  EN_CAMINO: 'En camino',
+  ENTREGADO: 'Entregado',
+  CANCELADO: 'Cancelado',
+};
+
+export const OrderStatusBanner: React.FC<Props> = ({
   showDeliveredWindowMin = 15,
   hideWhenNone = true,
 }) => {
   const nav = useNavigation<RootStackScreenProps<'Catalog'>['navigation']>();
-  const { order, loading, refetch } = useActiveOrder({ showDeliveredWindowMin });
+  const { order, refetch } = useActiveOrder({ showDeliveredWindowMin });
 
   const visible = useMemo(() => !!order, [order]);
   if (!visible && hideWhenNone) return null;
 
   if (!order) {
-    // Placeholder mínimo para evitar saltos de layout cuando se decida mostrar skeleton
     return (
       <View style={[styles.container, styles.skeleton]}>
         <Text style={styles.skeletonText}>Revisando tu último pedido…</Text>
@@ -40,26 +41,26 @@ export const OrderStatusBanner: React.FC<OrderStatusBannerProps> = ({
     );
   }
 
-  const isOnTheWay = order.status === OrderStatus.EN_CAMINO;
-  const isCreated = order.status === OrderStatus.CREATED;
-  const isDelivered = order.status === OrderStatus.ENTREGADO;
+  const isOnTheWay = order.status === ORDER_STATUS.EN_CAMINO;
+  const isReceived = order.status === ORDER_STATUS.RECIBIDO;
+  const isDelivered = order.status === ORDER_STATUS.ENTREGADO;
 
   const title = isOnTheWay
     ? `¡Tu pedido #${order.id} va en camino!`
-    : isCreated
+    : isReceived
     ? `Pedido #${order.id} recibido`
     : isDelivered
     ? `Pedido #${order.id} entregado`
     : `Pedido #${order.id}`;
 
   const subtitleParts: string[] = [];
-  if (order.totalAmount != null) subtitleParts.push(formatCOP(order.totalAmount));
+  if (order.total != null) subtitleParts.push(formatCOP(order.total));
   if (order.updatedAt) {
-    try {
-      subtitleParts.push(
-        `${isDelivered ? 'hace' : 'actualizado'} ${formatDistanceToNow(new Date(order.updatedAt), { addSuffix: false, locale: es })}`
-      );
-    } catch {}
+    // “Actualizado hh:mm” simple (sin dependencias)
+    const d = new Date(order.updatedAt);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    subtitleParts.push(`actualizado ${hh}:${mm}`);
   }
 
   return (
@@ -69,10 +70,10 @@ export const OrderStatusBanner: React.FC<OrderStatusBannerProps> = ({
       onLongPress={refetch}
       style={[
         styles.container,
-        isOnTheWay ? styles.onTheWay : isDelivered ? styles.delivered : styles.created,
+        isOnTheWay ? styles.onTheWay : isDelivered ? styles.delivered : styles.received,
       ]}
       accessibilityRole="button"
-      accessibilityLabel={`Estado del pedido ${order.id}: ${order.status}`}
+      accessibilityLabel={`Estado del pedido ${order.id}: ${STEP_LABELS[order.status]}`}
     >
       <View style={styles.leftIconBox}>
         {isOnTheWay ? (
@@ -125,9 +126,9 @@ const styles = StyleSheet.create({
   subtitle: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2 },
   cta: { flexDirection: 'row', alignItems: 'center', marginLeft: 8 },
   ctaText: { color: '#fff', fontWeight: '600', marginRight: 2 },
-  onTheWay: { backgroundColor: '#0ea5e9' }, // sky-500
-  created: { backgroundColor: '#6b7280' }, // gray-500
-  delivered: { backgroundColor: '#10b981' }, // emerald-500
+  onTheWay: { backgroundColor: '#0ea5e9' }, // EN_CAMINO
+  received: { backgroundColor: '#6b7280' }, // RECIBIDO
+  delivered: { backgroundColor: '#10b981' }, // ENTREGADO
   skeleton: { backgroundColor: '#374151' },
   skeletonText: { color: '#d1d5db', fontSize: 13 },
 });

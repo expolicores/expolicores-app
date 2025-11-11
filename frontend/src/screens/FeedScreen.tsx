@@ -35,6 +35,7 @@ import {
   type PricingView,
 } from '../lib/api';
 import { bus } from '../lib/bus';
+import { OrderProgressBanner } from '../components/OrderProgressBanner'; // 👈 Banner de pedido
 
 // ---------- helpers de formato ----------
 const formatCOP = (n?: number) =>
@@ -626,6 +627,13 @@ const FeedHeader = React.memo(function FeedHeader({
       }}
     >
       <HomeSearchBar onSubmit={onSubmitSearch} isB2B={isB2BSearch} />
+
+      {/* ===== Banner de estado de pedido (encima de Mercado / Bodega Virtual) ===== */}
+      {process.env.EXPO_PUBLIC_FEATURE_INAPP_ORDER_BANNER !== 'false' && (
+        <OrderProgressBanner showDeliveredWindowMin={20} />
+      )}
+      {/* ========================================================================== */}
+
       <QuickAccessTiles
         showBodega={showBodega}
         onPressMarket={onPressMarket}
@@ -1257,7 +1265,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     [item],
   );
 
-  // ---------- Fallback de detalles (name/price) si el feed no los provee ----------
+  // ---------- Fallback de detalles ----------
   const [fallback, setFallback] = React.useState<{ name?: string; price?: number; b2bPrice?: number } | null>(null);
 
   useEffect(() => {
@@ -1289,7 +1297,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     };
   }, [pidStr, item.title, item.subtitle, promoNameOverride, promoPriceOverride, item.priceB2C, item.priceB2B]);
 
-  // Qty: preferir qtyFromFeed si existe (respeta bundles/override)
+  // Qty
   const qty = useMemo(() => {
     if (cart?.qtyFromFeed) {
       try {
@@ -1301,17 +1309,12 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     return Number(line?.qty ?? 0);
   }, [cart?.qtyFromFeed, slotItem, overlay, cartItems, pidStr]);
 
-  // Acciones
-  const handlePlus = () => {
-    // Siempre enrutar por onAddToCart (closure ya trae priceOverride/nameOverride)
-    onAddToCart();
-  };
+  const handlePlus = () => onAddToCart();
 
   const handleMinus = () => {
     if (cart?.decrementFromFeed) {
       return cart.decrementFromFeed({ slotItem, overlay });
     }
-    // Fallback legacy
     if (!pidStr) return;
     const next = Math.max(0, qty - 1);
     const attempts: Array<() => any> = [
@@ -1334,7 +1337,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     if (cart?.removeFromFeed) {
       return cart.removeFromFeed({ slotItem, overlay });
     }
-    // Fallback legacy
     if (!pidStr) return;
     const attempts: Array<() => any> = [
       () => cart.removeItem?.(pidKey),
