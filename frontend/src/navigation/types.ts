@@ -53,4 +53,7 @@ export type RootStackParamList = {
   // Direcciones (si las manejas como pantallas del root)
   Addresses: undefined;
   AddressForm: { id?: number } | undefined;
+
+  // Legal
+  Legal: undefined;
 };

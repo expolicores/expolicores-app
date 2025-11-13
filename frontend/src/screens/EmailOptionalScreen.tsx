@@ -1,5 +1,5 @@
 ﻿// frontend/src/screens/EmailOptionalScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -17,6 +17,7 @@ import type { RootStackParamList } from '../navigation/types';
 import { requestOtp, verifyOtp, api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { ENV } from '../config/env';
+import AuthFlowBackButton from '../components/AuthFlowBackButton';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
 
@@ -52,6 +53,9 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
 
   const openTerms = (action: 'continue' | 'skip') => {
     setNextAction(action);
+    // opcional: resetear checks cada vez que se abre
+    setT1(false);
+    setT2(false);
     setShowTerms(true);
   };
 
@@ -91,21 +95,86 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
     }
   };
 
+  const resetToAvailableRoute = useCallback(
+    (candidates: Array<{ name: keyof RootStackParamList; params?: RootStackParamList[keyof RootStackParamList] }>) => {
+      const state = navigation.getState?.();
+      const routeStack = state?.routes ?? [];
+      const routeNames = (state?.routeNames as Array<keyof RootStackParamList>) ?? [];
+      for (const candidate of candidates) {
+        if (routeNames.includes(candidate.name)) {
+          navigation.reset({
+            index: 0,
+            routes: [
+              {
+                name: candidate.name as never,
+                params: (candidate.params ?? undefined) as never,
+              },
+            ],
+          });
+          return true;
+        }
+      }
+
+      if (routeStack.length > 0) {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: routeStack[0].name as never }],
+        });
+        return true;
+      }
+
+      return false;
+    },
+    [navigation],
+  );
+
+  const handleBack = useCallback(() => {
+    const state = navigation.getState?.();
+    const canPop = navigation.canGoBack() && (state?.routes?.length ?? 0) > 1;
+    if (canPop) {
+      navigation.goBack();
+      return;
+    }
+
+    if (mode === 'loginByEmail') {
+      resetToAvailableRoute([
+        { name: 'AuthChooser' },
+        { name: 'Home' },
+        { name: 'Dashboard' },
+      ]);
+      return;
+    }
+
+    resetToAvailableRoute([
+      { name: 'PhoneEntry', params: { intent: 'login' } },
+      { name: 'AuthChooser' },
+      { name: 'Home' },
+      { name: 'Dashboard' },
+    ]);
+  }, [mode, navigation, resetToAvailableRoute]);
+
   if (mode === 'loginByEmail') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
         <StatusBar barStyle="dark-content" />
         <View style={{ padding: 24 }}>
+          <AuthFlowBackButton onPress={handleBack} />
           <LoginByEmailView navigation={navigation} />
         </View>
       </SafeAreaView>
     );
   }
 
+  const linkStyle = {
+    color: '#2563EB',
+    textDecorationLine: 'underline' as const,
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
       <StatusBar barStyle="dark-content" />
       <View style={{ padding: 24, flex: 1 }}>
+        <AuthFlowBackButton onPress={handleBack} />
         <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 16 }}>
           Agrega tu correo (opcional)
         </Text>
@@ -158,7 +227,13 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
 
         {/* Modal de Términos y Condiciones */}
         <Modal visible={showTerms} animationType="slide" transparent>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              justifyContent: 'flex-end',
+            }}
+          >
             <View
               style={{
                 backgroundColor: '#fff',
@@ -171,15 +246,63 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
                 <Text style={{ fontSize: 22, fontWeight: '800', marginBottom: 12 }}>
                   Términos y condiciones
                 </Text>
+
                 <Text style={{ color: '#4B5563', marginBottom: 12 }}>
-                  Al registrarte aceptas nuestros términos y la política de tratamiento de datos...
+                  Al registrarte aceptas nuestros{' '}
+                  <Text
+                    style={linkStyle}
+                    onPress={() => {
+                      setShowTerms(false);
+                      navigation.navigate('Legal');
+                    }}
+                  >
+                    términos y condiciones
+                  </Text>{' '}
+                  y la{' '}
+                  <Text
+                    style={linkStyle}
+                    onPress={() => {
+                      setShowTerms(false);
+                      navigation.navigate('Legal');
+                    }}
+                  >
+                    política de tratamiento de datos personales
+                  </Text>
+                  , incluyendo el uso de tu celular para enviarte códigos de
+                  verificación, gestionar tus pedidos y enviarte notificaciones
+                  sobre el estado de tus órdenes.
                 </Text>
 
                 <TouchableOpacity onPress={() => setT1(!t1)} style={{ paddingVertical: 8 }}>
-                  <Text>{t1 ? '[x]' : '[ ]'} Acepto los términos y condiciones.</Text>
+                  <Text>
+                    {t1 ? '[x]' : '[ ]'} Acepto los{' '}
+                    <Text
+                      style={linkStyle}
+                      onPress={() => {
+                        setShowTerms(false);
+                        navigation.navigate('Legal');
+                      }}
+                    >
+                      términos y condiciones
+                    </Text>
+                    .
+                  </Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity onPress={() => setT2(!t2)} style={{ paddingVertical: 8 }}>
-                  <Text>{t2 ? '[x]' : '[ ]'} Autorizo el tratamiento de datos personales.</Text>
+                  <Text>
+                    {t2 ? '[x]' : '[ ]'} Autorizo el{' '}
+                    <Text
+                      style={linkStyle}
+                      onPress={() => {
+                        setShowTerms(false);
+                        navigation.navigate('Legal');
+                      }}
+                    >
+                      tratamiento de datos personales
+                    </Text>
+                    .
+                  </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity

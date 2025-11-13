@@ -50,6 +50,9 @@ import AdminPromotionsScreen from '../screens/AdminPromotionsScreen';
 /** ========== Catálogo ========== */
 import CatalogScreen from '../screens/CatalogScreen';
 
+/** ========== Legal ========== */
+import LegalScreen from '../screens/LegalScreen';
+
 /** ================= Buttons en header ================= */
 import HeaderAddress from '../components/HeaderAddress';
 
@@ -379,15 +382,31 @@ export default function AppNavigator() {
             )}
 
             {/* Miscelánea */}
-            <RootStack.Screen name="Cart" component={CartScreen} options={{ title: 'Carrito' }} />
-            <RootStack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Perfil' }} />
+            <RootStack.Screen
+              name="Cart"
+              component={CartScreen}
+              options={{ title: 'Carrito' }}
+            />
+            <RootStack.Screen
+              name="Profile"
+              component={ProfileScreen}
+              options={{ title: 'Perfil' }}
+            />
             <RootStack.Screen
               name="Addresses"
               component={AddressesNavigator}
               options={{ headerShown: false, presentation: 'modal' }}
             />
-            <RootStack.Screen name="MyOrders" component={MyOrdersScreen} options={{ title: 'Mis pedidos' }} />
-            <RootStack.Screen name="Favorites" component={FavoritesScreen} options={{ title: 'Mis favoritos' }} />
+            <RootStack.Screen
+              name="MyOrders"
+              component={MyOrdersScreen}
+              options={{ title: 'Mis pedidos' }}
+            />
+            <RootStack.Screen
+              name="Favorites"
+              component={FavoritesScreen}
+              options={{ title: 'Mis favoritos' }}
+            />
             <RootStack.Screen
               name="AdminPriceListB2C"
               component={AdminPriceListB2CScreen}
@@ -417,21 +436,61 @@ export default function AppNavigator() {
               component={OrderTrackingScreen}
               options={{ title: 'Estado del pedido' }}
             />
-            <RootStack.Screen name="Checkout" component={CheckoutScreen} options={{ title: 'Checkout' }} />
-            <RootStack.Screen name="OrderSuccess" component={OrderSuccessScreen} options={{ title: 'Pedido creado' }} />
+            <RootStack.Screen
+              name="Checkout"
+              component={CheckoutScreen}
+              options={{ title: 'Checkout' }}
+            />
+            <RootStack.Screen
+              name="OrderSuccess"
+              component={OrderSuccessScreen}
+              options={{ title: 'Pedido creado' }}
+            />
+
+            {/* Legal / términos y datos */}
+            <RootStack.Screen
+              name="Legal"
+              component={LegalScreen}
+              options={{ title: 'Términos y política de datos' }}
+            />
           </RootStack.Navigator>
         ) : (
-          <RootStack.Navigator initialRouteName="AuthChooser" screenOptions={{ headerBackTitle: 'Atrás' }}>
+          <RootStack.Navigator
+            initialRouteName="AuthChooser"
+            screenOptions={{ headerBackTitle: 'Atrás' }}
+          >
             {/* Auth flow (celular primero) */}
-            <RootStack.Screen name="AuthChooser" component={AuthChooserScreen} options={{ headerShown: false }} />
-            <RootStack.Screen name="PhoneEntry" component={PhoneEntryScreen} options={{ title: 'Ingresa tu número' }} />
-            <RootStack.Screen name="OtpCode" component={OtpCodeScreen} options={{ title: 'Código de verificación' }} />
+            <RootStack.Screen
+              name="AuthChooser"
+              component={AuthChooserScreen}
+              options={{ headerShown: false }}
+            />
+            <RootStack.Screen
+              name="PhoneEntry"
+              component={PhoneEntryScreen}
+              options={{ title: 'Ingresa tu número' }}
+            />
+            <RootStack.Screen
+              name="OtpCode"
+              component={OtpCodeScreen}
+              options={{ title: 'Código de verificación' }}
+            />
             {/* También permitimos Name/EmailOptional en el stack de no autenticado por si el flujo se rehidrata */}
-            <RootStack.Screen name="Name" component={NameScreen} options={{ headerShown: false }} />
+            <RootStack.Screen
+              name="Name"
+              component={NameScreen}
+              options={{ headerShown: false }}
+            />
             <RootStack.Screen
               name="EmailOptional"
               component={EmailOptionalScreen}
               options={{ title: 'Agrega tu correo (opcional)' }}
+            />
+            {/* Legal también accesible antes de autenticarse */}
+            <RootStack.Screen
+              name="Legal"
+              component={LegalScreen}
+              options={{ title: 'Términos y política de datos' }}
             />
           </RootStack.Navigator>
         )}

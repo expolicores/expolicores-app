@@ -20,7 +20,7 @@ export default function AuthChooserScreen({ navigation }: Props) {
   const { lastPhone } = useAuth();
 
   const goPhone = () => {
-    // OTP-first por WhatsApp (canal por defecto en backend)
+    // OTP-first (canal por defecto configurado en backend)
     navigation.navigate('PhoneEntry', { intent: 'login' });
   };
 
@@ -45,7 +45,7 @@ export default function AuthChooserScreen({ navigation }: Props) {
             Bienvenido a Expolicores
           </Text>
           <Text style={{ marginTop: 8, fontSize: 16, color: '#6B7280' }}>
-            Inicia rápido. Te enviaremos un código de verificación por WhatsApp.
+            Inicia rápido. Te enviaremos un código de verificación a tu celular.
           </Text>
         </View>
 
@@ -120,7 +120,14 @@ export default function AuthChooserScreen({ navigation }: Props) {
         {/* Footer / términos */}
         <View style={{ marginBottom: 4 }}>
           <Text style={{ textAlign: 'center', fontSize: 12, color: '#9CA3AF' }}>
-            Al continuar aceptas nuestros términos y la política de datos.
+            Al continuar aceptas nuestros{' '}
+            <Text
+              style={{ color: '#2563EB', textDecorationLine: 'underline' }}
+              onPress={() => navigation.navigate('Legal')}
+            >
+              términos y la política de datos
+            </Text>
+            .
           </Text>
         </View>
       </View>

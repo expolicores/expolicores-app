@@ -1,5 +1,5 @@
 ﻿// frontend/src/screens/OtpCodeScreen.tsx
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { ENV } from '../config/env';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Linking } from 'react-native';
@@ -18,6 +18,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { useAuth } from '../context/AuthContext';
 import { requestOtp } from '../lib/api';
+import AuthFlowBackButton from '../components/AuthFlowBackButton';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OtpCode'>;
 
@@ -28,14 +29,13 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
     phone,
     email,
     intent = 'login',
-    devOtp,
+    // devOtp, // ya no usamos devOtp en el cliente
     cooldownSeconds = 60,
     expiresInSeconds = 600,
     phoneMasked,
   } = route.params || {};
 
-  const isDev = __DEV__;
-  const [code, setCode] = useState<string>(isDev && devOtp ? devOtp : '');
+  const [code, setCode] = useState<string>(''); // siempre empieza vacío
   const [cooldown, setCooldown] = useState<number>(cooldownSeconds);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -58,12 +58,6 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
       if (tickRef.current) clearInterval(tickRef.current);
     };
   }, []);
-
-  // Autorrellenar SOLO en dev -- NO auto-verificar
-  useEffect(() => {
-    if (isDev && devOtp && devOtp.length === 6) setCode(devOtp);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devOtp, isDev]);
 
   const onVerify = async () => {
     if (code.length !== 6 || loading || isSubmittingRef.current) return;
@@ -126,7 +120,7 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
     try {
       const res: any = await requestOtp({ phone, email, intent, channel });
 
-      if (isDev && res?.devOtp?.length === 6) setCode(res.devOtp);
+      // ya NO autollenamos el código con res.devOtp
 
       if (res?.throttled && typeof res?.remainingSeconds === 'number') {
         setCooldown(res.remainingSeconds);
@@ -153,6 +147,56 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
   };
 
   const disabled = code.length !== 6 || loading;
+  const resetToAvailableRoute = useCallback(
+    (candidates: Array<{ name: keyof RootStackParamList; params?: RootStackParamList[keyof RootStackParamList] }>) => {
+      const state = navigation.getState?.();
+      const routeStack = state?.routes ?? [];
+      const routeNames = (state?.routeNames as Array<keyof RootStackParamList>) ?? [];
+      for (const candidate of candidates) {
+        if (routeNames.includes(candidate.name)) {
+          navigation.reset({
+            index: 0,
+            routes: [
+              {
+                name: candidate.name as never,
+                params: (candidate.params ?? undefined) as never,
+              },
+            ],
+          });
+          return true;
+        }
+      }
+
+      if (routeStack.length > 0) {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: routeStack[0].name as never }],
+        });
+        return true;
+      }
+
+      return false;
+    },
+    [navigation],
+  );
+
+  const fallbackIntent = intent ?? 'login';
+
+  const onBack = useCallback(() => {
+    const state = navigation.getState?.();
+    const canPop = navigation.canGoBack() && (state?.routes?.length ?? 0) > 1;
+    if (canPop) {
+      navigation.goBack();
+      return;
+    }
+
+    resetToAvailableRoute([
+      { name: 'PhoneEntry', params: { intent: fallbackIntent } },
+      { name: 'AuthChooser' },
+      { name: 'Home' },
+      { name: 'Dashboard' },
+    ]);
+  }, [fallbackIntent, navigation, resetToAvailableRoute]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
@@ -162,6 +206,7 @@ export default function OtpCodeScreen({ route, navigation }: Props) {
         behavior={Platform.select({ ios: 'padding', android: undefined })}
       >
         <View style={{ padding: 24, flex: 1 }}>
+          <AuthFlowBackButton onPress={onBack} />
           <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 8 }}>
             Ingresa el código de 6 dígitos
           </Text>

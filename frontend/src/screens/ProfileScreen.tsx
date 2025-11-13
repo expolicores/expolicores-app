@@ -1,4 +1,4 @@
-// src/screens/ProfileScreen.tsx
+// frontend/src/screens/ProfileScreen.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -228,56 +228,55 @@ export default function ProfileScreen() {
       >
         <Text style={styles.title}>Mi perfil</Text>
 
-      {/* Banners B2B */}
-      {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
-        <View style={[styles.banner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-          <Text style={[styles.bannerTitle, { color: '#1D4ED8' }]}>Solicitud B2B en revisión</Text>
-          <Text style={[styles.bannerText, { color: '#1E3A8A' }]}>
-            Te contactaremos por WhatsApp o teléfono para completar el proceso.
-          </Text>
-          {!!adminProcessStatus && (
-            <View style={[styles.badge, { backgroundColor: adminBadgeColor }]}>
-              <Text style={styles.badgeText}>
-                {adminProcessStatus === 'PENDING'
-                  ? 'Pendiente'
-                  : adminProcessStatus === 'IN_PROGRESS'
-                  ? 'En proceso'
-                  : 'Atendida'}
-              </Text>
-            </View>
-          )}
+        {/* Banners B2B */}
+        {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
+          <View style={[styles.banner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+            <Text style={[styles.bannerTitle, { color: '#1D4ED8' }]}>Solicitud B2B en revisión</Text>
+            <Text style={[styles.bannerText, { color: '#1E3A8A' }]}>
+              Te contactaremos por WhatsApp o teléfono para completar el proceso.
+            </Text>
+            {!!adminProcessStatus && (
+              <View style={[styles.badge, { backgroundColor: adminBadgeColor }]}>
+                <Text style={styles.badgeText}>
+                  {adminProcessStatus === 'PENDING'
+                    ? 'Pendiente'
+                    : adminProcessStatus === 'IN_PROGRESS'
+                    ? 'En proceso'
+                    : 'Atendida'}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {FEATURES.B2B && role === 'B2B' && businessVerificationStatus === 'APPROVED' && (
+          <View style={[styles.banner, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+            <Text style={[styles.bannerTitle, { color: '#065F46' }]}>Cuenta de negocio activa</Text>
+            <Text style={[styles.bannerText, { color: '#065F46' }]}>
+              Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
+            </Text>
+          </View>
+        )}
+
+        {FEATURES.B2B && businessVerificationStatus === 'REJECTED' && (
+          <View style={[styles.banner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
+            <Text style={[styles.bannerTitle, { color: '#991B1B' }]}>Solicitud rechazada</Text>
+            <Text style={[styles.bannerText, { color: '#991B1B' }]}>
+              Si crees que es un error, contáctanos para revisar tu caso.
+            </Text>
+          </View>
+        )}
+
+        <Text style={styles.label}>Email</Text>
+        <View style={styles.readonly}>
+          <Text style={styles.readonlyText}>{user.email ?? '-'}</Text>
         </View>
-      )}
 
-      {FEATURES.B2B && role === 'B2B' && businessVerificationStatus === 'APPROVED' && (
-        <View style={[styles.banner, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-          <Text style={[styles.bannerTitle, { color: '#065F46' }]}>Cuenta de negocio activa</Text>
-          <Text style={[styles.bannerText, { color: '#065F46' }]}>
-            Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
-          </Text>
-        </View>
-      )}
-
-      {FEATURES.B2B && businessVerificationStatus === 'REJECTED' && (
-        <View style={[styles.banner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-          <Text style={[styles.bannerTitle, { color: '#991B1B' }]}>Solicitud rechazada</Text>
-          <Text style={[styles.bannerText, { color: '#991B1B' }]}>
-            Si crees que es un error, contáctanos para revisar tu caso.
-          </Text>
-        </View>
-      )}
-
-      <Text style={styles.label}>Email</Text>
-      <View style={styles.readonly}>
-        <Text style={styles.readonlyText}>{user.email ?? '-'}</Text>
-      </View>
-
-      <Text style={styles.label}>Nombre</Text>
-      <Controller
-        control={control}
-        name="name"
-        render={({ field: { onChange, onBlur, value } }) => {
-          return (
+        <Text style={styles.label}>Nombre</Text>
+        <Controller
+          control={control}
+          name="name"
+          render={({ field: { onChange, onBlur, value } }) => (
             <TextInput
               style={[styles.input, errors.name && styles.inputError]}
               placeholder="Tu nombre"
@@ -288,17 +287,15 @@ export default function ProfileScreen() {
               value={value}
               autoCapitalize="words"
             />
-          );
-        }}
-      />
-      {errors.name && <Text style={styles.error}>{errors.name.message}</Text>}
+          )}
+        />
+        {errors.name && <Text style={styles.error}>{errors.name.message}</Text>}
 
-      <Text style={styles.label}>Telefono (WhatsApp)</Text>
-      <Controller
-        control={control}
-        name="phone"
-        render={({ field: { onChange, onBlur, value } }) => {
-          return (
+        <Text style={styles.label}>Telefono (WhatsApp)</Text>
+        <Controller
+          control={control}
+          name="phone"
+          render={({ field: { onChange, onBlur, value } }) => (
             <TextInput
               style={[styles.input, errors.phone && styles.inputError]}
               placeholder="3001234567 o +573001234567"
@@ -309,92 +306,101 @@ export default function ProfileScreen() {
               onChangeText={onChange}
               value={value}
             />
-          );
-        }}
-      />
-      {errors.phone && <Text style={styles.error}>{errors.phone.message}</Text>}
-      <Text style={styles.hint}>
-        Recomendado: 10 digitos (por ejemplo 3001234567). Se normaliza a +57 automaticamente.
-      </Text>
-
-      <View style={{ height: 16 }} />
-
-      <Pressable
-        onPress={handleSubmit(onSubmit)}
-        disabled={saveDisabled}
-        style={[
-          styles.saveButton,
-          saveDisabled ? styles.saveButtonDisabled : styles.saveButtonEnabled,
-        ]}
-      >
-        <Text style={styles.saveButtonText}>
-          {isSaving ? 'Guardando...' : 'Guardar cambios'}
+          )}
+        />
+        {errors.phone && <Text style={styles.error}>{errors.phone.message}</Text>}
+        <Text style={styles.hint}>
+          Recomendado: 10 digitos (por ejemplo 3001234567). Se normaliza a +57 automaticamente.
         </Text>
-      </Pressable>
 
-      {/* Botón Soy negocio (solo si aplica) */}
-      {canShowB2BButton && (
-        <>
-          <View style={{ height: 16 }} />
-          <Pressable
-            style={[styles.secondaryButton, styles.secondaryButtonBlack]}
-            onPress={() => setOpenB2BModal(true)}
-          >
-            <Text style={styles.secondaryButtonText}>Soy negocio</Text>
-          </Pressable>
+        <View style={{ height: 16 }} />
 
-          <Modal
-            visible={openB2BModal}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setOpenB2BModal(false)}
-          >
-            <View style={styles.modalBackdrop}>
-              <View style={styles.modalCard}>
-                <Text style={styles.modalTitle}>Condiciones B2B</Text>
-                <Text style={styles.modalText}>
-                  Los precios y beneficios B2B aplican solo tras verificación manual (RUT y datos
-                  fiscales). Podemos contactarte por WhatsApp o teléfono para validar información.
-                </Text>
-                <View style={styles.modalActions}>
-                  <Pressable onPress={() => setOpenB2BModal(false)}>
-                    <Text style={styles.modalCancel}>Cancelar</Text>
-                  </Pressable>
-                  <Pressable onPress={() => applyB2B()} disabled={isApplyingB2B}>
-                    <Text style={styles.modalAccept}>
-                      {isApplyingB2B ? 'Enviando…' : 'Aceptar y solicitar'}
-                    </Text>
-                  </Pressable>
+        <Pressable
+          onPress={handleSubmit(onSubmit)}
+          disabled={saveDisabled}
+          style={[
+            styles.saveButton,
+            saveDisabled ? styles.saveButtonDisabled : styles.saveButtonEnabled,
+          ]}
+        >
+          <Text style={styles.saveButtonText}>
+            {isSaving ? 'Guardando...' : 'Guardar cambios'}
+          </Text>
+        </Pressable>
+
+        {/* Botón Soy negocio (solo si aplica) */}
+        {canShowB2BButton && (
+          <>
+            <View style={{ height: 16 }} />
+            <Pressable
+              style={[styles.secondaryButton, styles.secondaryButtonBlack]}
+              onPress={() => setOpenB2BModal(true)}
+            >
+              <Text style={styles.secondaryButtonText}>Soy negocio</Text>
+            </Pressable>
+
+            <Modal
+              visible={openB2BModal}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setOpenB2BModal(false)}
+            >
+              <View style={styles.modalBackdrop}>
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalTitle}>Condiciones B2B</Text>
+                  <Text style={styles.modalText}>
+                    Los precios y beneficios B2B aplican solo tras verificación manual (RUT y datos
+                    fiscales). Podemos contactarte por WhatsApp o teléfono para validar información.
+                  </Text>
+                  <View style={styles.modalActions}>
+                    <Pressable onPress={() => setOpenB2BModal(false)}>
+                      <Text style={styles.modalCancel}>Cancelar</Text>
+                    </Pressable>
+                    <Pressable onPress={() => applyB2B()} disabled={isApplyingB2B}>
+                      <Text style={styles.modalAccept}>
+                        {isApplyingB2B ? 'Enviando…' : 'Aceptar y solicitar'}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
               </View>
-            </View>
-          </Modal>
-        </>
-      )}
+            </Modal>
+          </>
+        )}
 
-      <View style={{ height: 16 }} />
+        <View style={{ height: 16 }} />
 
-      <Pressable
-        style={[styles.secondaryButton, styles.secondaryButtonBlue]}
-        onPress={() => navigation.navigate('Addresses')}
-      >
-        <Text style={styles.secondaryButtonText}>Mis direcciones</Text>
-      </Pressable>
+        <Pressable
+          style={[styles.secondaryButton, styles.secondaryButtonBlue]}
+          onPress={() => navigation.navigate('Addresses')}
+        >
+          <Text style={styles.secondaryButtonText}>Mis direcciones</Text>
+        </Pressable>
 
-      <View style={{ height: 8 }} />
+        <View style={{ height: 8 }} />
 
-      <Pressable
-        style={[styles.secondaryButton, styles.secondaryButtonRed]}
-        onPress={async () => {
-          try {
-            await signOut();
-          } catch (error: any) {
-            Alert.alert('Error', error?.message ?? 'No se pudo cerrar sesion');
-          }
-        }}
-      >
-        <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
-      </Pressable>
+        {/* NUEVO: botón hacia términos y política de datos */}
+        <Pressable
+          style={[styles.secondaryButton, styles.secondaryButtonBlue]}
+          onPress={() => navigation.navigate('Legal')}
+        >
+          <Text style={styles.secondaryButtonText}>Términos y política de datos</Text>
+        </Pressable>
+
+        <View style={{ height: 8 }} />
+
+        <Pressable
+          style={[styles.secondaryButton, styles.secondaryButtonRed]}
+          onPress={async () => {
+            try {
+              await signOut();
+            } catch (error: any) {
+              Alert.alert('Error', error?.message ?? 'No se pudo cerrar sesion');
+            }
+          }}
+        >
+          <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );

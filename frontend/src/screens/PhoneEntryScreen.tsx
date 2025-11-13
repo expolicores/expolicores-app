@@ -1,5 +1,5 @@
 ﻿// frontend/src/screens/PhoneEntryScreen.tsx
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -16,6 +16,7 @@ import { normalizePhoneCo } from '../lib/phone';
 import { requestOtp, type RequestOtpResp } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { ENV } from '../config/env';
+import AuthFlowBackButton from '../components/AuthFlowBackButton';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PhoneEntry'>;
 
@@ -43,10 +44,12 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
   const onContinueWithPhone = async (channel: 'whatsapp' | 'sms' = 'whatsapp') => {
     if (!phone) return;
     if (sentRef.current || loading) return;
+
+    // En beta solo usamos SMS; si SMS no está habilitado, mostramos mensaje genérico.
     if (channel === 'sms' && !ENV.FEATURE_SMS) {
       Alert.alert(
         'No disponible',
-        'El env\u00edo por SMS no est\u00e1 habilitado en este entorno. Por favor, solicita el c\u00f3digo por WhatsApp.',
+        'El envio por SMS no esta habilitado en este entorno. Por favor, intenta mas tarde.',
       );
       return;
     }
@@ -55,14 +58,14 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
     setThrottledMsg(null);
 
     try {
-      // Llamada al backend (canal explícito según botón)
+      // Llamada al backend (canal explicito segun boton)
       const res: RequestOtpResp = await requestOtp({
         phone,
         channel,
         intent, // 'login' | 'register'
       });
 
-      // Cooldown/expiración desde el server (fallbacks seguros)
+      // Cooldown/expiracion desde el server (fallbacks seguros)
       const cooldown =
         res?.throttled && typeof res?.remainingSeconds === 'number'
           ? res.remainingSeconds
@@ -94,7 +97,7 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
     } catch (e: any) {
       sentRef.current = false;
 
-      // Mensajes de error más claros para casos comunes
+      // Mensajes de error mas claros para casos comunes
       const known =
         e?.message === 'SMS_DELIVERY_FAILED'
           ? 'No pudimos enviar el SMS. Verifica tu numero o intenta mas tarde.'
@@ -107,9 +110,9 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
               'SMS feature disabled',
               'No SMS sender configured. Configure TWILIO_MS_SID_SMS/TWILIO_MESSAGING_SERVICE_SID_SMS or TWILIO_SMS_FROM',
             ].includes(e?.message)
-          ? 'El env\u00edo por SMS no est\u00e1 disponible en este momento. Solicita el c\u00f3digo por WhatsApp.'
+          ? 'El envio por SMS no esta disponible en este momento.'
           : channel === 'sms' && e?.message === 'Request failed with status code 400'
-          ? 'No pudimos enviar el SMS. Solicita el c\u00f3digo por WhatsApp.'
+          ? 'No pudimos enviar el SMS. Intenta de nuevo mas tarde.'
           : null;
 
       const msg =
@@ -124,10 +127,23 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
     }
   };
 
+  const onBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'AuthChooser' as never }],
+    });
+  }, [navigation]);
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
       <StatusBar barStyle="dark-content" />
       <View style={{ padding: 24 }}>
+        <AuthFlowBackButton onPress={onBack} />
         <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 8 }}>
           Ingresa tu numero de celular
         </Text>
@@ -154,7 +170,10 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
           }}
         />
 
-        {/* Boton verde: WhatsApp */}
+        {/*
+          Boton verde: WhatsApp (DESHABILITADO TEMPORALMENTE)
+          Cuando WABA/Twilio este listo, descomentar este bloque.
+
         <TouchableOpacity
           disabled={disabled}
           onPress={() => onContinueWithPhone('whatsapp')}
@@ -184,6 +203,7 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
             Recibir codigo por WhatsApp
           </Text>
         </TouchableOpacity>
+        */}
 
         {/* Boton blanco: SMS */}
         <TouchableOpacity
@@ -201,7 +221,7 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
             justifyContent: 'center',
           }}
           accessibilityRole="button"
-          accessibilityLabel="Recibir codigo por SMS"
+          accessibilityLabel="Recibir código por SMS"
           testID="btn-sms-otp"
         >
           <Ionicons
@@ -218,7 +238,7 @@ export default function PhoneEntryScreen({ route, navigation }: Props) {
               fontWeight: '700',
             }}
           >
-            Recibir codigo por SMS
+            Recibir código por SMS
           </Text>
         </TouchableOpacity>
 
