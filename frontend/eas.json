@@ -1,8 +1,5 @@
 ﻿{
-  "cli": {
-    "version": ">= 3.20.0",
-    "appVersionSource": "local"
-  },
+  "cli": { "version": ">= 3.20.0", "appVersionSource": "local" },
   "build": {
     "development": {
       "developmentClient": true,
@@ -20,7 +17,7 @@
       }
     },
     "production": {
-      "android": { "buildType": "aab" },
+      "android": { "buildType": "app-bundle" },   // ← antes decía "aab"
       "ios": { "image": "latest", "resourceClass": "m-medium" },
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
@@ -33,6 +30,7 @@
       "distribution": "internal",
       "android": { "buildType": "apk" },
       "env": {
+        "EAS_BUILD_PROFILE": "production-apk",
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
         "NPM_CONFIG_AUDIT": "false",
         "NPM_CONFIG_FUND": "false"
@@ -40,8 +38,6 @@
     }
   },
   "submit": {
-    "production": {
-      "android": { "track": "internal" }
-    }
+    "production": { "android": { "track": "internal" } }
   }
 }

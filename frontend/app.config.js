@@ -25,6 +25,12 @@ export default () => {
   // Live Activities provider (si lo pausamos, deja "none")
   const LA_PROVIDER = (process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'none').trim().toLowerCase(); // 'expo' | 'none'
 
+  // 🔔 android.googleServicesFile:
+  // - En EAS, usa la variable de archivo ANDROID_GOOGLE_SERVICES_JSON
+  // - En local, usa ./android/google-services.json
+  const androidGoogleServicesFile =
+    process.env.ANDROID_GOOGLE_SERVICES_JSON || './android/google-services.json';
+
   // Plugins dinámicos (evita configurar Live Activities si está pausado)
   const plugins: any[] = [
     'expo-secure-store',
@@ -103,8 +109,8 @@ export default () => {
         },
         // 🔔 Requisito Android 13+ para notificaciones
         permissions: ['POST_NOTIFICATIONS'],
-        // 🔔 FCM: referencia a google-services.json
-        googleServicesFile: './android/google-services.json',
+        // 🔔 FCM: referencia a google-services.json (desde ENV de archivo en EAS o local)
+        googleServicesFile: androidGoogleServicesFile,
         // 🔔 Canal por defecto para heads-up (debe coincidir con el creado en App.tsx)
         notification: {
           icon: './assets/notification-icon.png',
