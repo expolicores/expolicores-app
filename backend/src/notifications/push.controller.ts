@@ -1,3 +1,4 @@
+// backend/src/notifications/push.controller.ts
 import {
   BadRequestException,
   Body,
@@ -41,14 +42,13 @@ export class PushController {
       throw new BadRequestException('token requerido');
     }
 
-    // Formato típico de Expo push tokens (no bloqueante, solo heurística)
+    // Heurística no bloqueante para formato Expo
     const looksLikeExpoToken =
       dto.token.startsWith('ExponentPushToken[') ||
       dto.token.includes('ExpoPushToken') ||
       dto.token.startsWith('ExpoPushToken[');
     if (!looksLikeExpoToken && dto.token.length < 20) {
-      // No arrojamos error duro para no romper clientes antiguos.
-      // El servicio puede registrar advertencias si se desea.
+      // No lanzamos error para no romper clientes antiguos.
     }
 
     await this.push.register(user.id, dto);
@@ -79,8 +79,8 @@ export class PushController {
   @Post('test')
   @HttpCode(HttpStatus.OK)
   async sendTest(@CurrentUser() user: CurrentUserShape) {
+    // sendTestToUser ya devuelve { ok: true, sent, invalid, tokens }
     const result = await this.push.sendTestToUser(user.id);
-    // result puede incluir: deliveredCount, failedCount, invalidTokens[], receipts[]
-    return { ok: true, ...result };
+    return result;
   }
 }
