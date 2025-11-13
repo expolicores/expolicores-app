@@ -1,5 +1,5 @@
 ﻿// frontend/src/screens/EmailOptionalScreen.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -23,17 +23,20 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
 
 /**
  * Usos:
- *  - Enrolar correo (opcional) justo después del OTP (modo por defecto)
- *  - Login por correo (mode='loginByEmail'): envía OTP al celular asociado al correo
+ * - Enrolar correo (opcional) justo después del OTP (modo por defecto)
+ * - Login por correo (mode='loginByEmail'): envía OTP al celular asociado al correo
  */
 export default function EmailOptionalScreen({ route, navigation }: Props) {
   const { phone, email, mode } = route.params || {};
-  const { refreshMe, deferEmailPrompt } = useAuth();
+  const { refreshMe, deferEmailPrompt, signOut } = useAuth();
 
-  // 🔒 Gate por feature flag: si el feature está OFF y no es flujo loginByEmail, salir.
+  // Gate por feature flag: si el feature está OFF y no es flujo loginByEmail, salir.
   useEffect(() => {
     if (!ENV.FEATURE_EMAIL_VERIFY && mode !== 'loginByEmail') {
-      navigation.reset({ index: 0, routes: [{ name: 'Home' as never }] });
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Home' as never }],
+      });
     }
   }, [mode, navigation]);
 
@@ -42,25 +45,27 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
     return null;
   }
 
-  const [emailInput, setEmailInput] = useState<string>(email || '');
+  const [emailInput, setEmailInput] = useState(email || '');
   const [showTerms, setShowTerms] = useState(false);
   const [t1, setT1] = useState(false);
   const [t2, setT2] = useState(false);
   const [loading, setLoading] = useState(false);
-
   // 'continue' => guardar correo; 'skip' => aplazar correo
   const [nextAction, setNextAction] = useState<'continue' | 'skip'>('continue');
 
   const openTerms = (action: 'continue' | 'skip') => {
     setNextAction(action);
-    // opcional: resetear checks cada vez que se abre
     setT1(false);
     setT2(false);
     setShowTerms(true);
   };
 
+  const canAccept = t1 && t2 && !loading;
+
   const finalize = async () => {
+    if (!canAccept) return;
     setShowTerms(false);
+
     try {
       setLoading(true);
 
@@ -70,99 +75,42 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
           Alert.alert('Aviso', 'Por favor ingresa un correo válido.');
           return;
         }
-        // Opción 1 (Auth): endpoint dedicado para enrolar correo
+
+        // Endpoint dedicado para enrolar correo
         await api.post('/auth/enroll-email', { email: normalizedEmail });
         await refreshMe();
         await deferEmailPrompt(false);
-        Alert.alert('Listo', 'Te enviamos un enlace para verificar tu correo.');
+
+        Alert.alert(
+          'Listo',
+          'Te enviamos un enlace para verificar tu correo.',
+        );
       } else {
         // Aplazar correo para evitar loop en el Gate
         await deferEmailPrompt(true);
       }
 
       // Navegamos directo al Dashboard (ya no rebotamos por el Gate)
-      navigation.reset({ index: 0, routes: [{ name: 'Dashboard' as never }] });
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Dashboard' as never }],
+      });
     } catch (e: any) {
       const msg =
         e?.response?.data?.message ||
         e?.message ||
         (nextAction === 'continue'
-          ? 'No pudimos guardar tu correo ahora. Podrás añadirlo en tu perfil.'
-          : 'No pudimos completar la acción. Intenta de nuevo.');
+          ? 'No pudimos guardar tu correo ahora.\nPodrás añadirlo en tu perfil.'
+          : 'No pudimos completar la acción.\nIntenta de nuevo.');
       Alert.alert('Aviso', String(msg));
     } finally {
       setLoading(false);
     }
   };
 
-  const resetToAvailableRoute = useCallback(
-    (candidates: Array<{ name: keyof RootStackParamList; params?: RootStackParamList[keyof RootStackParamList] }>) => {
-      const state = navigation.getState?.();
-      const routeStack = state?.routes ?? [];
-      const routeNames = (state?.routeNames as Array<keyof RootStackParamList>) ?? [];
-      for (const candidate of candidates) {
-        if (routeNames.includes(candidate.name)) {
-          navigation.reset({
-            index: 0,
-            routes: [
-              {
-                name: candidate.name as never,
-                params: (candidate.params ?? undefined) as never,
-              },
-            ],
-          });
-          return true;
-        }
-      }
-
-      if (routeStack.length > 0) {
-        navigation.reset({
-          index: 0,
-          routes: [{ name: routeStack[0].name as never }],
-        });
-        return true;
-      }
-
-      return false;
-    },
-    [navigation],
-  );
-
-  const handleBack = useCallback(() => {
-    const state = navigation.getState?.();
-    const canPop = navigation.canGoBack() && (state?.routes?.length ?? 0) > 1;
-    if (canPop) {
-      navigation.goBack();
-      return;
-    }
-
-    if (mode === 'loginByEmail') {
-      resetToAvailableRoute([
-        { name: 'AuthChooser' },
-        { name: 'Home' },
-        { name: 'Dashboard' },
-      ]);
-      return;
-    }
-
-    resetToAvailableRoute([
-      { name: 'PhoneEntry', params: { intent: 'login' } },
-      { name: 'AuthChooser' },
-      { name: 'Home' },
-      { name: 'Dashboard' },
-    ]);
-  }, [mode, navigation, resetToAvailableRoute]);
-
+  // En modo loginByEmail, usamos la vista separada ↓ (no aplica lo de términos iniciales)
   if (mode === 'loginByEmail') {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-        <StatusBar barStyle="dark-content" />
-        <View style={{ padding: 24 }}>
-          <AuthFlowBackButton onPress={handleBack} />
-          <LoginByEmailView navigation={navigation} />
-        </View>
-      </SafeAreaView>
-    );
+    return <LoginByEmailView navigation={navigation} />;
   }
 
   const linkStyle = {
@@ -171,22 +119,93 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
       <StatusBar barStyle="dark-content" />
-      <View style={{ padding: 24, flex: 1 }}>
-        <AuthFlowBackButton onPress={handleBack} />
-        <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 16 }}>
+      <View style={{ flex: 1, padding: 24 }}>
+        {/* Botón Volver con lógica que NO permite llegar al feed sin TyC */}
+        <AuthFlowBackButton
+          onBack={() => {
+            const state = navigation.getState?.();
+            const routes = state?.routes ?? [];
+            const canPop =
+              navigation.canGoBack() && (routes.length ?? 0) > 1;
+
+            if (canPop) {
+              // Vemos a qué ruta iría el goBack
+              const prevRoute = routes[routes.length - 2];
+
+              // Si la ruta anterior es Dashboard/Home, NO queremos ir allá,
+              // porque eso deja al usuario en el feed sin aceptar términos.
+              if (
+                prevRoute?.name === 'Dashboard' ||
+                prevRoute?.name === 'Home'
+              ) {
+                Alert.alert(
+                  'Salir del registro',
+                  'Si vuelves ahora, se cerrará tu sesión y deberás iniciar de nuevo.',
+                  [
+                    { text: 'Cancelar', style: 'cancel' },
+                    {
+                      text: 'Salir',
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          // No marcamos deferEmailPrompt aquí: queremos que
+                          // se le vuelva a mostrar el flujo completo cuando
+                          // vuelva a registrarse.
+                          await signOut();
+                        } catch {
+                          // swallow
+                        }
+                      },
+                    },
+                  ],
+                );
+              } else {
+                // Es seguro volver a pasos anteriores del flujo (OTP, Name, etc.)
+                navigation.goBack();
+              }
+              return;
+            }
+
+            // Si no hay nada atrás en el stack, tratamos Volver como cancelar registro.
+            Alert.alert(
+              'Salir del registro',
+              'Si vuelves ahora, se cerrará tu sesión y deberás iniciar de nuevo.',
+              [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                  text: 'Salir',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await signOut();
+                    } catch {
+                      // swallow
+                    }
+                  },
+                },
+              ],
+            );
+          }}
+        />
+
+        <Text style={{ fontSize: 24, fontWeight: '800', marginBottom: 8 }}>
           Agrega tu correo (opcional)
+        </Text>
+        <Text style={{ color: '#6B7280', marginBottom: 16 }}>
+          Podrás usarlo para recuperar tu cuenta y recibir novedades relevantes.
         </Text>
 
         <TextInput
-          keyboardType="email-address"
-          autoCapitalize="none"
           value={emailInput}
           onChangeText={setEmailInput}
-          placeholder="tucorreo@dominio.com"
+          placeholder="tucorreo@ejemplo.com"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
           style={{
-            fontSize: 20,
+            fontSize: 16,
             padding: 12,
             borderRadius: 12,
             borderWidth: 1,
@@ -208,142 +227,251 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
           disabled={loading}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <ActivityIndicator color="#ffffff" />
+              <Text
+                style={{
+                  color: '#ffffff',
+                  fontWeight: '700',
+                  marginLeft: 8,
+                }}
+              >
+                Guardando...
+              </Text>
+            </View>
           ) : (
-            <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: '700' }}>
+            <Text
+              style={{
+                color: '#ffffff',
+                textAlign: 'center',
+                fontSize: 16,
+                fontWeight: '700',
+              }}
+            >
               Continuar
             </Text>
           )}
         </TouchableOpacity>
 
-        {/* Colocar luego (aplaza correo; igual pide aceptar TyC) */}
+        {/* Colocar luego (aplaza correo; igual pide TyC) */}
         <TouchableOpacity
           onPress={() => openTerms('skip')}
-          style={{ padding: 12, opacity: loading ? 0.6 : 1 }}
+          style={{
+            padding: 12,
+            opacity: loading ? 0.6 : 1,
+          }}
           disabled={loading}
         >
-          <Text style={{ textAlign: 'center', color: '#2563EB' }}>Colocar luego</Text>
-        </TouchableOpacity>
-
-        {/* Modal de Términos y Condiciones */}
-        <Modal visible={showTerms} animationType="slide" transparent>
-          <View
+          <Text
             style={{
-              flex: 1,
-              backgroundColor: 'rgba(0,0,0,0.4)',
-              justifyContent: 'flex-end',
+              textAlign: 'center',
+              color: '#111827',
+              fontSize: 16,
+              fontWeight: '600',
             }}
           >
-            <View
+            Colocar luego
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Modal de Términos y Condiciones */}
+      <Modal
+        visible={showTerms}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowTerms(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            padding: 24,
+            justifyContent: 'center',
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 16,
+              maxHeight: '80%',
+              padding: 16,
+            }}
+          >
+            <Text
               style={{
-                backgroundColor: '#fff',
-                borderTopLeftRadius: 24,
-                borderTopRightRadius: 24,
-                maxHeight: '70%',
+                fontSize: 18,
+                fontWeight: '700',
+                marginBottom: 8,
+                color: '#111827',
               }}
             >
-              <ScrollView style={{ padding: 16 }}>
-                <Text style={{ fontSize: 22, fontWeight: '800', marginBottom: 12 }}>
-                  Términos y condiciones
-                </Text>
+              Términos y condiciones
+            </Text>
 
-                <Text style={{ color: '#4B5563', marginBottom: 12 }}>
-                  Al registrarte aceptas nuestros{' '}
+            <ScrollView
+              style={{ flexGrow: 0 }}
+              contentContainerStyle={{ paddingBottom: 12 }}
+            >
+              <Text style={{ color: '#374151', marginBottom: 12 }}>
+                Al registrarte aceptas nuestros{' '}
+                <Text
+                  style={linkStyle}
+                  onPress={() => {
+                    setShowTerms(false);
+                    navigation.navigate('Legal' as never);
+                  }}
+                >
+                  términos y condiciones
+                </Text>{' '}
+                y la{' '}
+                <Text
+                  style={linkStyle}
+                  onPress={() => {
+                    setShowTerms(false);
+                    navigation.navigate('Legal' as never);
+                  }}
+                >
+                  política de tratamiento de datos personales
+                </Text>
+                , incluyendo el uso de tu celular para enviarte códigos de
+                verificación, gestionar tus pedidos y enviarte notificaciones
+                sobre el estado de tus órdenes.
+              </Text>
+
+              {/* Check 1 */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  marginTop: 4,
+                  marginBottom: 4,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => setT1(!t1)}
+                  style={{ marginRight: 8, paddingVertical: 4 }}
+                >
+                  <Text style={{ color: '#111827' }}>
+                    {t1 ? '[x]' : '[ ]'}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#111827', flex: 1 }}>
+                  Acepto los{' '}
                   <Text
                     style={linkStyle}
                     onPress={() => {
                       setShowTerms(false);
-                      navigation.navigate('Legal');
+                      navigation.navigate('Legal' as never);
                     }}
                   >
                     términos y condiciones
-                  </Text>{' '}
-                  y la{' '}
+                  </Text>
+                  .
+                </Text>
+              </View>
+
+              {/* Check 2 */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  marginTop: 4,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => setT2(!t2)}
+                  style={{ marginRight: 8, paddingVertical: 4 }}
+                >
+                  <Text style={{ color: '#111827' }}>
+                    {t2 ? '[x]' : '[ ]'}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#111827', flex: 1 }}>
+                  Autorizo el{' '}
                   <Text
                     style={linkStyle}
                     onPress={() => {
                       setShowTerms(false);
-                      navigation.navigate('Legal');
+                      navigation.navigate('Legal' as never);
                     }}
                   >
-                    política de tratamiento de datos personales
+                    tratamiento de datos personales
                   </Text>
-                  , incluyendo el uso de tu celular para enviarte códigos de
-                  verificación, gestionar tus pedidos y enviarte notificaciones
-                  sobre el estado de tus órdenes.
+                  .
                 </Text>
+              </View>
+            </ScrollView>
 
-                <TouchableOpacity onPress={() => setT1(!t1)} style={{ paddingVertical: 8 }}>
-                  <Text>
-                    {t1 ? '[x]' : '[ ]'} Acepto los{' '}
-                    <Text
-                      style={linkStyle}
-                      onPress={() => {
-                        setShowTerms(false);
-                        navigation.navigate('Legal');
-                      }}
-                    >
-                      términos y condiciones
-                    </Text>
-                    .
-                  </Text>
-                </TouchableOpacity>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                marginTop: 12,
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => setShowTerms(false)}
+                style={{ paddingVertical: 8, paddingHorizontal: 12 }}
+              >
+                <Text style={{ color: '#374151' }}>Cancelar</Text>
+              </TouchableOpacity>
 
-                <TouchableOpacity onPress={() => setT2(!t2)} style={{ paddingVertical: 8 }}>
-                  <Text>
-                    {t2 ? '[x]' : '[ ]'} Autorizo el{' '}
-                    <Text
-                      style={linkStyle}
-                      onPress={() => {
-                        setShowTerms(false);
-                        navigation.navigate('Legal');
-                      }}
-                    >
-                      tratamiento de datos personales
-                    </Text>
-                    .
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  disabled={!(t1 && t2) || loading}
-                  onPress={finalize}
+              <TouchableOpacity
+                onPress={finalize}
+                disabled={!canAccept}
+                style={{
+                  paddingVertical: 8,
+                  paddingHorizontal: 16,
+                  borderRadius: 999,
+                  backgroundColor: canAccept ? '#10B981' : '#d1d5db',
+                  marginLeft: 8,
+                }}
+              >
+                <Text
                   style={{
-                    backgroundColor: t1 && t2 && !loading ? '#10B981' : '#9CA3AF',
-                    padding: 14,
-                    borderRadius: 12,
-                    marginTop: 12,
-                    marginBottom: 24,
-                    opacity: loading ? 0.7 : 1,
+                    color: '#ffffff',
+                    fontWeight: '700',
                   }}
                 >
-                  <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16 }}>
-                    Aceptar
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
+                  Aceptar
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
-        </Modal>
-      </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 /* ===== Login por correo: envía OTP al celular asociado al correo ===== */
 
-function LoginByEmailView({ navigation }: { navigation: Props['navigation'] }) {
+function LoginByEmailView({
+  navigation,
+}: {
+  navigation: Props['navigation'];
+}) {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [code, setCode] = useState('');
   const [devOtp, setDevOtp] = useState<string | undefined>(undefined);
-  const [cooldown, setCooldown] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [loading, setLoading] = useState(false);
 
   // Reenvío controlado por cooldown
   useEffect(() => {
     if (cooldown <= 0) return;
-    const t = setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
+    const t = setInterval(
+      () => setCooldown((c) => Math.max(0, c - 1)),
+      1000,
+    );
     return () => clearInterval(t);
   }, [cooldown]);
 
@@ -359,7 +487,7 @@ function LoginByEmailView({ navigation }: { navigation: Props['navigation'] }) {
       const msg =
         e?.response?.data?.message ||
         e?.message ||
-        'No pudimos enviar el código. Verifica tu correo o intenta con tu celular.';
+        'No pudimos enviar el código.\nVerifica tu correo o intenta con tu celular.';
       Alert.alert('Error', String(msg));
     } finally {
       setLoading(false);
@@ -378,7 +506,10 @@ function LoginByEmailView({ navigation }: { navigation: Props['navigation'] }) {
     try {
       await verifyOtp({ email, code: c });
       // Volvemos a Home para que el PostAuthGate decida (Name/Email/Catalog)
-      navigation.reset({ index: 0, routes: [{ name: 'Home' as never }] });
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Home' as never }],
+      });
     } catch (e: any) {
       const msg =
         e?.response?.data?.message ||
@@ -390,22 +521,93 @@ function LoginByEmailView({ navigation }: { navigation: Props['navigation'] }) {
     }
   };
 
-  const mergedCode = devOtp ? devOtp : code;
+  const mergedCode = devOtp ?? code;
 
   if (!sent) {
     return (
-      <View>
-        <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 16 }}>
-          Ingresa tu correo
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
+        <StatusBar barStyle="dark-content" />
+        <View style={{ flex: 1, padding: 24 }}>
+          <Text style={{ fontSize: 24, fontWeight: '800', marginBottom: 8 }}>
+            Ingresa tu correo
+          </Text>
+          <Text style={{ color: '#6B7280', marginBottom: 16 }}>
+            Te enviaremos un código de verificación al celular asociado a tu
+            correo.
+          </Text>
+
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            placeholder="tucorreo@ejemplo.com"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            style={{
+              fontSize: 16,
+              padding: 12,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#e5e7eb',
+              marginBottom: 24,
+            }}
+          />
+
+          <TouchableOpacity
+            onPress={onSend}
+            disabled={loading || !email.trim()}
+            style={{
+              backgroundColor:
+                loading || !email.trim() ? '#d1d5db' : '#10B981',
+              padding: 16,
+              borderRadius: 16,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {loading ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <Text
+                style={{
+                  color: '#ffffff',
+                  fontWeight: '700',
+                  fontSize: 16,
+                }}
+              >
+                Continuar
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
+      <StatusBar barStyle="dark-content" />
+      <View style={{ flex: 1, padding: 24 }}>
+        <Text style={{ fontSize: 24, fontWeight: '800', marginBottom: 8 }}>
+          Validación de seguridad
         </Text>
+        <Text style={{ color: '#6B7280', marginBottom: 16 }}>
+          Te enviamos un código de 6 dígitos al celular asociado a tu correo.
+        </Text>
+
         <TextInput
-          keyboardType="email-address"
-          autoCapitalize="none"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="tucorreo@dominio.com"
+          value={mergedCode}
+          onChangeText={(t) => {
+            setCode(t.replace(/\D/g, '').slice(0, 6));
+            setDevOtp(undefined);
+          }}
+          maxLength={6}
+          keyboardType="number-pad"
+          placeholder="- - - - - -"
           style={{
-            fontSize: 20,
+            fontSize: 32,
+            letterSpacing: 12,
+            textAlign: 'center',
             padding: 12,
             borderRadius: 12,
             borderWidth: 1,
@@ -413,68 +615,51 @@ function LoginByEmailView({ navigation }: { navigation: Props['navigation'] }) {
             marginBottom: 24,
           }}
         />
+
         <TouchableOpacity
-          onPress={onSend}
-          disabled={loading || !email.trim()}
+          onPress={onVerify}
+          disabled={loading || (mergedCode || '').length < 6}
           style={{
-            backgroundColor: loading || !email.trim() ? '#9CA3AF' : '#10B981',
+            backgroundColor:
+              loading || (mergedCode || '').length < 6
+                ? '#d1d5db'
+                : '#10B981',
             padding: 16,
             borderRadius: 16,
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: '700' }}>
-            Continuar
+          {loading ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text
+              style={{
+                color: '#ffffff',
+                fontWeight: '700',
+                fontSize: 16,
+              }}
+            >
+              Verificar
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          disabled={cooldown > 0 || loading}
+          onPress={onResend}
+          style={{ padding: 8, marginTop: 8 }}
+        >
+          <Text
+            style={{
+              textAlign: 'center',
+              color: cooldown > 0 ? '#9CA3AF' : '#2563EB',
+            }}
+          >
+            Reenviar código {cooldown > 0 ? `(${cooldown}s)` : ''}
           </Text>
         </TouchableOpacity>
       </View>
-    );
-  }
-
-  return (
-    <View>
-      <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 8 }}>Validación de seguridad</Text>
-      <Text style={{ color: '#4B5563', marginBottom: 12 }}>
-        Te enviamos un código de 6 dígitos al celular asociado a tu correo.
-      </Text>
-
-      <TextInput
-        keyboardType="number-pad"
-        maxLength={6}
-        value={mergedCode}
-        onChangeText={setCode}
-        placeholder={devOtp ? devOtp : '______'}
-        style={{
-          fontSize: 32,
-          letterSpacing: 12,
-          textAlign: 'center',
-          padding: 12,
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: '#e5e7eb',
-          marginBottom: 24,
-        }}
-      />
-
-      <TouchableOpacity
-        disabled={(mergedCode || '').length < 6 || loading}
-        onPress={onVerify}
-        style={{
-          backgroundColor: (mergedCode || '').length < 6 || loading ? '#9CA3AF' : '#10B981',
-          padding: 16,
-          borderRadius: 16,
-          marginBottom: 12,
-        }}
-      >
-        <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: '700' }}>
-          Verificar
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity disabled={cooldown > 0 || loading} onPress={onResend} style={{ padding: 8 }}>
-        <Text style={{ textAlign: 'center', color: cooldown > 0 ? '#9CA3AF' : '#2563EB' }}>
-          Reenviar código {cooldown > 0 ? `(${cooldown}s)` : ''}
-        </Text>
-      </TouchableOpacity>
-    </View>
+    </SafeAreaView>
   );
 }

@@ -1,5 +1,5 @@
 // frontend/src/screens/NameScreen.tsx
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -77,55 +77,6 @@ export default function NameScreen({ navigation }: Props) {
     }
   };
 
-  const resetToAvailableRoute = useCallback(
-    (candidates: Array<{ name: keyof RootStackParamList; params?: RootStackParamList[keyof RootStackParamList] }>) => {
-      const state = navigation.getState?.();
-      const routeStack = state?.routes ?? [];
-      const routeNames = (state?.routeNames as Array<keyof RootStackParamList>) ?? [];
-      for (const candidate of candidates) {
-        if (routeNames.includes(candidate.name)) {
-          navigation.reset({
-            index: 0,
-            routes: [
-              {
-                name: candidate.name as never,
-                params: (candidate.params ?? undefined) as never,
-              },
-            ],
-          });
-          return true;
-        }
-      }
-
-      if (routeStack.length > 0) {
-        navigation.reset({
-          index: 0,
-          routes: [{ name: routeStack[0].name as never }],
-        });
-        return true;
-      }
-
-      return false;
-    },
-    [navigation],
-  );
-
-  const onBack = useCallback(() => {
-    const state = navigation.getState?.();
-    const canPop = navigation.canGoBack() && (state?.routes?.length ?? 0) > 1;
-    if (canPop) {
-      navigation.goBack();
-      return;
-    }
-
-    resetToAvailableRoute([
-      { name: 'PhoneEntry', params: { intent: 'login' } },
-      { name: 'AuthChooser' },
-      { name: 'Home' },
-      { name: 'Dashboard' },
-    ]);
-  }, [navigation, resetToAvailableRoute]);
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
       <StatusBar barStyle="dark-content" />
@@ -134,7 +85,9 @@ export default function NameScreen({ navigation }: Props) {
         behavior={Platform.select({ ios: 'padding', android: undefined })}
       >
         <View style={{ flex: 1, padding: 24 }}>
-          <AuthFlowBackButton onPress={onBack} />
+          {/* Botón genérico de volver (usa goBack o AuthChooser como fallback) */}
+          <AuthFlowBackButton />
+
           <Text style={{ fontSize: 32, fontWeight: '800', marginBottom: 8 }}>
             Como te llamas?
           </Text>
