@@ -27,9 +27,10 @@ const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCE
 export default function AdminOrdersScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
   const { user, signOut } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
+  const bottomPadding = getBottomQuickActionsPadding(insets.bottom, { isAdmin });
+  const contentPaddingBottom = Math.max(bottomPadding, 16);
   const queryClient = useQueryClient();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
@@ -177,7 +178,7 @@ export default function AdminOrdersScreen() {
 
   return (
     <FlatList
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={[styles.listContent, { paddingBottom: contentPaddingBottom }]}
       data={orders}
       keyExtractor={(order) => String(order.id)}
       refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}

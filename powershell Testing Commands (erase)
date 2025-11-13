@@ -1,3 +1,13 @@
+# ajusta :orderId
+curl -X POST "https://https://expolicores-app-production.up.railway.app/live-activities/test-update" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiZXhwb0BhZG1pbi5jb20iLCJyb2xlIjoiQURNSU4iLCJpYXQiOjE3NjIzMTE0MTYsImV4cCI6MTc2MjkxNjIxNn0.rchlGowP0ZB_5WEGH-ed4LW7w4gPWJV34cX33hRp0u8" \
+  -H "Content-Type: application/json" \
+  -d '{"orderId": 37, "status": "EN_CAMINO"}'
+
+
+
+
+
 $env:DATABASE_URL = "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway"
 
 # 1) cuántas migraciones hay en DB

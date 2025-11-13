@@ -2,10 +2,11 @@
 import React, { useEffect } from 'react';
 import {
   AppState,
-  NativeModules,
   Platform,
   StatusBar,
   LogBox,
+  NativeModules,
+  type AppStateStatus,
 } from 'react-native';
 import Constants from 'expo-constants';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -19,13 +20,25 @@ import {
 } from '@tanstack/react-query';
 import NetInfo from '@react-native-community/netinfo';
 
+// 🔔 Expo Notifications (handler + canal Android)
+import * as Notifications from 'expo-notifications';
+
+// Handler global (foreground): mostrar alerta en app
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
 import { AuthProvider } from './src/context/AuthContext';
 import { CartProvider } from './src/context/CartContext';
 import { NotificationsProvider } from './src/context/NotificationsContext';
 import AppNavigator from './src/navigation/AppNavigator';
 
 // Mantiene react-query en sync con el foco de la app
-function onAppStateChange(status: string) {
+function onAppStateChange(status: AppStateStatus) {
   focusManager.setFocused(status === 'active');
 }
 
@@ -78,69 +91,120 @@ export default function App() {
     '`new NativeEventEmitter()` was called with a non-null argument without the required `removeListeners` method.',
   ]);
 
+  // 🔔 Crear canal Android "orders" al boot (heads-up)
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      Notifications.setNotificationChannelAsync('orders', {
+        name: 'Pedidos',
+        importance: Notifications.AndroidImportance.HIGH, // heads-up
+        vibrationPattern: [0, 200, 100, 200],
+        lightColor: '#0EA5E9',
+        bypassDnd: false,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        sound: undefined, // define un .wav/.mp3 en res/raw si quieres sonido custom
+      }).catch((e) => {
+        // No bloquear la app si falla; log para diagnóstico
+        if (__DEV__) console.log('[NOTIFS] channel error', e);
+      });
+    }
+  }, []);
+
   // 🔎 Verificación de build/entorno + probe nativo (una sola vez)
   useEffect(() => {
-    const rawProvider = (process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'expo') as string;
+    const rawProvider = (process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'none') as string;
     const provider = rawProvider.trim().toLowerCase();
 
     // ===== ENTORNO (vars públicas) =====
-    console.log('[ENVCHK]', {
-      profile: process.env.EAS_BUILD_PROFILE,
-      api: process.env.EXPO_PUBLIC_API_BASE_URL,
-      debugHttp: process.env.EXPO_PUBLIC_DEBUG_HTTP,
-      sdk: (Constants.expoConfig as any)?.sdkVersion, // del app.config
-      appId: (Constants.expoConfig as any)?.ios?.bundleIdentifier ?? Constants.applicationId,
-      providerRaw: rawProvider,
-      providerNorm: provider,
-    });
+    if (__DEV__) {
+      console.log('[ENVCHK]', {
+        profile: process.env.EAS_BUILD_PROFILE,
+        api: process.env.EXPO_PUBLIC_API_BASE_URL,
+        debugHttp: process.env.EXPO_PUBLIC_DEBUG_HTTP,
+        sdk: (Constants.expoConfig as any)?.sdkVersion, // del app.config
+        appId:
+          (Constants.expoConfig as any)?.android?.package ??
+          (Constants.expoConfig as any)?.ios?.bundleIdentifier ??
+          Constants.applicationId,
+        providerRaw: rawProvider,
+        providerNorm: provider,
+      });
+    }
 
     // ===== BINARIO (instalado) =====
-    console.log('[BUILD]', {
-      nativeBuildVersion: Constants.nativeBuildVersion, // puede ser undefined en Dev Client
-      applicationId: (Constants.expoConfig as any)?.ios?.bundleIdentifier,
-    });
+    if (__DEV__) {
+      console.log('[BUILD]', {
+        nativeBuildVersion: Constants.nativeBuildVersion, // puede ser undefined en Dev Client
+        applicationId: (Constants.expoConfig as any)?.android?.package,
+      });
+    }
 
     // ===== RUNTIME =====
     (async () => {
       try {
         const Updates: any = await import('expo-updates');
-        console.log('[RUNTIME]', {
-          runtime: Updates.runtimeVersion ?? deriveRuntime(),
-          updateId: Updates.updateId ?? null,
-          channel: Updates.manifest?.channel ?? null,
-        });
+        if (__DEV__) {
+          console.log('[RUNTIME]', {
+            runtime: Updates.runtimeVersion ?? deriveRuntime(),
+            updateId: Updates.updateId ?? null,
+            channel: Updates.manifest?.channel ?? null,
+          });
+        }
       } catch {
-        console.log('[RUNTIME]', {
-          runtime: deriveRuntime(),
-          note: 'expo-updates not installed',
-        });
+        if (__DEV__) {
+          console.log('[RUNTIME]', {
+            runtime: deriveRuntime(),
+            note: 'expo-updates not installed',
+          });
+        }
       }
     })();
 
     // ===== PROBE de módulos nativos / New Architecture =====
     // @ts-ignore - flag global de RN para Turbo/Fabric
     const isTurbo = !!global.__turboModuleProxy;
-    console.log('[LA][probe] iOS?', Platform.OS, 'turbo?', isTurbo, 'iOSVersion?', iosVersion());
-    console.log('[LA][probe] supportsStart?', supportsStart(), 'supportsPush?', supportsPushUpdates());
+    if (__DEV__) {
+      console.log(
+        '[LA][probe] OS',
+        Platform.OS,
+        'turbo?',
+        isTurbo,
+        'iOSVersion?',
+        iosVersion(),
+      );
+      console.log(
+        '[LA][probe] supportsStart?',
+        supportsStart(),
+        'supportsPush?',
+        supportsPushUpdates(),
+      );
 
-    const nativeKeys = Object.keys(NativeModules).filter((k) =>
-      /nitro|activity|kingstinct|live|widget/i.test(k),
-    );
-    console.log('[LA][probe] native modules:', nativeKeys);
-    // @ts-ignore acceso dinámico
-    console.log('[LA][probe] NitroActivityKit =', typeof (NativeModules as any)?.NitroActivityKit);
+      const nativeKeys = Object.keys(NativeModules).filter((k) =>
+        /nitro|activity|kingstinct|live|widget/i.test(k),
+      );
+      console.log('[LA][probe] native modules:', nativeKeys);
+      // @ts-ignore acceso dinámico
+      console.log(
+        '[LA][probe] NitroActivityKit =',
+        typeof (NativeModules as any)?.NitroActivityKit,
+      );
+    }
 
-    // Probe directo al provider expo-live-activity
+    // Probe directo al provider expo-live-activity (solo si está activo)
     (async () => {
+      if (provider !== 'expo') return;
       try {
         const mod: any = await import('expo-live-activity');
-        console.log('[LA][probe expo-live-activity] fns =', {
-          startLiveActivity: typeof mod?.startLiveActivity,
-          updateLiveActivity: typeof mod?.updateLiveActivity,
-          stopLiveActivity: typeof mod?.stopLiveActivity,
-        });
+        if (__DEV__) {
+          console.log('[LA][probe expo-live-activity] fns =', {
+            startLiveActivity: typeof mod?.startLiveActivity,
+            updateLiveActivity: typeof mod?.updateLiveActivity,
+            stopLiveActivity: typeof mod?.stopLiveActivity,
+          });
+        }
       } catch (e) {
-        console.log('[LA][probe expo-live-activity] import error =', String(e));
+        if (__DEV__) {
+          console.log('[LA][probe expo-live-activity] import error =', String(e));
+        }
       }
     })();
 
