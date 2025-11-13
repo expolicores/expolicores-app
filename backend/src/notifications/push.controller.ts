@@ -1,5 +1,5 @@
-// backend/src/notifications/push.controller.ts
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,7 +7,6 @@ import {
   HttpStatus,
   Post,
   UseGuards,
-  BadRequestException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -18,10 +17,10 @@ type CurrentUserShape = { id: number; role?: string; phone?: string; email?: str
 
 /**
  * Controlador de notificaciones push (Expo/FCM)
- * - Mantiene contrato estable: POST /notifications/push/register
- * - Agrega:
- *    • POST /notifications/push/test    -> smoke/test hacia tokens del usuario
- *    • DELETE /notifications/push/register -> desregistrar token (opcional)
+ * Contratos públicos:
+ *  - POST   /notifications/push/register   -> upsert de tokens por usuario (multi-dispositivo)
+ *  - DELETE /notifications/push/register   -> elimina un token del usuario
+ *  - POST   /notifications/push/test       -> smoke test a todos los tokens del usuario
  */
 @UseGuards(JwtAuthGuard)
 @Controller('notifications/push')
@@ -29,22 +28,27 @@ export class PushController {
   constructor(private readonly push: PushService) {}
 
   /**
-   * Registra o actualiza el token Expo del usuario (multi-dispositivo).
+   * Registra o actualiza el token Expo del usuario (idempotente).
    * Body: { token: string; platform?: 'android'|'ios' }
    */
   @Post('register')
   @HttpCode(HttpStatus.OK)
-  async register(@CurrentUser() user: CurrentUserShape, @Body() dto: RegisterPushDto) {
-    // Validación defensiva mínima en el controlador (la validación fuerte vive en el servicio/DTO)
+  async register(
+    @CurrentUser() user: CurrentUserShape,
+    @Body() dto: RegisterPushDto,
+  ) {
     if (!dto?.token || typeof dto.token !== 'string') {
       throw new BadRequestException('token requerido');
     }
-    // Expo push tokens suelen empezar por "ExponentPushToken[" (dev) o ser eXPo... (clásico).
-    // No bloqueamos estrictamente, pero avisamos si el formato luce mal.
+
+    // Formato típico de Expo push tokens (no bloqueante, solo heurística)
     const looksLikeExpoToken =
-      dto.token.startsWith('ExponentPushToken[') || dto.token.includes('ExpoPushToken');
+      dto.token.startsWith('ExponentPushToken[') ||
+      dto.token.includes('ExpoPushToken') ||
+      dto.token.startsWith('ExpoPushToken[');
     if (!looksLikeExpoToken && dto.token.length < 20) {
-      // No lanzamos error duro para no romper clientes; dejamos registro en servicio.
+      // No arrojamos error duro para no romper clientes antiguos.
+      // El servicio puede registrar advertencias si se desea.
     }
 
     await this.push.register(user.id, dto);
@@ -57,7 +61,10 @@ export class PushController {
    */
   @Delete('register')
   @HttpCode(HttpStatus.OK)
-  async unregister(@CurrentUser() user: CurrentUserShape, @Body() body: { token?: string }) {
+  async unregister(
+    @CurrentUser() user: CurrentUserShape,
+    @Body() body: { token?: string },
+  ) {
     if (!body?.token || typeof body.token !== 'string') {
       throw new BadRequestException('token requerido');
     }
@@ -74,9 +81,6 @@ export class PushController {
   async sendTest(@CurrentUser() user: CurrentUserShape) {
     const result = await this.push.sendTestToUser(user.id);
     // result puede incluir: deliveredCount, failedCount, invalidTokens[], receipts[]
-    return {
-      ok: true,
-      ...result,
-    };
+    return { ok: true, ...result };
   }
 }

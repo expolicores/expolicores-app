@@ -1,3 +1,43 @@
+Invoke-WebRequest -Uri "https://expolicores-app-production.up.railway.app/docs" -UseBasicParsing | Out-Null
+"Swagger OK"
+
+
+$API = "https://expolicores-app-production.up.railway.app"
+$JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMsImVtYWlsIjoiZXhwb2xpY29yZXNAb3V0bG9vay5jb20iLCJyb2xlIjoiQjJDIiwiaWF0IjoxNzYzMDAyNTM0LCJleHAiOjE3NjM2MDczMzR9.ZQlW5ney7-YqwuB1zIVrfEtjiajyQa9oT4N81FzXYvw"
+$body = @{ token = "ExponentPushToken[SIMULADO123456]"; platform = "android" } | ConvertTo-Json
+Invoke-RestMethod -Uri "$API/notifications/push/register" -Method POST `
+  -Headers @{ Authorization="Bearer $JWT"; "Content-Type"="application/json" } -Body $body
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ajusta :orderId
 curl -X POST "https://https://expolicores-app-production.up.railway.app/live-activities/test-update" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiZXhwb0BhZG1pbi5jb20iLCJyb2xlIjoiQURNSU4iLCJpYXQiOjE3NjIzMTE0MTYsImV4cCI6MTc2MjkxNjIxNn0.rchlGowP0ZB_5WEGH-ed4LW7w4gPWJV34cX33hRp0u8" \
