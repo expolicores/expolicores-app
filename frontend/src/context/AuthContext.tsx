@@ -128,7 +128,10 @@ function useAuthState() {
             const me = await apiGetMe();
             queryClient.setQueryData(['me'], me);
             // embebe token en user para pantallas que lo lean ahí
-            queryClient.setQueryData(['user-with-token'], { ...me, token: savedToken } as MeWithToken);
+            queryClient.setQueryData(
+              ['user-with-token'],
+              { ...me, token: savedToken } as MeWithToken
+            );
           } catch (err) {
             // token inválido: limpiar
             setAuthToken(undefined);
@@ -148,7 +151,12 @@ function useAuthState() {
     setAuthToken(token || undefined);
     if (token) {
       const me = queryClient.getQueryData(['me']) as Me | undefined;
-      if (me) queryClient.setQueryData(['user-with-token'], { ...me, token } as MeWithToken);
+      if (me) {
+        queryClient.setQueryData(
+          ['user-with-token'],
+          { ...me, token } as MeWithToken
+        );
+      }
     } else {
       queryClient.removeQueries({ queryKey: ['user-with-token'] });
     }
@@ -167,7 +175,10 @@ function useAuthState() {
     retry: 1,
     onSuccess: (me) => {
       // mantiene user con token actualizado
-      queryClient.setQueryData(['user-with-token'], { ...me, token: token ?? undefined } as MeWithToken);
+      queryClient.setQueryData(
+        ['user-with-token'],
+        { ...me, token: token ?? undefined } as MeWithToken
+      );
     },
   });
 
@@ -175,7 +186,9 @@ function useAuthState() {
   useEffect(() => {
     (async () => {
       try {
-        const raw = await SecureStore.getItemAsync(emailDeferKey(meQuery.data?.id));
+        const raw = await SecureStore.getItemAsync(
+          emailDeferKey(meQuery.data?.id)
+        );
         setEmailDeferred(raw === '1');
       } catch {
         setEmailDeferred(false);
@@ -241,7 +254,12 @@ function useAuthState() {
       queryFn: apiGetMe,
     });
     // actualiza user con token
-    if (data) queryClient.setQueryData(['user-with-token'], { ...data, token } as MeWithToken);
+    if (data) {
+      queryClient.setQueryData(
+        ['user-with-token'],
+        { ...data, token } as MeWithToken
+      );
+    }
     return data ?? null;
   }, [queryClient, token]);
 
@@ -252,15 +270,24 @@ function useAuthState() {
           String(email ?? '').trim().toLowerCase(),
           String(password ?? '')
         );
-        if (!access_token) throw new Error('Respuesta de login inválida (sin access_token)');
+        if (!access_token) {
+          throw new Error('Respuesta de login inválida (sin access_token)');
+        }
         await persistToken(access_token);
         console.log('JWT (password) 👉', access_token);
         const me = await refreshMe();
-        if (me) queryClient.setQueryData(['user-with-token'], { ...me, token: access_token } as MeWithToken);
+        if (me) {
+          queryClient.setQueryData(
+            ['user-with-token'],
+            { ...me, token: access_token } as MeWithToken
+          );
+        }
       } catch (e: any) {
         const msg =
           e?.message ||
-          (typeof e?.details?.message === 'string' ? e.details.message : 'No se pudo iniciar sesión');
+          (typeof e?.details?.message === 'string'
+            ? e.details.message
+            : 'No se pudo iniciar sesión');
         Alert.alert('Error', msg);
         throw e;
       }
@@ -269,10 +296,14 @@ function useAuthState() {
   );
 
   const requestOtpCore = useCallback(
-    async (body: RequestOtpBody): Promise<Pick<RequestOtpResp, 'devOtp' | 'phoneMasked' | 'throttled'>> => {
+    async (
+      body: RequestOtpBody
+    ): Promise<Pick<RequestOtpResp, 'devOtp' | 'phoneMasked' | 'throttled'>> => {
       try {
         const res = await apiRequestOtp(body);
-        if ((body as any).phone) await setLastPhone((body as any).phone);
+        if ((body as any).phone) {
+          await setLastPhone((body as any).phone);
+        }
         return {
           devOtp: res.devOtp,
           phoneMasked: res.phoneMasked,
@@ -281,7 +312,9 @@ function useAuthState() {
       } catch (e: any) {
         const msg =
           e?.message ||
-          (typeof e?.details?.message === 'string' ? e.details.message : null) ||
+          (typeof e?.details?.message === 'string'
+            ? e.details.message
+            : null) ||
           'No pudimos enviar el código. Intenta de nuevo.';
         Alert.alert('Error', msg);
         throw e;
@@ -292,6 +325,7 @@ function useAuthState() {
 
   const requestOtpByPhone = useCallback<AuthCtx['requestOtpByPhone']>(
     async (phone, channel = 'sms', intent = 'login') => {
+      // Flujo normal: phone como identificador + canal explícito (sms/whatsapp)
       return requestOtpCore({ phone, channel, intent } as any);
     },
     [requestOtpCore]
@@ -299,7 +333,15 @@ function useAuthState() {
 
   const requestOtpByEmail = useCallback<AuthCtx['requestOtpByEmail']>(
     async (email) => {
-      return requestOtpCore({ email, intent: 'login' } as any);
+      // IMPORTANTE:
+      // - El correo solo se usa como IDENTIFICADOR.
+      // - El OTP se envía SIEMPRE por SMS al celular asociado en backend.
+      const normalizedEmail = String(email ?? '').trim().toLowerCase();
+      return requestOtpCore({
+        email: normalizedEmail,
+        channel: 'sms',
+        intent: 'login',
+      } as any);
     },
     [requestOtpCore]
   );
@@ -308,7 +350,9 @@ function useAuthState() {
     async (args) => {
       try {
         const { access_token, user } = await verifyOtpApi(args);
-        if (!access_token) throw new Error('Respuesta inválida (sin access_token)');
+        if (!access_token) {
+          throw new Error('Respuesta inválida (sin access_token)');
+        }
 
         // Persistimos y exponemos el JWT
         await persistToken(access_token);
@@ -317,7 +361,10 @@ function useAuthState() {
         if (user) {
           // Poblamos caches
           queryClient.setQueryData(['me'], user as Me);
-          queryClient.setQueryData(['user-with-token'], { ...(user as Me), token: access_token } as MeWithToken);
+          queryClient.setQueryData(
+            ['user-with-token'],
+            { ...(user as Me), token: access_token } as MeWithToken
+          );
 
           console.log('Usuario (me) actualizado 👉', {
             id: (user as Me).id,
@@ -327,7 +374,9 @@ function useAuthState() {
 
           // Cargar defer flag para este usuario
           try {
-            const raw = await SecureStore.getItemAsync(emailDeferKey((user as Me).id));
+            const raw = await SecureStore.getItemAsync(
+              emailDeferKey((user as Me).id)
+            );
             setEmailDeferred(raw === '1');
           } catch {
             setEmailDeferred(false);
@@ -335,13 +384,20 @@ function useAuthState() {
           return user as Me;
         } else {
           const me = await refreshMe();
-          if (me) queryClient.setQueryData(['user-with-token'], { ...me, token: access_token } as MeWithToken);
+          if (me) {
+            queryClient.setQueryData(
+              ['user-with-token'],
+              { ...me, token: access_token } as MeWithToken
+            );
+          }
           return me;
         }
       } catch (e: any) {
         const msg =
           e?.message ||
-          (typeof e?.details?.message === 'string' ? e.details.message : null) ||
+          (typeof e?.details?.message === 'string'
+            ? e.details.message
+            : null) ||
           'Código inválido o expirado.';
         Alert.alert('Error', msg);
         throw e;
@@ -355,7 +411,10 @@ function useAuthState() {
       setEmailDeferred(defer);
       try {
         const userId = (queryClient.getQueryData(['me']) as Me | undefined)?.id;
-        await SecureStore.setItemAsync(emailDeferKey(userId), defer ? '1' : '0');
+        await SecureStore.setItemAsync(
+          emailDeferKey(userId),
+          defer ? '1' : '0'
+        );
       } catch {
         // noop
       }
@@ -377,7 +436,9 @@ function useAuthState() {
 
   // Selección de datos expuestos
   const currentMe = (meQuery.data as Me) ?? null;
-  const userWithToken = (queryClient.getQueryData(['user-with-token']) as MeWithToken | undefined) ?? (currentMe ? { ...currentMe, token: token ?? undefined } : null);
+  const userWithToken =
+    (queryClient.getQueryData(['user-with-token']) as MeWithToken | undefined) ??
+    (currentMe ? { ...currentMe, token: token ?? undefined } : null);
 
   const value: AuthCtx = useMemo(
     () => ({
@@ -431,7 +492,9 @@ function useAuthState() {
 }
 
 /* ============================ Provider ============================ */
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const value = useAuthState();
 
   return (

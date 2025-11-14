@@ -189,9 +189,15 @@ export function getApiBaseUrl() {
 
 /* =================== AUTH (OTP-first) =================== */
 
+/**
+ * Para este release:
+ * - phone/email se usan como IDENTIFICADORES.
+ * - El canal de envío real del OTP sigue siendo SMS/WhatsApp al celular asociado.
+ * - IMPORTANTE: el backend exige que `channel` sea 'sms' o 'whatsapp'.
+ */
 export type RequestOtpBody =
   | { phone: string; channel?: 'sms' | 'whatsapp'; intent?: 'login' | 'register' }
-  | { email: string; intent?: 'login' | 'register' };
+  | { email: string; channel?: 'sms' | 'whatsapp'; intent?: 'login' | 'register' };
 
 export type RequestOtpResp = {
   ok: boolean;

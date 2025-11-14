@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
-import { requestOtp, verifyOtp, api } from '../lib/api';
+import { requestOtp, api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { ENV } from '../config/env';
 
@@ -23,7 +23,10 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
 /**
  * Usos:
  * - Enrolar correo (opcional) justo después del OTP (modo por defecto)
- * - Login por correo (mode='loginByEmail'): envía OTP al celular asociado al correo
+ * - Login por correo (mode='loginByEmail'):
+ *    * El correo se usa SOLO como identificador.
+ *    * El backend envía OTP por SMS al celular asociado.
+ *    * Siempre se ingresa el código en OtpCodeScreen.
  */
 export default function EmailOptionalScreen({ route, navigation }: Props) {
   const { phone, email, mode } = route.params || {};
@@ -386,7 +389,7 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
   );
 }
 
-/* ===== Login por correo: envía OTP al celular asociado al correo ===== */
+/* ===== Login por correo: email como identificador → OTP por SMS → OtpCodeScreen ===== */
 
 function LoginByEmailView({
   navigation,
@@ -394,156 +397,88 @@ function LoginByEmailView({
   navigation: Props['navigation'];
 }) {
   const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
-  const [code, setCode] = useState('');
-  const [devOtp, setDevOtp] = useState<string | undefined>(undefined);
-  const [cooldown, setCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // Reenvío controlado por cooldown
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setInterval(
-      () => setCooldown((c) => Math.max(0, c - 1)),
-      1000
-    );
-    return () => clearInterval(t);
-  }, [cooldown]);
+  const onContinue = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return;
 
-  const onSend = async () => {
-    if (!email.trim()) return;
+    // Validación básica de formato
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(normalizedEmail)) {
+      Alert.alert('Aviso', 'Por favor ingresa un correo válido.');
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await requestOtp({ email, intent: 'login' });
-      setSent(true);
-      setDevOtp((res as any)?.devOtp);
-      setCooldown(60);
+      // IMPORTANTE:
+      // - El correo solo se usa como IDENTIFICADOR.
+      // - El OTP se envía SIEMPRE por SMS al celular asociado en backend.
+      const res = await requestOtp({
+        email: normalizedEmail,
+        intent: 'login',
+        channel: 'sms',
+      } as any);
+
+      const cooldown =
+        res?.throttled && typeof res?.remainingSeconds === 'number'
+          ? res.remainingSeconds
+          : typeof res?.cooldownSeconds === 'number'
+          ? res.cooldownSeconds
+          : 60;
+
+      const expires =
+        typeof res?.expiresInSeconds === 'number'
+          ? res.expiresInSeconds
+          : 600;
+
+      // Navegamos SIEMPRE a OtpCodeScreen (puerta única para ingresar el código)
+      navigation.navigate(
+        'OtpCode',
+        {
+          email: normalizedEmail,
+          intent: 'login',
+          phone: undefined,
+          phoneMasked: res?.phoneMasked,
+          devOtp: __DEV__ ? res?.devOtp : undefined,
+          cooldownSeconds: cooldown,
+          expiresInSeconds: expires,
+        } as any
+      );
     } catch (e: any) {
       const msg =
-        e?.response?.data?.message ||
         e?.message ||
-        'No pudimos enviar el código.\nVerifica tu correo o intenta con tu celular.';
+        (typeof e?.details?.message === 'string'
+          ? e.details.message
+          : 'No pudimos enviar el código.\nVerifica tu correo o intenta con tu celular.');
       Alert.alert('Error', String(msg));
     } finally {
       setLoading(false);
     }
   };
-
-  const onResend = async () => {
-    if (cooldown > 0 || !sent) return;
-    await onSend();
-  };
-
-  const onVerify = async () => {
-    const c = (code || devOtp || '').trim();
-    if (c.length < 6) return;
-    setLoading(true);
-    try {
-      await verifyOtp({ email, code: c });
-      // Volvemos a Home para que el PostAuthGate decida (Name/Email/Catalog)
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Home' as never }],
-      });
-    } catch (e: any) {
-      const msg =
-        e?.response?.data?.message ||
-        e?.message ||
-        'Código inválido o expirado.';
-      Alert.alert('Error', String(msg));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const mergedCode = devOtp ?? code;
-
-  if (!sent) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-        <StatusBar barStyle="dark-content" />
-        <View style={{ flex: 1, padding: 24 }}>
-          <Text style={{ fontSize: 24, fontWeight: '800', marginBottom: 8 }}>
-            Ingresa tu correo
-          </Text>
-          <Text style={{ color: '#6B7280', marginBottom: 16 }}>
-            Te enviaremos un código de verificación al celular asociado a tu
-            correo.
-          </Text>
-
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            placeholder="tucorreo@ejemplo.com"
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            style={{
-              fontSize: 16,
-              padding: 12,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: '#e5e7eb',
-              marginBottom: 24,
-            }}
-          />
-
-          <TouchableOpacity
-            onPress={onSend}
-            disabled={loading || !email.trim()}
-            style={{
-              backgroundColor:
-                loading || !email.trim() ? '#d1d5db' : '#10B981',
-              padding: 16,
-              borderRadius: 16,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {loading ? (
-              <ActivityIndicator color="#ffffff" />
-            ) : (
-              <Text
-                style={{
-                  color: '#ffffff',
-                  fontWeight: '700',
-                  fontSize: 16,
-                }}
-              >
-                Continuar
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
       <StatusBar barStyle="dark-content" />
       <View style={{ flex: 1, padding: 24 }}>
         <Text style={{ fontSize: 24, fontWeight: '800', marginBottom: 8 }}>
-          Validación de seguridad
+          Ingresa tu correo
         </Text>
         <Text style={{ color: '#6B7280', marginBottom: 16 }}>
-          Te enviamos un código de 6 dígitos al celular asociado a tu correo.
+          Usaremos el correo asociado a tu cuenta para validar tu identidad y
+          enviarte un código por SMS al celular registrado.
         </Text>
 
         <TextInput
-          value={mergedCode}
-          onChangeText={(t) => {
-            setCode(t.replace(/\D/g, '').slice(0, 6));
-            // si el usuario escribe, ignoramos el devOtp
-            setDevOtp(undefined);
-          }}
-          maxLength={6}
-          keyboardType="number-pad"
-          placeholder="- - - - - -"
+          value={email}
+          onChangeText={setEmail}
+          placeholder="tucorreo@ejemplo.com"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
           style={{
-            fontSize: 32,
-            letterSpacing: 12,
-            textAlign: 'center',
+            fontSize: 16,
             padding: 12,
             borderRadius: 12,
             borderWidth: 1,
@@ -553,13 +488,11 @@ function LoginByEmailView({
         />
 
         <TouchableOpacity
-          onPress={onVerify}
-          disabled={loading || (mergedCode || '').length < 6}
+          onPress={onContinue}
+          disabled={loading || !email.trim()}
           style={{
             backgroundColor:
-              loading || (mergedCode || '').length < 6
-                ? '#d1d5db'
-                : '#10B981',
+              loading || !email.trim() ? '#d1d5db' : '#10B981',
             padding: 16,
             borderRadius: 16,
             alignItems: 'center',
@@ -576,24 +509,9 @@ function LoginByEmailView({
                 fontSize: 16,
               }}
             >
-              Verificar
+              Continuar
             </Text>
           )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          disabled={cooldown > 0 || loading}
-          onPress={onResend}
-          style={{ padding: 8, marginTop: 8 }}
-        >
-          <Text
-            style={{
-              textAlign: 'center',
-              color: cooldown > 0 ? '#9CA3AF' : '#2563EB',
-            }}
-          >
-            Reenviar código {cooldown > 0 ? `(${cooldown}s)` : ''}
-          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
