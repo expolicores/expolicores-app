@@ -8,27 +8,35 @@ datasource db {
 }
 
 model User {
-  id                         Int                        @id @default(autoincrement())
-  name                       String                     @default("Cliente")
-  email                      String?                    @unique
-  phone                      String?                    @unique
-  password                   String?
-  role                       Role                       @default(B2C)
-  isPhoneVerified            Boolean                    @default(false)
-  isEmailVerified            Boolean                    @default(false)
-  otpCodeHash                String?
-  otpExpiresAt               DateTime?
-  lastOtpSentAt              DateTime?
-  createdAt                  DateTime                   @default(now())
-  updatedAt                  DateTime                   @updatedAt
-  adminProcessStatus         AdminProcessStatus         @default(PENDING)
+  id        Int      @id @default(autoincrement())
+  name      String   @default("Cliente")
+  email     String?  @unique
+  phone     String?  @unique
+  password  String?
+  role      Role     @default(B2C)
+
+  isPhoneVerified Boolean @default(false)
+  isEmailVerified Boolean @default(false)
+
+  otpCodeHash    String?
+  otpExpiresAt   DateTime?
+  lastOtpSentAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  adminProcessStatus       AdminProcessStatus       @default(PENDING)
   businessVerificationStatus BusinessVerificationStatus @default(NONE)
-  addresses                  Address[]
-  emailVerificationTokens    EmailVerificationToken[]
-  favorites                  Favorite[]
-  orders                     Order[]
-  liveActivities             OrderLiveActivity[]        @relation("User_LiveActivities")
-  pushTokens                 UserPushToken[]
+
+  // ⬇⬇⬇ NUEVO: marca de eliminación lógica
+  deletedAt DateTime?
+
+  addresses   Address[]
+  emailVerificationTokens EmailVerificationToken[]
+  favorites   Favorite[]
+  orders      Order[]
+  liveActivities OrderLiveActivity[] @relation("User_LiveActivities")
+  pushTokens  UserPushToken[]
 }
 
 model EmailVerificationToken {

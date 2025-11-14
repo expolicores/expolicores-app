@@ -4,7 +4,11 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
-import { Role, BusinessVerificationStatus, AdminProcessStatus } from '@prisma/client';
+import {
+  Role,
+  BusinessVerificationStatus,
+  AdminProcessStatus,
+} from '@prisma/client';
 
 type JwtPayload = {
   sub: number;
@@ -27,7 +31,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // En desarrollo permitimos fallback; en producción exigimos secret válido
     const secretOrKey =
       rawSecret ||
-      (nodeEnv !== 'production' ? 'dev-secret' : (() => { throw new Error('JWT_SECRET missing in production'); })());
+      (nodeEnv !== 'production'
+        ? 'dev-secret'
+        : (() => {
+            throw new Error('JWT_SECRET missing in production');
+          })());
 
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -39,7 +47,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (this.logEnabled) {
       this.logger.log(
-        `JWT configured. env=${nodeEnv} secret.length=${String(secretOrKey).length}`,
+        `JWT configured. env=${nodeEnv} secret.length=${String(
+          secretOrKey,
+        ).length}`,
       );
     }
   }
@@ -68,12 +78,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         adminProcessStatus: true,
         isEmailVerified: true,
         isPhoneVerified: true,
+        // ⬇⬇⬇ NUEVO: usamos deletedAt para invalidar tokens de cuentas eliminadas
+        deletedAt: true,
       },
     });
 
-    // Si no existe, Passport interpretará "false/null" como Unauthorized (401)
-    if (!user) {
-      if (this.logEnabled) this.logger.warn(`JWT user not found: sub=${payload.sub}`);
+    // Si no existe o está eliminada, Passport interpretará "false/null" como Unauthorized (401)
+    if (!user || user.deletedAt) {
+      if (this.logEnabled) {
+        this.logger.warn(
+          `JWT user not found or deleted: sub=${payload.sub}`,
+        );
+      }
       return null;
     }
 
@@ -84,8 +100,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: user.role as Role,
       name: user.name ?? null,
       phone: user.phone ?? null,
-      businessVerificationStatus: user.businessVerificationStatus as BusinessVerificationStatus,
-      adminProcessStatus: user.adminProcessStatus as AdminProcessStatus,
+      businessVerificationStatus:
+        user.businessVerificationStatus as BusinessVerificationStatus,
+      adminProcessStatus:
+        user.adminProcessStatus as AdminProcessStatus,
       isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
     };

@@ -33,6 +33,7 @@ export class UsersService {
     isPhoneVerified: true,
     createdAt: true,
     updatedAt: true,
+    // NOTA: `deletedAt` no se expone aquí a propósito
   } as const;
 
   // ===== Helpers =====
@@ -169,6 +170,59 @@ export class UsersService {
    */
   async updateSelf(id: number, dto: UpdateMeInput) {
     return this.updateMe(id, dto);
+  }
+
+  /**
+   * Elimina la propia cuenta (soft delete + limpieza básica de datos personales).
+   * - Anonimiza el usuario (name/email/phone/password/OTP).
+   * - Marca `deletedAt`.
+   * - Limpia tokens push, favoritos, direcciones y tokens de verificación de email.
+   * - NO borra órdenes para mantener historial operativo.
+   */
+  async deleteSelf(userId: number) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        deletedAt: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Idempotente: si ya estaba eliminada, devolvemos OK
+    if (existing.deletedAt) {
+      return { id: userId, deleted: true };
+    }
+
+    await this.prisma.$transaction([
+      // Limpieza de “cosas vivas”
+      this.prisma.userPushToken.deleteMany({ where: { userId } }),
+      this.prisma.favorite.deleteMany({ where: { userId } }),
+      this.prisma.address.deleteMany({ where: { userId } }),
+      this.prisma.emailVerificationToken.deleteMany({ where: { userId } }),
+
+      // Anonimizar usuario y marcar eliminado
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: 'Cuenta eliminada',
+          email: null,
+          phone: null,
+          password: null,
+          isEmailVerified: false,
+          isPhoneVerified: false,
+          otpCodeHash: null,
+          otpExpiresAt: null,
+          lastOtpSentAt: null,
+          deletedAt: new Date(),
+        },
+      }),
+    ]);
+
+    return { id: userId, deleted: true };
   }
 
   // ===== Admin =====

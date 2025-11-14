@@ -42,6 +42,13 @@ export class UsersController {
     return this.usersService.updateSelf(id, dto);
   }
 
+  // NUEVO: eliminar la propia cuenta (soft delete + limpieza)
+  @UseGuards(JwtAuthGuard)
+  @Delete('me')
+  deleteMe(@CurrentUser('id') id: number) {
+    return this.usersService.deleteSelf(id);
+  }
+
   // ===== Admin only =====
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)

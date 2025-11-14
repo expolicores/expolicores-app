@@ -36,7 +36,7 @@ const phoneSchema = z
       const digits = v.replace(/\D/g, '');
       return digits.length === 10 || /^\+57\d{10}$/.test(v);
     },
-    { message: 'Ingresa un celular valido (10 digitos) o en formato +57XXXXXXXXXX' }
+    { message: 'Ingresa un celular valido (10 digitos) o en formato +57XXXXXXXXXX' },
   );
 
 const schema = z.object({
@@ -83,15 +83,17 @@ export default function ProfileScreen() {
 
   // Extrae campos B2B de forma segura (sin forzar tu tipo Me)
   const role = (user as any)?.role as Role | undefined;
-  const businessVerificationStatus = (user as any)?.businessVerificationStatus as BusinessVerificationStatus | undefined;
-  const adminProcessStatus = (user as any)?.adminProcessStatus as AdminProcessStatus | undefined;
+  const businessVerificationStatus = (user as any)
+    ?.businessVerificationStatus as BusinessVerificationStatus | undefined;
+  const adminProcessStatus = (user as any)
+    ?.adminProcessStatus as AdminProcessStatus | undefined;
 
   const initialValues = useMemo(
     () => ({
       name: user?.name ?? '',
       phone: user?.phone ?? '',
     }),
-    [user?.name, user?.phone]
+    [user?.name, user?.phone],
   );
 
   const {
@@ -115,10 +117,16 @@ export default function ProfileScreen() {
           name: user.name ?? '',
           phone: user.phone ?? '',
         },
-        { keepDirty: false, keepIsValid: true }
+        { keepDirty: false, keepIsValid: true },
       );
-      setValue('name', user.name ?? '', { shouldDirty: false, shouldValidate: false });
-      setValue('phone', user.phone ?? '', { shouldDirty: false, shouldValidate: false });
+      setValue('name', user.name ?? '', {
+        shouldDirty: false,
+        shouldValidate: false,
+      });
+      setValue('phone', user.phone ?? '', {
+        shouldDirty: false,
+        shouldValidate: false,
+      });
     }
   }, [user, reset, setValue]);
 
@@ -135,7 +143,7 @@ export default function ProfileScreen() {
           name: updated?.name ?? '',
           phone: updated?.phone ?? '',
         },
-        { keepDirty: false, keepIsValid: true }
+        { keepDirty: false, keepIsValid: true },
       );
       queryClient.setQueryData(['me'], updated);
       await queryClient.invalidateQueries({ queryKey: ['me'] });
@@ -143,10 +151,16 @@ export default function ProfileScreen() {
       Alert.alert('Perfil actualizado', 'Tu informacion se guardo correctamente.');
     },
     onError: (error: any) => {
-      const msg = error?.response?.data?.message || error?.message || 'No se pudo actualizar el perfil.';
+      const msg =
+        error?.response?.data?.message ||
+        error?.message ||
+        'No se pudo actualizar el perfil.';
       Alert.alert('Error', String(msg));
     },
   });
+
+  const onSubmit = (values: FormValues) => updateMe(values);
+  const saveDisabled = isSaving || !isValid || !isDirty;
 
   // Solicitud B2B (“Soy negocio”)
   const [openB2BModal, setOpenB2BModal] = useState(false);
@@ -162,13 +176,33 @@ export default function ProfileScreen() {
       Alert.alert('Solicitud enviada', 'Revisaremos tu solicitud de negocio.');
     },
     onError: (error: any) => {
-      const msg = error?.response?.data?.message || error?.message || 'No se pudo enviar la solicitud.';
+      const msg =
+        error?.response?.data?.message ||
+        error?.message ||
+        'No se pudo enviar la solicitud.';
       Alert.alert('Error', String(msg));
     },
   });
 
-  const onSubmit = (values: FormValues) => updateMe(values);
-  const saveDisabled = isSaving || !isValid || !isDirty;
+  // Eliminación de perfil
+  const [openDeleteModal, setOpenDeleteModal] = useState(false);
+  const { mutate: deleteAccount, isLoading: isDeleting } = useMutation({
+    mutationFn: async () => {
+      await api.delete('/users/me');
+    },
+    onSuccess: async () => {
+      // Limpiamos cache y cerramos sesión
+      await queryClient.clear();
+      await signOut();
+    },
+    onError: (error: any) => {
+      const msg =
+        error?.response?.data?.message ||
+        error?.message ||
+        'No se pudo eliminar el perfil.';
+      Alert.alert('Error', String(msg));
+    },
+  });
 
   // Lógica para mostrar botón “Soy negocio”
   const canShowB2BButton =
@@ -231,7 +265,9 @@ export default function ProfileScreen() {
         {/* Banners B2B */}
         {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
           <View style={[styles.banner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-            <Text style={[styles.bannerTitle, { color: '#1D4ED8' }]}>Solicitud B2B en revisión</Text>
+            <Text style={[styles.bannerTitle, { color: '#1D4ED8' }]}>
+              Solicitud B2B en revisión
+            </Text>
             <Text style={[styles.bannerText, { color: '#1E3A8A' }]}>
               Te contactaremos por WhatsApp o teléfono para completar el proceso.
             </Text>
@@ -251,7 +287,9 @@ export default function ProfileScreen() {
 
         {FEATURES.B2B && role === 'B2B' && businessVerificationStatus === 'APPROVED' && (
           <View style={[styles.banner, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-            <Text style={[styles.bannerTitle, { color: '#065F46' }]}>Cuenta de negocio activa</Text>
+            <Text style={[styles.bannerTitle, { color: '#065F46' }]}>
+              Cuenta de negocio activa
+            </Text>
             <Text style={[styles.bannerText, { color: '#065F46' }]}>
               Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
             </Text>
@@ -260,7 +298,9 @@ export default function ProfileScreen() {
 
         {FEATURES.B2B && businessVerificationStatus === 'REJECTED' && (
           <View style={[styles.banner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-            <Text style={[styles.bannerTitle, { color: '#991B1B' }]}>Solicitud rechazada</Text>
+            <Text style={[styles.bannerTitle, { color: '#991B1B' }]}>
+              Solicitud rechazada
+            </Text>
             <Text style={[styles.bannerText, { color: '#991B1B' }]}>
               Si crees que es un error, contáctanos para revisar tu caso.
             </Text>
@@ -349,8 +389,9 @@ export default function ProfileScreen() {
                 <View style={styles.modalCard}>
                   <Text style={styles.modalTitle}>Condiciones B2B</Text>
                   <Text style={styles.modalText}>
-                    Los precios y beneficios B2B aplican solo tras verificación manual (RUT y datos
-                    fiscales). Podemos contactarte por WhatsApp o teléfono para validar información.
+                    Los precios y beneficios B2B aplican solo tras verificación manual
+                    (RUT y datos fiscales). Podemos contactarte por WhatsApp o teléfono
+                    para validar información.
                   </Text>
                   <View style={styles.modalActions}>
                     <Pressable onPress={() => setOpenB2BModal(false)}>
@@ -370,6 +411,7 @@ export default function ProfileScreen() {
 
         <View style={{ height: 16 }} />
 
+        {/* Mis direcciones */}
         <Pressable
           style={[styles.secondaryButton, styles.secondaryButtonBlue]}
           onPress={() => navigation.navigate('Addresses')}
@@ -377,18 +419,30 @@ export default function ProfileScreen() {
           <Text style={styles.secondaryButtonText}>Mis direcciones</Text>
         </Pressable>
 
-        <View style={{ height: 8 }} />
+        {/* Privacidad y cuenta */}
+        <View style={{ marginTop: 24 }}>
+          <Text style={[styles.label, { marginBottom: 8 }]}>Privacidad y cuenta</Text>
 
-        {/* NUEVO: botón hacia términos y política de datos */}
-        <Pressable
-          style={[styles.secondaryButton, styles.secondaryButtonBlue]}
-          onPress={() => navigation.navigate('Legal')}
-        >
-          <Text style={styles.secondaryButtonText}>Términos y política de datos</Text>
-        </Pressable>
+          <Pressable
+            style={[styles.secondaryButton, styles.secondaryButtonBlue]}
+            onPress={() => navigation.navigate('Legal')}
+          >
+            <Text style={styles.secondaryButtonText}>Términos y política de datos</Text>
+          </Pressable>
 
-        <View style={{ height: 8 }} />
+          <View style={{ height: 8 }} />
 
+          <Pressable
+            style={[styles.secondaryButton, styles.secondaryButtonRed]}
+            onPress={() => setOpenDeleteModal(true)}
+          >
+            <Text style={styles.secondaryButtonText}>Eliminar perfil</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ height: 16 }} />
+
+        {/* Cerrar sesión */}
         <Pressable
           style={[styles.secondaryButton, styles.secondaryButtonRed]}
           onPress={async () => {
@@ -402,6 +456,43 @@ export default function ProfileScreen() {
           <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
         </Pressable>
       </ScrollView>
+
+      {/* Modal: eliminación de perfil */}
+      <Modal
+        visible={openDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpenDeleteModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Eliminar perfil</Text>
+            <Text style={styles.modalText}>
+              Esta acción eliminará tu perfil, direcciones y favoritos. Tus pedidos
+              históricos se conservarán sin tus datos personales. ¿Seguro que quieres
+              continuar?
+            </Text>
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setOpenDeleteModal(false)}
+                disabled={isDeleting}
+              >
+                <Text style={styles.modalCancel}>Cancelar</Text>
+              </Pressable>
+              <Pressable onPress={() => deleteAccount()} disabled={isDeleting}>
+                <Text
+                  style={[
+                    styles.modalAccept,
+                    { color: '#dc2626', fontWeight: '700' },
+                  ]}
+                >
+                  {isDeleting ? 'Eliminando…' : 'Sí, eliminar mi perfil'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
