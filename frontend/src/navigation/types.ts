@@ -54,6 +54,7 @@ export type RootStackParamList = {
   Addresses: undefined;
   AddressForm: { id?: number } | undefined;
 
-  // Legal
+  // Legal / privacidad
   Legal: undefined;
+  PrivacyAccount: undefined; // ⬅️ nuevo screen "Privacidad y cuenta"
 };

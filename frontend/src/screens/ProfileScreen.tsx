@@ -4,7 +4,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,13 +16,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import type { Me } from '../types/auth';
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
-
-// === Nuevos helpers B2B ===
 import { FEATURES } from '../lib/flags';
 import { businessApply } from '../lib/api';
 
@@ -36,7 +32,10 @@ const phoneSchema = z
       const digits = v.replace(/\D/g, '');
       return digits.length === 10 || /^\+57\d{10}$/.test(v);
     },
-    { message: 'Ingresa un celular valido (10 digitos) o en formato +57XXXXXXXXXX' },
+    {
+      message:
+        'Ingresa un celular valido (10 digitos) o en formato +57XXXXXXXXXX',
+    },
   );
 
 const schema = z.object({
@@ -46,7 +45,6 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-// Normaliza a +57XXXXXXXXXX
 function normalizeCoPhone(v: string) {
   const digits = (v || '').replace(/\D/g, '');
   if (v?.startsWith('+')) return v;
@@ -55,33 +53,30 @@ function normalizeCoPhone(v: string) {
   return v;
 }
 
-// Tipos de apoyo (no obligamos a cambiar tu tipo Me)
 type Role = 'ADMIN' | 'B2C' | 'B2B';
 type BusinessVerificationStatus = 'NONE' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
 type AdminProcessStatus = 'PENDING' | 'IN_PROGRESS' | 'ATTENDED';
 
 export default function ProfileScreen() {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation();
   const queryClient = useQueryClient();
   const { user: ctxUser, refreshMe, signOut, booting } = useAuth();
   const insets = useSafeAreaInsets();
   const bottomPadding = getBottomQuickActionsPadding(insets.bottom);
 
-  // Si no hubiese user aun, traemos /auth/me (habilitado solo si ctxUser es null)
   const {
     data: me,
     isFetching,
     refetch,
   } = useQuery<Me>({
     queryKey: ['me'],
-    queryFn: async () => (await api.get<Me>('/auth/me')).data,
+    queryFn: async () => (await api.get('/auth/me')).data,
     enabled: !ctxUser,
     staleTime: 60_000,
   });
 
   const user = ctxUser ?? me ?? null;
 
-  // Extrae campos B2B de forma segura (sin forzar tu tipo Me)
   const role = (user as any)?.role as Role | undefined;
   const businessVerificationStatus = (user as any)
     ?.businessVerificationStatus as BusinessVerificationStatus | undefined;
@@ -109,7 +104,6 @@ export default function ProfileScreen() {
     reValidateMode: 'onChange',
   });
 
-  // Rellena el formulario al recibir perfil
   useEffect(() => {
     if (user) {
       reset(
@@ -130,11 +124,10 @@ export default function ProfileScreen() {
     }
   }, [user, reset, setValue]);
 
-  // Actualizacion de perfil
   const { mutate: updateMe, isLoading: isSaving } = useMutation({
     mutationFn: async (values: FormValues) => {
       const payload = { ...values, phone: normalizeCoPhone(values.phone) };
-      const res = await api.patch<Me>('/users/me', payload);
+      const res = await api.patch('/users/me', payload);
       return res.data;
     },
     onSuccess: async (updated) => {
@@ -162,7 +155,7 @@ export default function ProfileScreen() {
   const onSubmit = (values: FormValues) => updateMe(values);
   const saveDisabled = isSaving || !isValid || !isDirty;
 
-  // Solicitud B2B (“Soy negocio”)
+  // B2B
   const [openB2BModal, setOpenB2BModal] = useState(false);
   const { mutate: applyB2B, isLoading: isApplyingB2B } = useMutation({
     mutationFn: async () => {
@@ -184,42 +177,20 @@ export default function ProfileScreen() {
     },
   });
 
-  // Eliminación de perfil
-  const [openDeleteModal, setOpenDeleteModal] = useState(false);
-  const { mutate: deleteAccount, isLoading: isDeleting } = useMutation({
-    mutationFn: async () => {
-      await api.delete('/users/me');
-    },
-    onSuccess: async () => {
-      // Limpiamos cache y cerramos sesión
-      await queryClient.clear();
-      await signOut();
-    },
-    onError: (error: any) => {
-      const msg =
-        error?.response?.data?.message ||
-        error?.message ||
-        'No se pudo eliminar el perfil.';
-      Alert.alert('Error', String(msg));
-    },
-  });
-
-  // Lógica para mostrar botón “Soy negocio”
   const canShowB2BButton =
     FEATURES.B2B &&
     role !== 'B2B' &&
     businessVerificationStatus !== 'SUBMITTED' &&
     businessVerificationStatus !== 'APPROVED';
 
-  // Estados de carga
   if (booting || (!user && isFetching)) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={[styles.content, { flex: 1, paddingBottom: bottomPadding }]}>
-          <View style={[styles.center, { flex: 1 }]}>
-            <ActivityIndicator />
-            <Text style={{ marginTop: 8 }}>Cargando perfil...</Text>
-          </View>
+        <View style={[styles.content, styles.center]}>
+          <ActivityIndicator size="large" color="#0E8A3A" />
+          <Text style={{ marginTop: 8, color: '#6b7280' }}>
+            Cargando perfil...
+          </Text>
         </View>
       </SafeAreaView>
     );
@@ -228,24 +199,24 @@ export default function ProfileScreen() {
   if (!user) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={[styles.content, { flex: 1, paddingBottom: bottomPadding }]}>
-          <View style={[styles.center, { flex: 1 }]}>
-            <Text style={styles.title}>Mi perfil</Text>
-            <Text style={styles.muted}>No autenticado</Text>
-            <View style={{ height: 12 }} />
-            <Pressable
-              style={[styles.secondaryButton, styles.secondaryButtonBlue]}
-              onPress={() => refetch()}
-            >
-              <Text style={styles.secondaryButtonText}>Reintentar</Text>
-            </Pressable>
-          </View>
+        <View style={[styles.content, styles.center]}>
+          <Text style={styles.title}>Mi perfil</Text>
+          <Text style={styles.muted}>No autenticado</Text>
+          <Pressable
+            style={[
+              styles.secondaryButton,
+              styles.secondaryButtonBlue,
+              { marginTop: 16 },
+            ]}
+            onPress={() => refetch()}
+          >
+            <Text style={styles.secondaryButtonText}>Reintentar</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
   }
 
-  // Helpers de UI para estados B2B
   const adminBadgeColor =
     adminProcessStatus === 'PENDING'
       ? '#ef4444'
@@ -256,23 +227,35 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={[styles.content, { paddingBottom: bottomPadding }]}
-        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: bottomPadding },
+        ]}
       >
         <Text style={styles.title}>Mi perfil</Text>
 
         {/* Banners B2B */}
         {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
-          <View style={[styles.banner, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-            <Text style={[styles.bannerTitle, { color: '#1D4ED8' }]}>
-              Solicitud B2B en revisión
-            </Text>
-            <Text style={[styles.bannerText, { color: '#1E3A8A' }]}>
-              Te contactaremos por WhatsApp o teléfono para completar el proceso.
+          <View
+            style={[
+              styles.banner,
+              { borderColor: '#f59e0b', backgroundColor: '#fffbeb' },
+            ]}
+          >
+            <Text style={styles.bannerTitle}>Solicitud B2B en revisión</Text>
+            <Text style={styles.bannerText}>
+              Te contactaremos por WhatsApp o teléfono para completar el
+              proceso.
             </Text>
             {!!adminProcessStatus && (
-              <View style={[styles.badge, { backgroundColor: adminBadgeColor }]}>
+              <View
+                style={[
+                  styles.badge,
+                  {
+                    backgroundColor: adminBadgeColor,
+                  },
+                ]}
+              >
                 <Text style={styles.badgeText}>
                   {adminProcessStatus === 'PENDING'
                     ? 'Pendiente'
@@ -285,28 +268,37 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {FEATURES.B2B && role === 'B2B' && businessVerificationStatus === 'APPROVED' && (
-          <View style={[styles.banner, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-            <Text style={[styles.bannerTitle, { color: '#065F46' }]}>
-              Cuenta de negocio activa
-            </Text>
-            <Text style={[styles.bannerText, { color: '#065F46' }]}>
-              Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
-            </Text>
-          </View>
-        )}
+        {FEATURES.B2B &&
+          role === 'B2B' &&
+          businessVerificationStatus === 'APPROVED' && (
+            <View
+              style={[
+                styles.banner,
+                { borderColor: '#10b981', backgroundColor: '#ecfdf5' },
+              ]}
+            >
+              <Text style={styles.bannerTitle}>Cuenta de negocio activa</Text>
+              <Text style={styles.bannerText}>
+                Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
+              </Text>
+            </View>
+          )}
 
         {FEATURES.B2B && businessVerificationStatus === 'REJECTED' && (
-          <View style={[styles.banner, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-            <Text style={[styles.bannerTitle, { color: '#991B1B' }]}>
-              Solicitud rechazada
-            </Text>
-            <Text style={[styles.bannerText, { color: '#991B1B' }]}>
+          <View
+            style={[
+              styles.banner,
+              { borderColor: '#ef4444', backgroundColor: '#fef2f2' },
+            ]}
+          >
+            <Text style={styles.bannerTitle}>Solicitud rechazada</Text>
+            <Text style={styles.bannerText}>
               Si crees que es un error, contáctanos para revisar tu caso.
             </Text>
           </View>
         )}
 
+        {/* Datos básicos */}
         <Text style={styles.label}>Email</Text>
         <View style={styles.readonly}>
           <Text style={styles.readonlyText}>{user.email ?? '-'}</Text>
@@ -318,18 +310,21 @@ export default function ProfileScreen() {
           name="name"
           render={({ field: { onChange, onBlur, value } }) => (
             <TextInput
-              style={[styles.input, errors.name && styles.inputError]}
+              style={[
+                styles.input,
+                errors.name ? styles.inputError : undefined,
+              ]}
               placeholder="Tu nombre"
-              placeholderTextColor="#9ca3af"
-              selectionColor="#111"
+              autoCapitalize="words"
               onBlur={onBlur}
               onChangeText={onChange}
               value={value}
-              autoCapitalize="words"
             />
           )}
         />
-        {errors.name && <Text style={styles.error}>{errors.name.message}</Text>}
+        {errors.name && (
+          <Text style={styles.error}>{errors.name.message}</Text>
+        )}
 
         <Text style={styles.label}>Telefono (WhatsApp)</Text>
         <Controller
@@ -337,10 +332,11 @@ export default function ProfileScreen() {
           name="phone"
           render={({ field: { onChange, onBlur, value } }) => (
             <TextInput
-              style={[styles.input, errors.phone && styles.inputError]}
-              placeholder="3001234567 o +573001234567"
-              placeholderTextColor="#9ca3af"
-              selectionColor="#111"
+              style={[
+                styles.input,
+                errors.phone ? styles.inputError : undefined,
+              ]}
+              placeholder="3001234567"
               keyboardType="phone-pad"
               onBlur={onBlur}
               onChangeText={onChange}
@@ -348,108 +344,86 @@ export default function ProfileScreen() {
             />
           )}
         />
-        {errors.phone && <Text style={styles.error}>{errors.phone.message}</Text>}
+        {errors.phone && (
+          <Text style={styles.error}>{errors.phone.message}</Text>
+        )}
         <Text style={styles.hint}>
-          Recomendado: 10 digitos (por ejemplo 3001234567). Se normaliza a +57 automaticamente.
+          Recomendado: 10 digitos (por ejemplo 3001234567). Se normaliza a +57
+          automaticamente.
         </Text>
 
-        <View style={{ height: 16 }} />
-
+        {/* Guardar cambios */}
         <Pressable
-          onPress={handleSubmit(onSubmit)}
-          disabled={saveDisabled}
           style={[
             styles.saveButton,
             saveDisabled ? styles.saveButtonDisabled : styles.saveButtonEnabled,
+            { marginTop: 20 },
           ]}
+          disabled={saveDisabled}
+          onPress={handleSubmit(onSubmit)}
         >
-          <Text style={styles.saveButtonText}>
-            {isSaving ? 'Guardando...' : 'Guardar cambios'}
-          </Text>
+          {isSaving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.saveButtonText}>
+              {isSaving ? 'Guardando...' : 'Guardar cambios'}
+            </Text>
+          )}
         </Pressable>
 
-        {/* Botón Soy negocio (solo si aplica) */}
+        {/* Botón Soy negocio */}
         {canShowB2BButton && (
-          <>
-            <View style={{ height: 16 }} />
-            <Pressable
-              style={[styles.secondaryButton, styles.secondaryButtonBlack]}
-              onPress={() => setOpenB2BModal(true)}
-            >
-              <Text style={styles.secondaryButtonText}>Soy negocio</Text>
-            </Pressable>
-
-            <Modal
-              visible={openB2BModal}
-              transparent
-              animationType="fade"
-              onRequestClose={() => setOpenB2BModal(false)}
-            >
-              <View style={styles.modalBackdrop}>
-                <View style={styles.modalCard}>
-                  <Text style={styles.modalTitle}>Condiciones B2B</Text>
-                  <Text style={styles.modalText}>
-                    Los precios y beneficios B2B aplican solo tras verificación manual
-                    (RUT y datos fiscales). Podemos contactarte por WhatsApp o teléfono
-                    para validar información.
-                  </Text>
-                  <View style={styles.modalActions}>
-                    <Pressable onPress={() => setOpenB2BModal(false)}>
-                      <Text style={styles.modalCancel}>Cancelar</Text>
-                    </Pressable>
-                    <Pressable onPress={() => applyB2B()} disabled={isApplyingB2B}>
-                      <Text style={styles.modalAccept}>
-                        {isApplyingB2B ? 'Enviando…' : 'Aceptar y solicitar'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            </Modal>
-          </>
+          <Pressable
+            style={[
+              styles.secondaryButton,
+              styles.secondaryButtonBlack,
+              { marginTop: 16 },
+            ]}
+            onPress={() => setOpenB2BModal(true)}
+          >
+            <Text style={styles.secondaryButtonText}>Soy negocio</Text>
+          </Pressable>
         )}
-
-        <View style={{ height: 16 }} />
 
         {/* Mis direcciones */}
         <Pressable
-          style={[styles.secondaryButton, styles.secondaryButtonBlue]}
-          onPress={() => navigation.navigate('Addresses')}
+          style={[
+            styles.secondaryButton,
+            styles.secondaryButtonBlue,
+            { marginTop: 32 },
+          ]}
+          onPress={() => navigation.navigate('Addresses' as never)}
         >
           <Text style={styles.secondaryButtonText}>Mis direcciones</Text>
         </Pressable>
 
-        {/* Privacidad y cuenta */}
-        <View style={{ marginTop: 24 }}>
-          <Text style={[styles.label, { marginBottom: 8 }]}>Privacidad y cuenta</Text>
-
-          <Pressable
-            style={[styles.secondaryButton, styles.secondaryButtonBlue]}
-            onPress={() => navigation.navigate('Legal')}
-          >
-            <Text style={styles.secondaryButtonText}>Términos y política de datos</Text>
-          </Pressable>
-
-          <View style={{ height: 8 }} />
-
-          <Pressable
-            style={[styles.secondaryButton, styles.secondaryButtonRed]}
-            onPress={() => setOpenDeleteModal(true)}
-          >
-            <Text style={styles.secondaryButtonText}>Eliminar perfil</Text>
-          </Pressable>
-        </View>
-
-        <View style={{ height: 16 }} />
+        {/* Privacidad y cuenta (nuevo screen) */}
+        <Pressable
+          style={[
+            styles.secondaryButton,
+            styles.secondaryButtonBlack,
+            { marginTop: 16 },
+          ]}
+          onPress={() => navigation.navigate('PrivacyAccount' as never)}
+        >
+          <Text style={styles.secondaryButtonText}>Privacidad y cuenta</Text>
+        </Pressable>
 
         {/* Cerrar sesión */}
         <Pressable
-          style={[styles.secondaryButton, styles.secondaryButtonRed]}
+          style={[
+            styles.secondaryButton,
+            styles.secondaryButtonRed,
+            { marginTop: 32 },
+          ]}
           onPress={async () => {
             try {
               await signOut();
             } catch (error: any) {
-              Alert.alert('Error', error?.message ?? 'No se pudo cerrar sesion');
+              Alert.alert(
+                'Error',
+                error?.message ?? 'No se pudo cerrar sesion',
+              );
             }
           }}
         >
@@ -457,57 +431,81 @@ export default function ProfileScreen() {
         </Pressable>
       </ScrollView>
 
-      {/* Modal: eliminación de perfil */}
-      <Modal
-        visible={openDeleteModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setOpenDeleteModal(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Eliminar perfil</Text>
-            <Text style={styles.modalText}>
-              Esta acción eliminará tu perfil, direcciones y favoritos. Tus pedidos
-              históricos se conservarán sin tus datos personales. ¿Seguro que quieres
-              continuar?
-            </Text>
-            <View style={styles.modalActions}>
-              <Pressable
-                onPress={() => setOpenDeleteModal(false)}
-                disabled={isDeleting}
-              >
-                <Text style={styles.modalCancel}>Cancelar</Text>
-              </Pressable>
-              <Pressable onPress={() => deleteAccount()} disabled={isDeleting}>
-                <Text
-                  style={[
-                    styles.modalAccept,
-                    { color: '#dc2626', fontWeight: '700' },
-                  ]}
-                >
-                  {isDeleting ? 'Eliminando…' : 'Sí, eliminar mi perfil'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Modal B2B */}
+      <ModalB2B
+        visible={openB2BModal}
+        onClose={() => setOpenB2BModal(false)}
+        onApply={applyB2B}
+        loading={isApplyingB2B}
+      />
     </SafeAreaView>
   );
 }
 
+/** Modal separado para mantener el componente limpio */
+function ModalB2B({
+  visible,
+  onClose,
+  onApply,
+  loading,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onApply: () => void;
+  loading: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>Condiciones B2B</Text>
+        <Text style={styles.modalText}>
+          Los precios y beneficios B2B aplican solo tras verificación manual
+          (RUT y datos fiscales). Podemos contactarte por WhatsApp o teléfono
+          para validar información.
+        </Text>
+        <View style={styles.modalActions}>
+          <Pressable onPress={onClose} disabled={loading}>
+            <Text style={styles.modalCancel}>Cancelar</Text>
+          </Pressable>
+          <Pressable onPress={onApply} disabled={loading}>
+            <Text style={styles.modalAccept}>
+              {loading ? 'Enviando…' : 'Aceptar y solicitar'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#fff' },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
   content: {
     flexGrow: 1,
     paddingHorizontal: 20,
     paddingTop: 32,
     paddingBottom: 20,
   },
-  center: { alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: '600', marginBottom: 16, color: '#111' },
-  label: { marginTop: 12, marginBottom: 6, fontWeight: '600', color: '#111' },
+  center: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '600',
+    marginBottom: 16,
+    color: '#111',
+  },
+  label: {
+    marginTop: 12,
+    marginBottom: 6,
+    fontWeight: '600',
+    color: '#111',
+  },
   readonly: {
     padding: 12,
     borderWidth: 1,
@@ -515,7 +513,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#f3f4f6',
   },
-  readonlyText: { color: '#111' },
+  readonlyText: {
+    color: '#111',
+  },
   input: {
     padding: 12,
     borderWidth: 1,
@@ -524,43 +524,69 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
     color: '#111',
   },
-  inputError: { borderColor: '#ef4444' },
-  error: { marginTop: 4, color: '#ef4444' },
-  hint: { marginTop: 6, color: '#6b7280', fontSize: 12 },
-  muted: { color: '#6b7280' },
-
+  inputError: {
+    borderColor: '#ef4444',
+  },
+  error: {
+    marginTop: 4,
+    color: '#ef4444',
+  },
+  hint: {
+    marginTop: 6,
+    color: '#6b7280',
+    fontSize: 12,
+  },
+  muted: {
+    color: '#6b7280',
+  },
   saveButton: {
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveButtonEnabled: { backgroundColor: '#0E8A3A' },
-  saveButtonDisabled: { backgroundColor: '#d1d5db' },
-  saveButtonText: { color: '#fff', fontWeight: '700' },
-
+  saveButtonEnabled: {
+    backgroundColor: '#0E8A3A',
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#d1d5db',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   secondaryButton: {
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  secondaryButtonBlue: { backgroundColor: '#1D4ED8' },
-  secondaryButtonBlack: { backgroundColor: '#111827' },
-  secondaryButtonRed: { backgroundColor: '#c0392b' },
-  secondaryButtonText: { color: '#fff', fontWeight: '700' },
-
-  // Banners
+  secondaryButtonBlue: {
+    backgroundColor: '#1D4ED8',
+  },
+  secondaryButtonBlack: {
+    backgroundColor: '#111827',
+  },
+  secondaryButtonRed: {
+    backgroundColor: '#c0392b',
+  },
+  secondaryButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   banner: {
     borderWidth: 1,
     borderRadius: 12,
     padding: 12,
     marginBottom: 12,
   },
-  bannerTitle: { fontWeight: '700', marginBottom: 4 },
-  bannerText: { fontSize: 12 },
-
-  // Badge
+  bannerTitle: {
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  bannerText: {
+    fontSize: 12,
+  },
   badge: {
     alignSelf: 'flex-start',
     marginTop: 8,
@@ -568,11 +594,14 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 999,
   },
-  badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-
-  // Modal
+  badgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   modalBackdrop: {
-    flex: 1,
+    position: 'absolute',
+    inset: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
     padding: 24,
     justifyContent: 'center',
@@ -582,9 +611,26 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
   },
-  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8, color: '#111' },
-  modalText: { color: '#374151', marginBottom: 12 },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 16 },
-  modalCancel: { color: '#111' },
-  modalAccept: { color: '#0ea5e9', fontWeight: '700' },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+    color: '#111',
+  },
+  modalText: {
+    color: '#374151',
+    marginBottom: 12,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 16,
+  },
+  modalCancel: {
+    color: '#111',
+  },
+  modalAccept: {
+    color: '#0ea5e9',
+    fontWeight: '700',
+  },
 });

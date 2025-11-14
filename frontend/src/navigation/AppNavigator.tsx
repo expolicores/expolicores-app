@@ -50,8 +50,9 @@ import AdminPromotionsScreen from '../screens/AdminPromotionsScreen';
 /** ========== Catálogo ========== */
 import CatalogScreen from '../screens/CatalogScreen';
 
-/** ========== Legal ========== */
+/** ========== Legal / Privacidad ========== */
 import LegalScreen from '../screens/LegalScreen';
+import PrivacyAccountScreen from '../screens/PrivacyAccountScreen';
 
 /** ================= Buttons en header ================= */
 import HeaderAddress from '../components/HeaderAddress';
@@ -447,11 +448,16 @@ export default function AppNavigator() {
               options={{ title: 'Pedido creado' }}
             />
 
-            {/* Legal / términos y datos */}
+            {/* Legal / privacidad */}
             <RootStack.Screen
               name="Legal"
               component={LegalScreen}
               options={{ title: 'Términos y política de datos' }}
+            />
+            <RootStack.Screen
+              name="PrivacyAccount"
+              component={PrivacyAccountScreen}
+              options={{ title: 'Privacidad y cuenta' }}
             />
           </RootStack.Navigator>
         ) : (
