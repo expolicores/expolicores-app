@@ -1,5 +1,5 @@
 ﻿// frontend/src/screens/EmailOptionalScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -17,7 +17,6 @@ import type { RootStackParamList } from '../navigation/types';
 import { requestOtp, verifyOtp, api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { ENV } from '../config/env';
-import AuthFlowBackButton from '../components/AuthFlowBackButton';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
 
@@ -28,7 +27,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EmailOptional'>;
  */
 export default function EmailOptionalScreen({ route, navigation }: Props) {
   const { phone, email, mode } = route.params || {};
-  const { refreshMe, deferEmailPrompt, signOut } = useAuth();
+  const { refreshMe, deferEmailPrompt } = useAuth();
 
   // Gate por feature flag: si el feature está OFF y no es flujo loginByEmail, salir.
   useEffect(() => {
@@ -53,6 +52,20 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
   // 'continue' => guardar correo; 'skip' => aplazar correo
   const [nextAction, setNextAction] = useState<'continue' | 'skip'>('continue');
 
+  // bandera para reabrir el modal cuando volvamos de Legal
+  const reopenTermsRef = useRef(false);
+
+  // cuando esta pantalla reciba foco otra vez, si venimos de Legal, reabrimos el modal
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      if (reopenTermsRef.current) {
+        setShowTerms(true);
+        reopenTermsRef.current = false;
+      }
+    });
+    return unsubscribe;
+  }, [navigation]);
+
   const openTerms = (action: 'continue' | 'skip') => {
     setNextAction(action);
     setT1(false);
@@ -68,7 +81,6 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
 
     try {
       setLoading(true);
-
       if (nextAction === 'continue') {
         const normalizedEmail = emailInput.trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
@@ -76,15 +88,10 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
           return;
         }
 
-        // Endpoint dedicado para enrolar correo
+        // Guardar correo como identificador (no se envía enlace de verificación)
         await api.post('/auth/enroll-email', { email: normalizedEmail });
         await refreshMe();
         await deferEmailPrompt(false);
-
-        Alert.alert(
-          'Listo',
-          'Te enviamos un enlace para verificar tu correo.',
-        );
       } else {
         // Aplazar correo para evitar loop en el Gate
         await deferEmailPrompt(true);
@@ -108,7 +115,7 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
     }
   };
 
-  // En modo loginByEmail, usamos la vista separada ↓ (no aplica lo de términos iniciales)
+  // Modo login por correo: vista separada
   if (mode === 'loginByEmail') {
     return <LoginByEmailView navigation={navigation} />;
   }
@@ -118,83 +125,23 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
     textDecorationLine: 'underline' as const,
   };
 
+  const goToLegalFromModal = () => {
+    // cerramos el modal, marcamos que al volver hay que reabrirlo, y navegamos a Legal
+    reopenTermsRef.current = true;
+    setShowTerms(false);
+    navigation.navigate('Legal');
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }}>
       <StatusBar barStyle="dark-content" />
       <View style={{ flex: 1, padding: 24 }}>
-        {/* Botón Volver con lógica que NO permite llegar al feed sin TyC */}
-        <AuthFlowBackButton
-          onBack={() => {
-            const state = navigation.getState?.();
-            const routes = state?.routes ?? [];
-            const canPop =
-              navigation.canGoBack() && (routes.length ?? 0) > 1;
-
-            if (canPop) {
-              // Vemos a qué ruta iría el goBack
-              const prevRoute = routes[routes.length - 2];
-
-              // Si la ruta anterior es Dashboard/Home, NO queremos ir allá,
-              // porque eso deja al usuario en el feed sin aceptar términos.
-              if (
-                prevRoute?.name === 'Dashboard' ||
-                prevRoute?.name === 'Home'
-              ) {
-                Alert.alert(
-                  'Salir del registro',
-                  'Si vuelves ahora, se cerrará tu sesión y deberás iniciar de nuevo.',
-                  [
-                    { text: 'Cancelar', style: 'cancel' },
-                    {
-                      text: 'Salir',
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          // No marcamos deferEmailPrompt aquí: queremos que
-                          // se le vuelva a mostrar el flujo completo cuando
-                          // vuelva a registrarse.
-                          await signOut();
-                        } catch {
-                          // swallow
-                        }
-                      },
-                    },
-                  ],
-                );
-              } else {
-                // Es seguro volver a pasos anteriores del flujo (OTP, Name, etc.)
-                navigation.goBack();
-              }
-              return;
-            }
-
-            // Si no hay nada atrás en el stack, tratamos Volver como cancelar registro.
-            Alert.alert(
-              'Salir del registro',
-              'Si vuelves ahora, se cerrará tu sesión y deberás iniciar de nuevo.',
-              [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                  text: 'Salir',
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await signOut();
-                    } catch {
-                      // swallow
-                    }
-                  },
-                },
-              ],
-            );
-          }}
-        />
-
         <Text style={{ fontSize: 24, fontWeight: '800', marginBottom: 8 }}>
           Agrega tu correo (opcional)
         </Text>
         <Text style={{ color: '#6B7280', marginBottom: 16 }}>
-          Podrás usarlo para recuperar tu cuenta y recibir novedades relevantes.
+          Podrás usarlo como identificador de tu cuenta y para recibir
+          comunicaciones relevantes.
         </Text>
 
         <TextInput
@@ -259,7 +206,7 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
           )}
         </TouchableOpacity>
 
-        {/* Colocar luego (aplaza correo; igual pide TyC) */}
+        {/* Colocar luego (aplaza correo; igual pide aceptar TyC) */}
         <TouchableOpacity
           onPress={() => openTerms('skip')}
           style={{
@@ -323,20 +270,14 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
                 Al registrarte aceptas nuestros{' '}
                 <Text
                   style={linkStyle}
-                  onPress={() => {
-                    setShowTerms(false);
-                    navigation.navigate('Legal' as never);
-                  }}
+                  onPress={goToLegalFromModal}
                 >
                   términos y condiciones
                 </Text>{' '}
                 y la{' '}
                 <Text
                   style={linkStyle}
-                  onPress={() => {
-                    setShowTerms(false);
-                    navigation.navigate('Legal' as never);
-                  }}
+                  onPress={goToLegalFromModal}
                 >
                   política de tratamiento de datos personales
                 </Text>
@@ -366,10 +307,7 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
                   Acepto los{' '}
                   <Text
                     style={linkStyle}
-                    onPress={() => {
-                      setShowTerms(false);
-                      navigation.navigate('Legal' as never);
-                    }}
+                    onPress={goToLegalFromModal}
                   >
                     términos y condiciones
                   </Text>
@@ -397,10 +335,7 @@ export default function EmailOptionalScreen({ route, navigation }: Props) {
                   Autorizo el{' '}
                   <Text
                     style={linkStyle}
-                    onPress={() => {
-                      setShowTerms(false);
-                      navigation.navigate('Legal' as never);
-                    }}
+                    onPress={goToLegalFromModal}
                   >
                     tratamiento de datos personales
                   </Text>
@@ -470,7 +405,7 @@ function LoginByEmailView({
     if (cooldown <= 0) return;
     const t = setInterval(
       () => setCooldown((c) => Math.max(0, c - 1)),
-      1000,
+      1000
     );
     return () => clearInterval(t);
   }, [cooldown]);
@@ -599,6 +534,7 @@ function LoginByEmailView({
           value={mergedCode}
           onChangeText={(t) => {
             setCode(t.replace(/\D/g, '').slice(0, 6));
+            // si el usuario escribe, ignoramos el devOtp
             setDevOtp(undefined);
           }}
           maxLength={6}

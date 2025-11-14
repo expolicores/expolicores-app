@@ -8,12 +8,12 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
-  FlatList,
   Pressable,
   KeyboardAvoidingView,
   TouchableWithoutFeedback,
   Keyboard,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { useForm } from 'react-hook-form';
 import type { Address } from '../types/address';
@@ -56,12 +56,6 @@ const FEATURE_GEOCODING = process.env.EXPO_PUBLIC_FEATURE_GEOCODING === 'true';
 function newSessionToken() {
   return `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
-const numOrNull = (v: string | undefined) => {
-  if (!v) return null;
-  const n = Number.parseFloat(String(v).replace(',', '.'));
-  return Number.isFinite(n) ? n : null;
-};
-
 // Mapa Google -> NormalizedAddress
 function mapAddressComponents(components: any[]): Partial<NormalizedAddress> {
   const get = (type: string) => {
@@ -102,9 +96,6 @@ export default function AddressFormScreen({ navigation, route }: any) {
   });
 
   const GOOGLE_KEY = getGooglePlacesKey();
-
-  const [latText, setLatText] = useState(address?.lat != null ? String(address.lat) : '');
-  const [lngText, setLngText] = useState(address?.lng != null ? String(address.lng) : '');
 
   // --- Bias (sesgo) ---
   const [bias, setBias] = useState<{ lat: number; lng: number } | null>(null); // null = tienda
@@ -227,8 +218,6 @@ export default function AddressFormScreen({ navigation, route }: any) {
   // Reset al editar existente
   useEffect(() => {
     reset(initialValues, { keepDirty: false });
-    setLatText(initialValues.lat != null ? String(initialValues.lat) : '');
-    setLngText(initialValues.lng != null ? String(initialValues.lng) : '');
     // precargar query desde line1 cuando se edita
     const preset = address?.line1 ?? '';
     setQuery(preset);
@@ -275,9 +264,7 @@ export default function AddressFormScreen({ navigation, route }: any) {
       setValue('line1', displayAddress);
       setSuggestions([]);
 
-      // 2) Guardar coords en form + inputs visibles
-      setLatText(String(lat));
-      setLngText(String(lng));
+      // 2) Guardar coords en form
       setValue('lat', lat);
       setValue('lng', lng);
 
@@ -323,8 +310,8 @@ export default function AddressFormScreen({ navigation, route }: any) {
       return;
     }
 
-    const lat = numOrNull(latText);
-    const lng = numOrNull(lngText);
+    const lat = data.lat ?? null;
+    const lng = data.lng ?? null;
 
     if (FEATURE_GEOCODING) {
       if (lat == null || lng == null) {
@@ -369,8 +356,6 @@ export default function AddressFormScreen({ navigation, route }: any) {
     setQuery('');
     setSuggestions([]);
     setCoverage(null);
-    setLatText('');
-    setLngText('');
     setValue('line1', '');
     setValue('lat', null);
     setValue('lng', null);
@@ -386,7 +371,12 @@ export default function AddressFormScreen({ navigation, route }: any) {
       keyboardVerticalOffset={Platform.select({ ios: 64, android: 0 })}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View style={{ flex: 1, padding: 16 }}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <Text>Etiqueta</Text>
           <TextInput
             style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 }}
@@ -424,8 +414,6 @@ export default function AddressFormScreen({ navigation, route }: any) {
                       lastQueryRef.current = '';
                     }
                     // Si el usuario edita, limpiamos coords & cobertura
-                    setLatText('');
-                    setLngText('');
                     setValue('lat', null);
                     setValue('lng', null);
                     setCoverage(null);
@@ -475,34 +463,9 @@ export default function AddressFormScreen({ navigation, route }: any) {
 
               {(!hasSelectedSuggestion || suggestions.length > 0) && (
                 <View style={{ maxHeight: 280, marginBottom: 8, zIndex: 10 }}>
-                  <FlatList
-                    data={suggestions}
-                    keyExtractor={(item) => item.place_id}
+                  <ScrollView
                     keyboardShouldPersistTaps="always"
-                    renderItem={({ item }) => (
-                      <Pressable
-                        onPress={() => handlePickSuggestion(item)}
-                        style={{
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderBottomWidth: 1,
-                          borderBottomColor: '#eee',
-                          backgroundColor: 'white',
-                        }}
-                      >
-                        <Text style={{ fontWeight: '600' }}>
-                          {item.structured_formatting?.main_text ?? item.description}
-                        </Text>
-                        <Text style={{ color: '#666' }}>
-                          {item.structured_formatting?.secondary_text ?? ''}
-                        </Text>
-                      </Pressable>
-                    )}
-                    ListEmptyComponent={
-                      !hasSelectedSuggestion && debouncedQuery && !loadingAuto ? (
-                        <Text style={{ color: '#888', paddingVertical: 6 }}>Sin resultados</Text>
-                      ) : null
-                    }
+                    nestedScrollEnabled
                     style={{
                       borderWidth: suggestions.length ? 1 : 0,
                       borderColor: '#eee',
@@ -513,7 +476,32 @@ export default function AddressFormScreen({ navigation, route }: any) {
                       shadowRadius: 8,
                       elevation: suggestions.length ? 2 : 0,
                     }}
-                  />
+                  >
+                    {suggestions.length > 0 ? (
+                      suggestions.map((item) => (
+                        <Pressable
+                          key={item.place_id}
+                          onPress={() => handlePickSuggestion(item)}
+                          style={{
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                            borderBottomWidth: 1,
+                            borderBottomColor: '#eee',
+                            backgroundColor: 'white',
+                          }}
+                        >
+                          <Text style={{ fontWeight: '600' }}>
+                            {item.structured_formatting?.main_text ?? item.description}
+                          </Text>
+                          <Text style={{ color: '#666' }}>
+                            {item.structured_formatting?.secondary_text ?? ''}
+                          </Text>
+                        </Pressable>
+                      ))
+                    ) : !hasSelectedSuggestion && debouncedQuery && !loadingAuto ? (
+                      <Text style={{ color: '#888', paddingVertical: 6, paddingHorizontal: 12 }}>Sin resultados</Text>
+                    ) : null}
+                  </ScrollView>
                 </View>
               )}
 
@@ -588,41 +576,6 @@ export default function AddressFormScreen({ navigation, route }: any) {
             onSubmitEditing={Keyboard.dismiss}
           />
 
-          {/* Lat/Lng */}
-          <Text>Latitud {FEATURE_GEOCODING ? '(auto)' : '(DEV)'}</Text>
-          <TextInput
-            editable={!FEATURE_GEOCODING}
-            keyboardType="decimal-pad"
-            inputMode="decimal"
-            style={{
-              borderWidth: 1,
-              borderColor: '#ddd',
-              borderRadius: 8,
-              padding: 10,
-              backgroundColor: FEATURE_GEOCODING ? '#fafafa' : 'white',
-            }}
-            value={latText}
-            onChangeText={(t) => setLatText(t)}
-            placeholder="5.6369"
-          />
-
-          <Text>Longitud {FEATURE_GEOCODING ? '(auto)' : '(DEV)'}</Text>
-          <TextInput
-            editable={!FEATURE_GEOCODING}
-            keyboardType="decimal-pad"
-            inputMode="decimal"
-            style={{
-              borderWidth: 1,
-              borderColor: '#ddd',
-              borderRadius: 8,
-              padding: 10,
-              backgroundColor: FEATURE_GEOCODING ? '#fafafa' : 'white',
-            }}
-            value={lngText}
-            onChangeText={(t) => setLngText(t)}
-            placeholder="-73.5280"
-          />
-
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 8 }}>
             <Switch value={!!watch('isDefault')} onValueChange={(v) => setValue('isDefault', v)} />
             <Text>Predeterminada</Text>
@@ -633,7 +586,7 @@ export default function AddressFormScreen({ navigation, route }: any) {
             onPress={handleSubmit(onSubmit)}
             disabled={detailsLoading}
           />
-        </View>
+        </ScrollView>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );

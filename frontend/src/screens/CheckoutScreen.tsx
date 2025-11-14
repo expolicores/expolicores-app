@@ -21,13 +21,12 @@ import { validateGeo } from '../lib/api.geo';
 import { useAuth } from '../context/AuthContext';
 import { useSelectedAddress } from '../hooks/useSelectedAddress';
 import type { Address } from '../types/address';
-
 // ⬇️ NUEVO: helpers de notificaciones (local) y permiso
 import { presentLocalNotification } from '../lib/notifications';
 import { useNotifications } from '../context/NotificationsContext';
 
 export default function CheckoutScreen() {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation();
   const { user } = useAuth();
   const role = user?.role as 'ADMIN' | 'B2B' | 'B2C' | undefined;
   const isB2BPriceUser = role === 'ADMIN' || role === 'B2B';
@@ -60,15 +59,22 @@ export default function CheckoutScreen() {
   });
 
   // Dirección seleccionada compartida con AddressList
-  const { selectedAddress, setSelectedAddress } = useSelectedAddress(addresses ?? []);
+  const { selectedAddress, setSelectedAddress } = useSelectedAddress(
+    addresses ?? [],
+  );
   const [pickerOpen, setPickerOpen] = React.useState(false);
 
   // === Envío ===
   const [notes, setNotes] = React.useState('');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [shippingInfo, setShippingInfo] = React.useState<{ cost: number; distanceKm: number } | null>(null);
+  const [shippingInfo, setShippingInfo] =
+    React.useState<{ cost: number; distanceKm: number } | null>(null);
   const [shippingLoading, setShippingLoading] = React.useState(false);
-  const [shippingError, setShippingError] = React.useState<string | null>(null);
+  const [shippingError, setShippingError] =
+    React.useState<string | null>(null);
+
+  // NUEVO: modal de confirmación de mayoría de edad
+  const [ageModalVisible, setAgeModalVisible] = React.useState(false);
 
   // Recalcula envío cuando cambia la dirección seleccionada
   React.useEffect(() => {
@@ -79,8 +85,10 @@ export default function CheckoutScreen() {
       return;
     }
 
-    const lat = typeof selectedAddress.lat === 'number' ? selectedAddress.lat : null;
-    const lng = typeof selectedAddress.lng === 'number' ? selectedAddress.lng : null;
+    const lat =
+      typeof selectedAddress.lat === 'number' ? selectedAddress.lat : null;
+    const lng =
+      typeof selectedAddress.lng === 'number' ? selectedAddress.lng : null;
 
     if (lat == null || lng == null) {
       setShippingInfo(null);
@@ -102,7 +110,10 @@ export default function CheckoutScreen() {
           setShippingError('Fuera de cobertura');
           return;
         }
-        setShippingInfo({ cost: resp.shippingCost, distanceKm: resp.distanceKm });
+        setShippingInfo({
+          cost: resp.shippingCost,
+          distanceKm: resp.distanceKm,
+        });
         setShippingError(null);
       })
       .catch(() => {
@@ -120,18 +131,26 @@ export default function CheckoutScreen() {
     };
   }, [selectedAddress?.id, selectedAddress?.lat, selectedAddress?.lng]);
 
+  const currency = (v: number) =>
+    new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      maximumFractionDigits: 0,
+    }).format(v || 0);
+
   // === Mutación: crear orden ===
   const createOrderMutation = useMutation({
-    mutationFn: async (payload: CreateOrderDto) => (await api.post('/orders', payload)).data,
+    mutationFn: async (payload: CreateOrderDto) =>
+      (await api.post('/orders', payload)).data,
     onSuccess: async (order: OrderSuccess) => {
-      // 🔔 Local inmediata (best-effort). Intentamos permiso si aún no está otorgado.
+      // Local inmediata (best-effort). Intentamos permiso si aún no está otorgado.
       try {
         if (notifStatus !== 'granted') {
           await ensurePermission().catch(() => {});
         }
         await presentLocalNotification(
           'Pedido creado',
-          `Recibimos tu pedido #${order.id} por ${currency(order.total)}`
+          `Recibimos tu pedido #${order.id} por ${currency(order.total)}`,
         );
       } catch {
         // noop: no bloquea el flujo si falla la local
@@ -139,12 +158,12 @@ export default function CheckoutScreen() {
 
       // Limpia carrito y navega a éxito
       clear();
-      navigation.replace('OrderSuccess', {
+      navigation.replace('OrderSuccess' as never, {
         orderId: order.id,
         total: order.total,
         subtotal: order.subtotal,
         shipping: order.shipping,
-      });
+      } as never);
     },
     onError: (err: any) => {
       const payload = err?.response?.data ?? {};
@@ -166,14 +185,26 @@ export default function CheckoutScreen() {
       } else if (code === 'EMPTY_CART') {
         Alert.alert('Carrito', 'Tu carrito está vacío.');
       } else if (code === 'PRODUCT_NOT_FOUND') {
-        const missing = Array.isArray((payload as any)?.missing) ? (payload as any).missing : [];
+        const missing = Array.isArray((payload as any)?.missing)
+          ? (payload as any).missing
+          : [];
         if (missing.length) {
-          const missingNames = cartItems.filter((it) => missing.includes(it.productId)).map((it) => it.name);
+          const missingNames = cartItems
+            .filter((it) => missing.includes(it.productId))
+            .map((it) => it.name);
           missing.forEach((id: number) => remove(id));
-          const label = missingNames.length ? missingNames.join(', ') : 'Algunos productos';
-          Alert.alert('Producto no disponible', `${label} ya no está disponible y fue removido de tu carrito.`);
+          const label = missingNames.length
+            ? missingNames.join(', ')
+            : 'Algunos productos';
+          Alert.alert(
+            'Producto no disponible',
+            `${label} ya no está disponible y fue removido de tu carrito.`,
+          );
         } else {
-          Alert.alert('Producto no disponible', 'Un producto ya no está disponible.');
+          Alert.alert(
+            'Producto no disponible',
+            'Un producto ya no está disponible.',
+          );
         }
       } else if (typeof payload?.message === 'string') {
         Alert.alert('Error', payload.message);
@@ -194,21 +225,31 @@ export default function CheckoutScreen() {
     !!shippingError ||
     !shippingInfo;
 
-  const handleConfirm = () => {
+  // Lógica real de creación de la orden (se llama solo DESPUÉS de confirmar mayoría de edad)
+  const proceedCreateOrder = () => {
     if (confirmDisabled) return;
+
     if (!selectedAddress) {
       Alert.alert('Dirección', 'Elige o crea una dirección de entrega.');
       return;
     }
+
     if (!shippingInfo) {
-      Alert.alert('Envío', shippingError ?? 'Calculando envío. Intenta en unos segundos.');
+      Alert.alert(
+        'Envío',
+        shippingError ?? 'Calculando envío.\nIntenta en unos segundos.',
+      );
       return;
     }
+
     setIsSubmitting(true);
 
     const payload: CreateOrderDto = {
       addressId: selectedAddress.id, // ← usa la dirección elegida en el modal
-      items: cartItems.map((it) => ({ productId: it.productId, quantity: it.qty })),
+      items: cartItems.map((it) => ({
+        productId: it.productId,
+        quantity: it.qty,
+      })),
       notes: notes.trim() || undefined,
       paymentMethod: 'COD',
     };
@@ -216,158 +257,334 @@ export default function CheckoutScreen() {
     createOrderMutation.mutate(payload);
   };
 
+  // Handler del botón "Confirmar pedido"
+  const handleConfirm = () => {
+    if (confirmDisabled) return;
+    // Para este release, siempre mostramos el popup de mayoría de edad antes de crear la orden
+    setAgeModalVisible(true);
+  };
+
   if (loadingAddrs) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator />
-        <Text style={{ marginTop: 8 }}>Cargando dirección…</Text>
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        }}
+      >
+        <ActivityIndicator size="large" color="#10B981" />
+        <Text style={{ marginTop: 12, color: '#6B7280' }}>
+          Cargando dirección…
+        </Text>
       </View>
     );
   }
 
-  const currency = (v: number) =>
-    new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(v || 0);
-
   return (
     <>
-      <ScrollView style={{ flex: 1, padding: 16 }}>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: '#ffffff' }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+      >
         {/* Dirección */}
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, elevation: 2 }}>
-          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 6 }}>Dirección</Text>
+        <View
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 4 }}>
+            Dirección
+          </Text>
+
           {selectedAddress ? (
             <>
-              <Text style={{ fontSize: 14 }}>
-                {selectedAddress.label ?? 'Dirección'} — {selectedAddress.line1}
+              <Text style={{ color: '#111827', marginBottom: 4 }}>
+                {selectedAddress.label ?? 'Dirección'} —{' '}
+                {selectedAddress.line1}
                 {selectedAddress.city ? `, ${selectedAddress.city}` : ''}
               </Text>
-              <TouchableOpacity style={{ marginTop: 10 }} onPress={() => setPickerOpen(true)}>
-                <Text style={{ color: '#2563eb', fontWeight: '600' }}>Cambiar</Text>
+              <TouchableOpacity
+                onPress={() => setPickerOpen(true)}
+                style={{ paddingVertical: 4 }}
+              >
+                <Text
+                  style={{
+                    color: '#2563EB',
+                    textDecorationLine: 'underline',
+                  }}
+                >
+                  Cambiar
+                </Text>
               </TouchableOpacity>
             </>
           ) : (
             <>
-              <Text style={{ color: '#6b7280' }}>No tienes direcciones</Text>
-              <TouchableOpacity style={{ marginTop: 10 }} onPress={() => navigation.navigate('Addresses')}>
-                <Text style={{ color: '#2563eb', fontWeight: '600' }}>Agregar dirección</Text>
+              <Text style={{ color: '#6B7280', marginBottom: 4 }}>
+                No tienes direcciones seleccionadas.
+              </Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Addresses' as never)}
+                style={{ paddingVertical: 4 }}
+              >
+                <Text
+                  style={{
+                    color: '#2563EB',
+                    textDecorationLine: 'underline',
+                  }}
+                >
+                  Agregar dirección
+                </Text>
               </TouchableOpacity>
             </>
           )}
         </View>
 
         {/* Tu pedido */}
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, elevation: 2 }}>
-          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 10 }}>Tu pedido</Text>
+        <View
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8 }}>
+            Tu pedido
+          </Text>
           {cartItems.map((item) => {
             const unit = getUnitPriceForItem(item);
             const qty = Number(item.qty) || 0;
             const lineTotal = unit * qty;
             return (
               <View
-                key={String(item.productId)}
-                style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 }}
+                key={item.productId}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  marginBottom: 4,
+                }}
               >
-                <Text style={{ flex: 1 }} numberOfLines={1}>
+                <Text style={{ color: '#111827' }}>
                   {item.name} × {qty}
                 </Text>
-                <Text style={{ fontWeight: '600' }}>{currency(lineTotal)}</Text>
+                <Text style={{ color: '#111827', fontWeight: '600' }}>
+                  {currency(lineTotal)}
+                </Text>
               </View>
             );
           })}
         </View>
 
         {/* Notas */}
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 16, elevation: 2 }}>
-          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8 }}>Notas (opcional)</Text>
+        <View
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 4 }}>
+            Notas (opcional)
+          </Text>
           <TextInput
-            placeholder="Ej: Recepción en portería. Llamar al llegar."
+            multiline
+            placeholder="Ej: Dejar en portería, llamar al llegar..."
             value={notes}
             onChangeText={setNotes}
-            multiline
             style={{
-              minHeight: 80,
+              minHeight: 60,
+              textAlignVertical: 'top',
+              padding: 8,
+              borderRadius: 8,
               borderWidth: 1,
               borderColor: '#e5e7eb',
-              borderRadius: 10,
-              padding: 10,
-              textAlignVertical: 'top',
             }}
           />
         </View>
 
         {/* Resumen */}
-        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, marginBottom: 24, elevation: 2 }}>
+        <View
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
+            gap: 4,
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8 }}>
+            Resumen
+          </Text>
+
           <Row label="Subtotal" value={computedSubtotal} />
-          <Row
-            label="Envío"
-            value={
-              shippingInfo
-                ? shippingInfo.cost
-                : shippingLoading
-                ? 'Calculando...'
-                : shippingError ?? 'Selecciona una dirección con cobertura'
-            }
-            isString={!shippingInfo}
-          />
-          {shippingInfo ? <Row label="Total" value={computedSubtotal + shippingInfo.cost} /> : null}
-          <View style={{ height: 8 }} />
-          <Text style={{ color: '#6b7280', fontSize: 12 }}>
+
+          {shippingInfo ? (
+            <>
+              <Row label="Envío" value={shippingInfo.cost} />
+              <Row
+                label="Total"
+                value={computedSubtotal + shippingInfo.cost}
+              />
+            </>
+          ) : null}
+
+          <Text
+            style={{
+              marginTop: 8,
+              color: '#6B7280',
+              fontSize: 12,
+            }}
+          >
             {shippingInfo
-              ? `Envío estimado para ${shippingInfo.distanceKm.toFixed(1)} km.`
+              ? `Envío estimado para ${shippingInfo.distanceKm.toFixed(
+                  1,
+                )} km.`
               : shippingError
-              ? `${shippingError}. Actualiza tu dirección para continuar.`
+              ? `${shippingError}.\nActualiza tu dirección para continuar.`
               : 'El envío se calcula por distancia. Edita tu dirección para estimarlo.'}
           </Text>
         </View>
 
         {/* Confirmar */}
-        <TouchableOpacity
-          onPress={handleConfirm}
-          disabled={
-            loadingAddrs ||
-            !selectedAddress ||
-            cartItems.length === 0 ||
-            createOrderMutation.isLoading ||
-            isSubmitting ||
-            shippingLoading ||
-            !!shippingError ||
-            !shippingInfo
-          }
+        <View style={{ marginTop: 8 }}>
+          {createOrderMutation.isLoading || isSubmitting ? (
+            <View
+              style={{
+                backgroundColor: '#10B981',
+                padding: 16,
+                borderRadius: 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+              }}
+            >
+              <ActivityIndicator color="#ffffff" />
+              <Text
+                style={{
+                  color: '#ffffff',
+                  fontWeight: '700',
+                  fontSize: 16,
+                  marginLeft: 8,
+                }}
+              >
+                Creando pedido...
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              disabled={confirmDisabled}
+              onPress={handleConfirm}
+              style={{
+                backgroundColor: confirmDisabled ? '#9CA3AF' : '#10B981',
+                padding: 16,
+                borderRadius: 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text
+                style={{
+                  color: '#ffffff',
+                  fontWeight: '700',
+                  fontSize: 16,
+                }}
+              >
+                Confirmar pedido
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* ===== MODAL: Confirmación mayoría de edad ===== */}
+      <Modal
+        visible={ageModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setAgeModalVisible(false)}
+      >
+        <View
           style={{
-            backgroundColor:
-              loadingAddrs ||
-              !selectedAddress ||
-              cartItems.length === 0 ||
-              createOrderMutation.isLoading ||
-              isSubmitting ||
-              shippingLoading ||
-              !!shippingError ||
-              !shippingInfo
-                ? '#9ca3af'
-                : '#16a34a',
-            opacity:
-              loadingAddrs ||
-              !selectedAddress ||
-              cartItems.length === 0 ||
-              createOrderMutation.isLoading ||
-              isSubmitting ||
-              shippingLoading ||
-              !!shippingError ||
-              !shippingInfo
-                ? 0.6
-                : 1,
-            paddingVertical: 14,
-            borderRadius: 12,
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'center',
             alignItems: 'center',
-            marginBottom: 40,
+            padding: 24,
           }}
         >
-          {createOrderMutation.isLoading || isSubmitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Confirmar pedido</Text>
-          )}
-        </TouchableOpacity>
-      </ScrollView>
+          <View
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 16,
+              padding: 20,
+              width: '100%',
+              maxWidth: 400,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: '800',
+                marginBottom: 8,
+                color: '#111827',
+              }}
+            >
+              Confirmación de edad
+            </Text>
+            <Text style={{ color: '#374151', marginBottom: 16 }}>
+              Para continuar con tu pedido, confirma que eres mayor de 18 años.
+              El consumo de alcohol es exclusivo para adultos.
+            </Text>
+
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'flex-end',
+                marginTop: 8,
+              }}
+            >
+              <TouchableOpacity
+                onPress={() => setAgeModalVisible(false)}
+                style={{ paddingVertical: 8, paddingHorizontal: 12 }}
+              >
+                <Text style={{ color: '#374151' }}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setAgeModalVisible(false);
+                  proceedCreateOrder();
+                }}
+                style={{
+                  paddingVertical: 8,
+                  paddingHorizontal: 16,
+                  borderRadius: 999,
+                  backgroundColor: '#10B981',
+                  marginLeft: 8,
+                }}
+              >
+                <Text
+                  style={{
+                    color: '#ffffff',
+                    fontWeight: '700',
+                  }}
+                >
+                  Soy mayor de 18 años
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ===== MODAL: Selector de direcciones ===== */}
       <AddressPickerModal
@@ -381,23 +598,40 @@ export default function CheckoutScreen() {
         }}
         onManage={() => {
           setPickerOpen(false);
-          navigation.navigate('Addresses');
+          navigation.navigate('Addresses' as never);
         }}
       />
     </>
   );
 }
 
-function Row({ label, value, isString }: { label: string; value: number | string; isString?: boolean }) {
+function Row({
+  label,
+  value,
+  isString,
+}: {
+  label: string;
+  value: number | string;
+  isString?: boolean;
+}) {
   const display = isString
     ? String(value)
-    : new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(
-        value as number
-      );
+    : new Intl.NumberFormat('es-CO', {
+        style: 'currency',
+        currency: 'COP',
+        maximumFractionDigits: 0,
+      }).format(value as number);
+
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
-      <Text style={{ color: '#374151' }}>{label}</Text>
-      <Text style={{ fontWeight: '700' }}>{display}</Text>
+    <View
+      style={{
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 2,
+      }}
+    >
+      <Text style={{ color: '#4B5563' }}>{label}</Text>
+      <Text style={{ color: '#111827', fontWeight: '600' }}>{display}</Text>
     </View>
   );
 }
@@ -411,29 +645,42 @@ function AddressPickerModal(props: {
   onClose: () => void;
   onManage: () => void;
 }) {
-  const { visible, addresses, selectedId, onSelect, onClose, onManage } = props;
+  const { visible, addresses, selectedId, onSelect, onClose, onManage } =
+    props;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
       <View
         style={{
           flex: 1,
-          backgroundColor: 'rgba(0,0,0,0.35)',
-          justifyContent: 'flex-end',
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          padding: 24,
         }}
       >
         <View
           style={{
-            backgroundColor: '#fff',
-            borderTopLeftRadius: 16,
-            borderTopRightRadius: 16,
-            maxHeight: '70%',
-            paddingBottom: 16,
+            backgroundColor: '#ffffff',
+            borderRadius: 16,
+            padding: 16,
+            maxHeight: '80%',
           }}
         >
-          <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-            <Text style={{ fontSize: 16, fontWeight: '700' }}>Elegir dirección de entrega</Text>
-          </View>
+          <Text
+            style={{
+              fontSize: 18,
+              fontWeight: '700',
+              marginBottom: 12,
+              color: '#111827',
+            }}
+          >
+            Elegir dirección de entrega
+          </Text>
 
           <FlatList
             data={addresses}
@@ -451,67 +698,83 @@ function AddressPickerModal(props: {
                     backgroundColor: isSelected ? '#f0f9ff' : '#fff',
                   }}
                 >
-                  <View
-                    style={{
-                      height: 18,
-                      width: 18,
-                      borderRadius: 9,
-                      borderWidth: 2,
-                      borderColor: isSelected ? '#0ea5e9' : '#9ca3af',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginRight: 12,
-                    }}
-                  >
-                    {isSelected ? (
-                      <View style={{ height: 10, width: 10, borderRadius: 5, backgroundColor: '#0ea5e9' }} />
-                    ) : null}
-                  </View>
+                  {isSelected ? (
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        backgroundColor: '#0EA5E9',
+                        marginRight: 8,
+                      }}
+                    />
+                  ) : null}
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '600' }}>{item.label ?? 'Dirección'}</Text>
-                    <Text numberOfLines={2} style={{ color: '#6b7280' }}>
+                    <Text
+                      style={{
+                        fontWeight: '600',
+                        color: '#111827',
+                      }}
+                    >
+                      {item.label ?? 'Dirección'}
+                    </Text>
+                    <Text style={{ color: '#4B5563' }}>
                       {item.line1}
                       {item.city ? `, ${item.city}` : ''}
                     </Text>
+                    {item.isDefault ? (
+                      <Text
+                        style={{
+                          color: '#10B981',
+                          fontSize: 12,
+                          marginTop: 2,
+                        }}
+                      >
+                        Predeterminada
+                      </Text>
+                    ) : null}
                   </View>
-                  {item.isDefault ? (
-                    <Text style={{ marginLeft: 8, color: '#10b981', fontWeight: '600' }}>Pred.</Text>
-                  ) : null}
                 </Pressable>
               );
             }}
-            ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: '#eee' }} />}
+            ItemSeparatorComponent={() => (
+              <View
+                style={{
+                  height: 1,
+                  backgroundColor: '#e5e7eb',
+                  marginHorizontal: 16,
+                }}
+              />
+            )}
             ListEmptyComponent={
-              <View style={{ padding: 16 }}>
-                <Text style={{ color: '#6b7280' }}>No tienes direcciones guardadas.</Text>
+              <View style={{ paddingVertical: 16 }}>
+                <Text style={{ color: '#6B7280' }}>
+                  No tienes direcciones guardadas.
+                </Text>
               </View>
             }
             style={{ maxHeight: 360 }}
           />
 
-          <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
-            <TouchableOpacity
-              onPress={onManage}
-              style={{
-                backgroundColor: '#111827',
-                paddingVertical: 12,
-                borderRadius: 10,
-                alignItems: 'center',
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Administrar direcciones</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              marginTop: 16,
+            }}
+          >
+            <TouchableOpacity onPress={onManage}>
+              <Text
+                style={{
+                  color: '#2563EB',
+                  textDecorationLine: 'underline',
+                }}
+              >
+                Administrar direcciones
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onClose}
-              style={{
-                backgroundColor: '#e5e7eb',
-                paddingVertical: 12,
-                borderRadius: 10,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ fontWeight: '700' }}>Cerrar</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Text style={{ color: '#374151' }}>Cerrar</Text>
             </TouchableOpacity>
           </View>
         </View>

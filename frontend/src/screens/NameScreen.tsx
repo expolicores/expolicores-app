@@ -1,5 +1,5 @@
 // frontend/src/screens/NameScreen.tsx
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -32,8 +32,11 @@ function sanitizeName(raw: string) {
  * Pide y persiste el nombre del usuario tras verificar OTP.
  * Requiere que el JWT ya este configurado (setAuthToken se hace en verify-otp).
  */
-export default function NameScreen({ navigation }: Props) {
-  const { refreshMe, emailDeferred } = useAuth();
+export default function NameScreen({ route, navigation }: Props) {
+  const { refreshMe, emailDeferred, isAuthenticated, signOut } = useAuth();
+
+  // Params que pueden venir desde OtpCodeScreen / flujo de registro
+  const { phone, email } = route.params || {};
 
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -55,7 +58,13 @@ export default function NameScreen({ navigation }: Props) {
       if (!emailValue && !emailDeferred) {
         navigation.reset({
           index: 0,
-          routes: [{ name: 'EmailOptional' as never }],
+          routes: [
+            {
+              name: 'EmailOptional' as never,
+              // Pasamos phone/email por si la pantalla los quiere usar en algo
+              params: { phone, email } as never,
+            },
+          ],
         });
         return;
       }
@@ -69,13 +78,33 @@ export default function NameScreen({ navigation }: Props) {
         e?.message ||
         (typeof e?.details?.message === 'string' ? e.details.message : null) ||
         'No pudimos guardar tu nombre. Verifica tu conexion e intenta de nuevo.';
-      const extra = e?.status === 401 ? '\n\nVuelve a iniciar sesion para continuar.' : '';
+      const extra =
+        e?.status === 401 ? '\n\nVuelve a iniciar sesion para continuar.' : '';
       Alert.alert('Error', msg + extra);
     } finally {
       setLoading(false);
       isSubmittingRef.current = false;
     }
   };
+
+  // Botón atrás:
+  // - Si estás autenticado: hacemos signOut() → AppNavigator monta el stack
+  //   no autenticado y cae en AuthChooser (initialRouteName).
+  // - Si NO estás autenticado: podemos resetear directo a AuthChooser
+  //   porque estamos en el stack de auth.
+  const onBack = useCallback(() => {
+    if (isAuthenticated) {
+      // Esto lleva al usuario a AuthChooserScreen a través del AppNavigator
+      signOut().catch(() => undefined);
+      return;
+    }
+
+    // Rama "no autenticado": AuthChooser sí existe en este stack
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'AuthChooser' as never }],
+    });
+  }, [isAuthenticated, signOut, navigation]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
@@ -85,8 +114,8 @@ export default function NameScreen({ navigation }: Props) {
         behavior={Platform.select({ ios: 'padding', android: undefined })}
       >
         <View style={{ flex: 1, padding: 24 }}>
-          {/* Botón genérico de volver (usa goBack o AuthChooser como fallback) */}
-          <AuthFlowBackButton />
+          {/* Botón de volver: ahora realmente lleva a la pantalla de bienvenida */}
+          <AuthFlowBackButton onBack={onBack} />
 
           <Text style={{ fontSize: 32, fontWeight: '800', marginBottom: 8 }}>
             Como te llamas?
@@ -133,7 +162,12 @@ export default function NameScreen({ navigation }: Props) {
               <>
                 <ActivityIndicator color="#fff" />
                 <Text
-                  style={{ color: '#fff', fontWeight: '700', fontSize: 16, marginLeft: 8 }}
+                  style={{
+                    color: '#fff',
+                    fontWeight: '700',
+                    fontSize: 16,
+                    marginLeft: 8,
+                  }}
                 >
                   Guardando...
                 </Text>
