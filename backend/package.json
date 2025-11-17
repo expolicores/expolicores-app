@@ -30,6 +30,7 @@
     "db:reset": "prisma migrate reset --force --skip-seed",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
+    "import:products": "ts-node src/scripts/import-products-from-pos.ts",
     "seed": "ts-node --transpile-only src/prisma/seed.ts",
     "reset:pass": "tsx scripts/reset-password.ts",
     "clean:orders:user": "tsx scripts/cleanup-orders.ts --userId=",

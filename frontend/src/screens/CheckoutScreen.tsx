@@ -60,7 +60,7 @@ export default function CheckoutScreen() {
 
   // Dirección seleccionada compartida con AddressList
   const { selectedAddress, setSelectedAddress } = useSelectedAddress(
-    addresses ?? [],
+    addresses ?? null,
   );
   const [pickerOpen, setPickerOpen] = React.useState(false);
 

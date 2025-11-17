@@ -51,12 +51,13 @@ export default function ProductCard({
   const { isAuthenticated } = useAuth();
   const cart = useCart();
   const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
+
   const productImageUri = useMemo(
     () => resolveProductImageUri(product.imageUrl),
     [product.imageUrl],
   );
 
-  // ===== MODO AUTONOMO (si no vienen handlers/cantidad desde el padre) =====
+  // ===== MODO AUTONOMO =====
   const autonomous = typeof quantity !== 'number' && !onAdd && !onInc && !onDec;
 
   const qtyFromCart = useMemo(() => {
@@ -64,10 +65,8 @@ export default function ProductCard({
     return cart.items.find((it: any) => it.productId === product.id)?.qty ?? 0;
   }, [autonomous, cart.items, product.id]);
 
-  // Cantidad efectiva que se muestra
   const effectiveQty = autonomous ? qtyFromCart : quantity ?? 0;
 
-  // Stock efectivo: number -> limitado, null/undefined -> sin limite conocido
   const productStock =
     (typeof stock === 'number' ? stock : (product as any).stock) as
       | number
@@ -79,15 +78,13 @@ export default function ProductCard({
   const isOutOfStock = effectiveStock === 0;
   const canInc = effectiveStock == null ? true : effectiveQty < effectiveStock;
 
-  // ===== Handlers efectivos =====
+  // ===== Handlers =====
   const addOne = () => {
-    if (atMax) return; // no exceder stock
+    if (atMax) return;
     if (!autonomous) return onAdd?.();
 
-    // Si tu CartContext tiene add(product) usalo; si no, subimos qty con setQty
     const existing = qtyFromCart;
     if (typeof cart.add === 'function') {
-      // muchos proyectos definen add(product)
       cart.add({
         productId: product.id,
         name: product.name,
@@ -97,7 +94,8 @@ export default function ProductCard({
         category: (product as any).category ?? null,
       });
     } else if (typeof cart.setQty === 'function') {
-      const next = effectiveStock == null ? existing + 1 : Math.min(existing + 1, effectiveStock);
+      const next =
+        effectiveStock == null ? existing + 1 : Math.min(existing + 1, effectiveStock);
       cart.setQty(product.id, next);
     }
   };
@@ -116,7 +114,10 @@ export default function ProductCard({
         category: (product as any).category ?? null,
       });
     } else if (typeof cart.setQty === 'function') {
-      const next = effectiveStock == null ? effectiveQty + 1 : Math.min(effectiveQty + 1, effectiveStock);
+      const next =
+        effectiveStock == null
+          ? effectiveQty + 1
+          : Math.min(effectiveQty + 1, effectiveStock);
       cart.setQty(product.id, next);
     }
   };
@@ -126,7 +127,6 @@ export default function ProductCard({
     if (effectiveQty > 1) {
       cart.setQty(product.id, effectiveQty - 1);
     } else {
-      // qty === 1 -> eliminar
       if (typeof cart.remove === 'function') cart.remove(product.id);
       else cart.setQty(product.id, 0);
     }
@@ -138,7 +138,7 @@ export default function ProductCard({
     else cart.setQty(product.id, 0);
   };
 
-  // ===== Favoritos (login-gate) =====
+  // ===== Favoritos =====
   const isFavorite = (product.isFavorite ?? false) || favoriteIds.has(product.id);
   const handleFavorite = () => {
     if (!isAuthenticated) {
@@ -159,6 +159,7 @@ export default function ProductCard({
         <Image
           source={{ uri: productImageUri }}
           style={styles.image}
+          resizeMode="contain" // evita recortes
         />
         <Text style={styles.name} numberOfLines={2}>
           {product.name}
@@ -173,14 +174,15 @@ export default function ProductCard({
         )}
       </Pressable>
 
-      {/* Accion principal: Agregar / Contador / Agotado */}
       {effectiveQty > 0 ? (
         <>
           <View style={styles.counter}>
             <Pressable
               onPress={effectiveQty === 1 ? removeLine : decOne}
               style={[styles.roundBtn, effectiveQty === 1 && styles.deleteBtn]}
-              accessibilityLabel={effectiveQty === 1 ? 'Eliminar del carrito' : 'Disminuir'}
+              accessibilityLabel={
+                effectiveQty === 1 ? 'Eliminar del carrito' : 'Disminuir'
+              }
             >
               {effectiveQty === 1 ? (
                 <Ionicons name="trash-outline" size={18} color={COLORS.red} />
@@ -209,7 +211,11 @@ export default function ProductCard({
           <Text style={[styles.addText, { color: COLORS.grayText }]}>Agotado</Text>
         </View>
       ) : (
-        <Pressable onPress={addOne} style={styles.addBtn} accessibilityLabel={`Agregar ${product.name}`}>
+        <Pressable
+          onPress={addOne}
+          style={styles.addBtn}
+          accessibilityLabel={`Agregar ${product.name}`}
+        >
           <Ionicons name="add" size={18} color="#FFF" />
           <Text style={styles.addText}>Agregar</Text>
         </Pressable>
@@ -220,12 +226,15 @@ export default function ProductCard({
           onPress={handleFavorite}
           style={[styles.favBtn, isMutating && { opacity: 0.6 }]}
           hitSlop={8}
-          accessibilityLabel={isFavorite ? "Quitar de favoritos" : "Agregar a favoritos"}
+          accessibilityLabel={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
           disabled={isMutating}
         >
-          <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={20} color={isFavorite ? "#EF4444" : "#111"} />
+          <Ionicons
+            name={isFavorite ? 'heart' : 'heart-outline'}
+            size={20}
+            color={isFavorite ? '#EF4444' : '#111'}
+          />
         </Pressable>
-
       )}
     </View>
   );
@@ -242,9 +251,10 @@ const styles = StyleSheet.create({
   },
   image: {
     width: '100%',
-    height: 120,
+    height: 140,
     borderRadius: 12,
-    backgroundColor: COLORS.imgBg,
+    // antes: backgroundColor: COLORS.imgBg (gris)
+    backgroundColor: COLORS.bg, // 👈 ahora fondo blanco como la card
   },
   name: { marginTop: 8, color: COLORS.text, fontWeight: '600' },
   price: { color: COLORS.text, marginTop: 4, fontWeight: '800' },

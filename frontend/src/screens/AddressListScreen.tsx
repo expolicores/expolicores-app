@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSelectedAddress } from '../hooks/useSelectedAddress';
 
 export default function AddressListScreen({ navigation }: any) {
-  const [items, setItems] = useState<Address[]>([]);
+  const [items, setItems] = useState<Address[] | null>(null);
   const [loading, setLoading] = useState(false);
   const { selectedAddress, setSelectedAddress } = useSelectedAddress(items);
 
@@ -56,7 +56,7 @@ export default function AddressListScreen({ navigation }: any) {
           style={{ marginTop: 12 }}
           refreshing={loading}
           onRefresh={load}
-          data={items}
+          data={items ?? []}
           keyExtractor={(a) => String(a.id)}
           renderItem={({ item }) => {
             const isSelected = selectedAddress?.id === item.id;

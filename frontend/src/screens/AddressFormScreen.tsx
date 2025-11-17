@@ -16,6 +16,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useForm } from 'react-hook-form';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Address } from '../types/address';
 import { createAddress, updateAddress } from '../lib/api.addresses';
 import { STORE, DEFAULT_RADIUS_M } from '../config/geo';
@@ -25,6 +26,8 @@ import { validateGeo } from '../lib/api.geo';
 import { rankVillaLeyvaFirst } from '../lib/placesRank';
 import { getUserBiasOrNull } from '../services/locationBias';
 import type { NormalizedAddress } from '../types/geo';
+import { SELECTED_ADDRESS_QUERY_KEY } from '../hooks/useSelectedAddress';
+import { pickDefaultAddress } from '../lib/address';
 
 type Form = {
   label: string;
@@ -51,6 +54,17 @@ type Suggestion = {
 };
 
 const FEATURE_GEOCODING = process.env.EXPO_PUBLIC_FEATURE_GEOCODING === 'true';
+const ADDRESS_LIST_QUERY_KEY = ['addresses'] as const;
+const ADDRESS_COLLECTION_QUERY_KEY = ['addresses', 'list'] as const;
+
+function upsertAddress(list: Address[] | null | undefined, next: Address): Address[] {
+  if (!Array.isArray(list)) return [next];
+  const idx = list.findIndex((a) => a.id === next.id);
+  if (idx === -1) return [...list, next];
+  const copy = [...list];
+  copy[idx] = next;
+  return copy;
+}
 
 // ===== helpers =====
 function newSessionToken() {
@@ -76,6 +90,7 @@ function mapAddressComponents(components: any[]): Partial<NormalizedAddress> {
 
 export default function AddressFormScreen({ navigation, route }: any) {
   const address: Address | null = route?.params?.address ?? null;
+  const queryClient = useQueryClient();
 
   const initialValues = useMemo<Form>(() => ({
     label: address?.label ?? '',
@@ -339,11 +354,44 @@ export default function AddressFormScreen({ navigation, route }: any) {
     } as Address;
 
     try {
-      if (address?.id) {
-        await updateAddress(address.id, payload);
-      } else {
-        await createAddress(payload);
+      const saved = address?.id
+        ? await updateAddress(address.id, payload)
+        : await createAddress(payload);
+
+      const currentSelected =
+        queryClient.getQueryData<Address | null>(SELECTED_ADDRESS_QUERY_KEY) ?? null;
+      const shouldSelect = !address?.id || currentSelected?.id === saved.id;
+
+      queryClient.setQueryData<Address[] | undefined>(ADDRESS_LIST_QUERY_KEY, (prev) =>
+        upsertAddress(prev ?? null, saved),
+      );
+
+      queryClient.setQueryData<
+        { addresses: Address[]; defaultAddress: Address | null } | undefined
+      >(ADDRESS_COLLECTION_QUERY_KEY, (prev) => {
+        if (!prev) {
+          const addresses = [saved];
+          return {
+            addresses,
+            defaultAddress: pickDefaultAddress(addresses),
+          };
+        }
+        const nextAddresses = upsertAddress(prev.addresses, saved);
+        return {
+          addresses: nextAddresses,
+          defaultAddress: pickDefaultAddress(nextAddresses),
+        };
+      });
+
+      if (shouldSelect || currentSelected?.id === saved.id) {
+        queryClient.setQueryData(SELECTED_ADDRESS_QUERY_KEY, saved);
       }
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ADDRESS_LIST_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ADDRESS_COLLECTION_QUERY_KEY }),
+      ]);
+
       navigation.goBack();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.code ?? 'No se pudo guardar la dirección.');

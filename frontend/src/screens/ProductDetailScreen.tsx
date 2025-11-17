@@ -238,8 +238,9 @@ export default function ProductDetailScreen() {
         {/* Imagen */}
         <Image
           source={{ uri: display.imageUrl }}
-          style={{ width: "100%", aspectRatio: 16 / 9 }}
-          resizeMode="cover"
+          // altura fija + contain para no recortar botellas verticales
+          style={{ width: "100%", height: 260, backgroundColor: "#ffffff" }}
+          resizeMode="contain"
         />
 
         {/* Contenido */}

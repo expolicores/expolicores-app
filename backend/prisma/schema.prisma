@@ -83,7 +83,7 @@ model NotificationLog {
 }
 
 model Product {
-  id                Int                @id @default(autoincrement())
+  id                Int                @id @default(autoincrement()) // ID técnico interno
   name              String
   price             Int
   b2bPrice          Int                @default(0)
@@ -91,6 +91,10 @@ model Product {
   description       String
   imageUrl          String?
   category          String?            @db.VarChar(64)
+
+  // Nuevo campo para integrar con el POS / mundo físico
+  barcode           String?            @unique @db.VarChar(64)
+
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   favorites         Favorite[]
