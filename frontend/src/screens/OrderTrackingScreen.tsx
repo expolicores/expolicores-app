@@ -4,6 +4,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { api } from '../lib/api';
 import type { Order } from '../types/order';
 import { ORDER_STATUS } from '../types/order';
+import { formatCOP } from '../lib/formatCurrency';
 
 type RouteParams = { orderId: number };
 
@@ -99,6 +100,9 @@ export default function OrderTrackingScreen() {
     );
   }
 
+  const items = order.items ?? [];
+  const orderTotal = order.total ?? 0;
+
   // Render normal
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -108,8 +112,36 @@ export default function OrderTrackingScreen() {
         <Text style={styles.badgeText}>{statusText}</Text>
       </View>
 
-      {/* Aquí puedes colocar el detalle de items, dirección, tracking, etc. */}
-      {/* ... */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Detalle del pedido</Text>
+
+        {items.length === 0 && (
+          <Text style={styles.emptyText}>Este pedido aún no tiene productos asociados.</Text>
+        )}
+
+        {items.map((item, index) => {
+          const name = item.product?.name ?? `Producto ${item.productId}`;
+          const unitPrice = item.product?.price ?? 0;
+          const key = item.id ?? `${item.productId}-${index}`;
+          return (
+            <View key={key} style={styles.itemRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.itemName}>{name}</Text>
+                <Text style={styles.itemMeta}>
+                  {item.quantity} x {formatCOP(unitPrice)}
+                </Text>
+              </View>
+              <Text style={styles.itemAmount}>{formatCOP(unitPrice * item.quantity)}</Text>
+            </View>
+          );
+        })}
+
+        <View style={styles.sectionDivider} />
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>Total del pedido</Text>
+          <Text style={styles.totalAmount}>{formatCOP(orderTotal)}</Text>
+        </View>
+      </View>
     </ScrollView>
   );
 }
@@ -137,4 +169,33 @@ const styles = StyleSheet.create({
   badgeGreen: { backgroundColor: '#10b981' }, // ENTREGADO
   badgeGray: { backgroundColor: '#6b7280' },  // RECIBIDO (default)
   badgeRed: { backgroundColor: '#ef4444' },   // CANCELADO
+  section: {
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12, color: '#0f172a' },
+  emptyText: { color: '#6b7280', fontSize: 13 },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  itemName: { color: '#0f172a', fontWeight: '600', fontSize: 14 },
+  itemMeta: { color: '#6b7280', fontSize: 13, marginTop: 2 },
+  itemAmount: { color: '#0f172a', fontWeight: '700', fontSize: 14, marginLeft: 12 },
+  sectionDivider: { height: 1, backgroundColor: '#e5e7eb', marginVertical: 12 },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  totalLabel: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
+  totalAmount: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
 });

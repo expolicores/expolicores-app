@@ -9,7 +9,7 @@ import { api } from '../lib/api';
 
 // Live Activities (pausadas): mantenemos la fachada pero la gateamos por flag
 import { useLiveActivity } from '../hooks/useLiveActivity';
-import { logClient, laStart as _laStart, registerLAOnBackend } from '../lib/liveActivityProvider';
+import { logClient } from '../lib/liveActivityProvider';
 
 // Banner in-app (reemplazo de Live Activities)
 import { OrderStatusBanner } from '../components/OrderStatusBanner';
@@ -205,52 +205,6 @@ export default function OrderSuccessScreen() {
             Ver mis pedidos
           </Text>
         </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => ensurePermission()} style={{ marginTop: 12 }}>
-          <Text>Forzar registro notificaciones</Text>
-        </TouchableOpacity>
-
-        {__DEV__ && (
-          <>
-            {/* Prueba de notificación local */}
-            <TouchableOpacity
-              onPress={() =>
-                presentLocalNotification('Expolicores', 'Prueba local OK', { data: { test: '1' } })
-              }
-              style={{ marginTop: 12 }}
-            >
-              <Text style={{ color: '#0a7' }}>Probar notificación local (DEV)</Text>
-            </TouchableOpacity>
-
-            {/* 🔹 Botón DEV: forzar Live Activity start + registro */}
-            <TouchableOpacity
-              onPress={async () => {
-                if (!orderId) return;
-                const providerRaw = process.env.EXPO_PUBLIC_LA_PROVIDER ?? 'none';
-                const providerNorm = providerRaw.trim().toLowerCase();
-                await logClient('LA/BEGIN_MANUAL', { orderId, provider: providerNorm });
-                const res = await _laStart(orderId, {
-                  status: 'CREATED',
-                  etaMinutes: 30,
-                  orderNumber: String(orderId),
-                });
-                await registerLAOnBackend(orderId, res);
-              }}
-              style={{
-                marginTop: 12,
-                backgroundColor: '#2563eb',
-                paddingVertical: 10,
-                paddingHorizontal: 16,
-                borderRadius: 8,
-                width: '100%',
-              }}
-            >
-              <Text style={{ color: 'white', textAlign: 'center', fontWeight: '700' }}>
-                [DEV] LA Start + Register
-              </Text>
-            </TouchableOpacity>
-          </>
-        )}
 
         <TouchableOpacity
           onPress={openWhatsApp}

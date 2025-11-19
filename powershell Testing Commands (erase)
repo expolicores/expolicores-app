@@ -9,21 +9,30 @@ Invoke-RestMethod -Uri "$API/notifications/push/register" -Method POST `
   -Headers @{ Authorization="Bearer $JWT"; "Content-Type"="application/json" } -Body $body
 
 
+postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway
+
+pg_dump "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway" > expolicores-backup-$(15-11-25 +%F).sql
+
+
+postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway
+
+
+$env:DATABASE_URL = "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway"
+$env:POS_PRODUCTS_CSV_URL = "https://cdn.expressapp.net/products/pos-products.csv"
+
+
+
+railway ssh --project=6d1bb50d-9eb0-44d2-b44c-325841143f7d --environment=ec030ad5-2026-4e0b-bf00-3aa4012ec8ad --service=fda892b8-6f86-46ea-9906-cb6e3ac0aacc
+
+
+C:\Users\juank\desktop\expolicores-app> railway ssh --project=6d1bb50d-9eb0-44d2-b44c-325841143f7d --environment=ec030ad5-2026-4e0b-bf00-3aa4012ec8ad --service=fda892b8-6f86-46ea-9906-cb6e3ac0aacc
 
 
 
 
 
 
-
-
-
-
-
-
-
-
-
+psql postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway
 
 
 
