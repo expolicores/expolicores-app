@@ -13,6 +13,7 @@ export const ENV = {
     process.env.EXPO_PUBLIC_API_URL ??
     process.env.EXPO_PUBLIC_API_BASE_URL ??
     'https://expolicores-app-production.up.railway.app',
+    IMAGE_BASE_URL: 'https://cdn.expressapp.net',
 
   API_TIMEOUT_MS: Number(process.env.EXPO_PUBLIC_API_TIMEOUT_MS ?? 15000),
 
