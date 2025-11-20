@@ -1,3 +1,4 @@
+// frontend/src/components/BottomQuickActionsBar.tsx
 import React, { useMemo } from 'react';
 import { View, Pressable, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,32 +17,51 @@ const colors = {
   iconBg: '#F3F4F6',
   badgeBg: '#ef4444',
 };
+
 const B2B_ENABLED = (process.env.EXPO_PUBLIC_FEATURE_B2B || 'false') === 'true';
+
 const BUTTON_SIZE = 40;
 const INNER_VERTICAL = spacing.sm * 0.75;
 const TOP_PADDING = spacing.sm;
 const BUTTONS_PER_ROW = 5;
 const BASE_BUTTON_COUNT = 4;
 
-export const BASE_BOTTOM_QUICK_ACTION_HEIGHT = TOP_PADDING + BUTTON_SIZE + INNER_VERTICAL * 2;
+export const BASE_BOTTOM_QUICK_ACTION_HEIGHT =
+  TOP_PADDING + BUTTON_SIZE + INNER_VERTICAL * 2;
 
 type QuickActionsPaddingOptions = {
   isAdmin?: boolean;
   buttonCountOverride?: number;
 };
 
-const getEstimatedButtonCount = ({ isAdmin = false, buttonCountOverride }: QuickActionsPaddingOptions) => {
-  if (typeof buttonCountOverride === 'number') return Math.max(0, buttonCountOverride);
+const getEstimatedButtonCount = ({
+  isAdmin = false,
+  buttonCountOverride,
+}: QuickActionsPaddingOptions) => {
+  if (typeof buttonCountOverride === 'number') {
+    return Math.max(0, buttonCountOverride);
+  }
   if (!isAdmin) return BASE_BUTTON_COUNT;
-  const adminExtras = 4 + (B2B_ENABLED ? 1 : 0);
+
+  // base (home, fav, orders, profile) + admin extras
+  const adminExtras = 4 + (B2B_ENABLED ? 1 : 0); // promos, b2c, b2b, orders, apps?
   return BASE_BUTTON_COUNT + adminExtras;
 };
 
-export const getBottomQuickActionsPadding = (bottomInset: number, options: QuickActionsPaddingOptions = {}) => {
+export const getBottomQuickActionsPadding = (
+  bottomInset: number,
+  options: QuickActionsPaddingOptions = {},
+) => {
   const buttonCount = getEstimatedButtonCount(options);
-  const estimatedRows = Math.max(1, Math.ceil(buttonCount / BUTTONS_PER_ROW));
+  const estimatedRows = Math.max(
+    1,
+    Math.ceil(buttonCount / BUTTONS_PER_ROW),
+  );
   const innerHeight =
-    BUTTON_SIZE * estimatedRows + INNER_VERTICAL * 2 + spacing.sm * Math.max(0, estimatedRows - 1);
+    BUTTON_SIZE * estimatedRows +
+    INNER_VERTICAL * 2 +
+    spacing.sm * Math.max(0, estimatedRows - 1);
+
   return TOP_PADDING + innerHeight + Math.max(bottomInset, spacing.sm);
 };
 
@@ -51,7 +71,16 @@ const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
   const { favorites } = useFavorites();
   const { data: activeOrders = 0 } = useActiveOrdersCount();
   const { user } = useAuth();
+
   const isAdmin = user?.role === 'ADMIN';
+
+  // Casillero disponible solo si el feature B2B está activo
+  // y el usuario es negocio / B2B / admin.
+  const canUseLocker =
+    B2B_ENABLED &&
+    (user?.role === 'BUSINESS' ||
+      user?.role === 'B2B' ||
+      user?.role === 'ADMIN');
 
   const buttons = useMemo(() => {
     const base: Array<{
@@ -70,7 +99,9 @@ const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
       },
       {
         key: 'favorites',
-        icon: (favorites.length > 0 ? 'heart' : 'heart-outline') as React.ComponentProps<typeof Ionicons>['name'],
+        icon: (favorites.length > 0
+          ? 'heart'
+          : 'heart-outline') as React.ComponentProps<typeof Ionicons>['name'],
         color: favorites.length > 0 ? '#ef4444' : colors.text,
         onPress: () => navigation.navigate('Favorites'),
         accessibilityLabel: 'Mis favoritos',
@@ -80,7 +111,12 @@ const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
         icon: 'receipt-outline',
         onPress: () => navigation.navigate('MyOrders'),
         accessibilityLabel: 'Mis pedidos',
-        badge: activeOrders > 0 ? (activeOrders > 99 ? '99+' : String(activeOrders)) : null,
+        badge:
+          activeOrders > 0
+            ? activeOrders > 99
+              ? '99+'
+              : String(activeOrders)
+            : null,
       },
       {
         key: 'profile',
@@ -89,6 +125,17 @@ const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
         accessibilityLabel: 'Mi perfil',
       },
     ];
+
+    // Si el usuario puede usar casillero, insertamos el botón
+    // antes de "Mi perfil", para que quede en la zona que marcaste.
+    if (canUseLocker) {
+      base.splice(3, 0, {
+        key: 'locker',
+        icon: 'cube-outline',
+        onPress: () => navigation.navigate('Locker'),
+        accessibilityLabel: 'Mi casillero',
+      });
+    }
 
     if (!isAdmin) return base;
 
@@ -129,7 +176,13 @@ const BottomQuickActionsBar = React.memo(function BottomQuickActionsBar() {
     }
 
     return base;
-  }, [navigation, favorites.length, activeOrders, isAdmin]);
+  }, [
+    navigation,
+    favorites.length,
+    activeOrders,
+    isAdmin,
+    canUseLocker,
+  ]);
 
   return (
     <View
@@ -225,7 +278,15 @@ function CircleIconButton({
               borderColor: '#fff',
             }}
           >
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{badge}</Text>
+            <Text
+              style={{
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: '700',
+              }}
+            >
+              {badge}
+            </Text>
           </View>
         ) : null}
       </View>

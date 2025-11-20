@@ -19,6 +19,8 @@ import { useCart } from '../context/CartContext';
 import ProductCard from '../components/ProductCard';
 import type { Product } from '../types/product';
 import { useFavorites } from '../hooks/useFavorites';
+import { useAuth } from '../context/AuthContext';          // ⬅️ NUEVO
+import { useLocker } from '../hooks/useLocker';            // ⬅️ NUEVO
 
 type Category = string;
 type Paged = { items: Product[]; nextPage?: number | null };
@@ -41,7 +43,14 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const lastSearchTokenRef = useRef<unknown>(null);
   const { items: cartItems, add, setQty, remove } = useCart() as any;
   const { favoriteIds } = useFavorites();
+  const { user } = useAuth();                              // ⬅️ NUEVO
+  const { lockerIds, toggleLocker } = useLocker();         // ⬅️ NUEVO
   const isB2B = variant === 'B2B';
+
+  // solo en Bodega Virtual + usuario negocio/ADMIN permitimos casillero
+  const canUseLocker =
+    isB2B &&
+    (user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN');
 
   const [q, setQ] = useState(() => {
     const initial = route?.params?.initialQuery;
@@ -121,16 +130,20 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
     refetch();
   }, [route?.params?.initialQuery, route?.params?.searchToken, refetch]);
 
-  const favoriteKey = useMemo(() => Array.from(favoriteIds).join(","), [favoriteIds]);
+  const favoriteKey = useMemo(
+    () => Array.from(favoriteIds).join(','),
+    [favoriteIds],
+  );
 
   const products = useMemo(() => {
     const flat = data?.pages.flatMap((p) => p.items) ?? [];
     return flat.map((item) => ({
       ...item,
+      // en Bodega mostramos precio B2B; en Mercado, precio público
       price: isB2B ? item.b2bPrice : item.price,
       isFavorite: favoriteIds.has(item.id),
     }));
-  }, [data, isB2B, favoriteKey]);
+  }, [data, isB2B, favoriteKey, favoriteIds]);
 
   const isInitialLoad = !data && isFetching && !isFetchingNextPage;
   const isRefreshing = !!data && isFetching && !isFetchingNextPage;
@@ -156,7 +169,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
         typeof r.data?.stock === 'number' ? r.data.stock : null;
       stockCacheRef.current[item.id] = s;
 
-      // Si ya hay qty y excede el stock recin conocido  clampeamos
+      // Si ya hay qty y excede el stock recién conocido, clampeamos
       const q = qtyInCart(item.id);
       if (typeof s === 'number' && q > s) setQty(item.id, s);
 
@@ -187,13 +200,21 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
       {/* Chips: virtuales + reales */}
       <FlatList
         data={[
-          ...VIRTUAL_TAGS.map((t) => ({ type: 'tag', key: t.key, label: t.label } as const)),
-          ...(categories?.map((c) => ({ type: 'cat', key: c, label: c })) || []),
+          ...VIRTUAL_TAGS.map(
+            (t) => ({ type: 'tag', key: t.key, label: t.label } as const),
+          ),
+          ...(categories?.map((c) => ({
+            type: 'cat',
+            key: c,
+            label: c,
+          })) || []),
         ]}
         keyExtractor={(it) => `${it.type}:${it.key}`}
         renderItem={({ item }) => {
           const active =
-            item.type === 'tag' ? tag === item.key : category === (item.key as string);
+            item.type === 'tag'
+              ? tag === item.key
+              : category === (item.key as string);
           return (
             <Pressable
               onPress={() => {
@@ -211,7 +232,12 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
               }}
               style={[styles.chip, active && styles.chipActive]}
             >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+              <Text
+                style={[
+                  styles.chipText,
+                  active && styles.chipTextActive,
+                ]}
+              >
                 {item.label}
               </Text>
             </Pressable>
@@ -230,18 +256,29 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
         keyExtractor={(p) => String(p.id)}
         numColumns={2}
         columnWrapperStyle={{ gap: 12, paddingHorizontal: 12 }}
-        contentContainerStyle={{ paddingVertical: 12, paddingBottom: 24, gap: 12, flexGrow: 1 }}
+        contentContainerStyle={{
+          paddingVertical: 12,
+          paddingBottom: 24,
+          gap: 12,
+          flexGrow: 1,
+        }}
         refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={refetch}
-          />
+          <RefreshControl refreshing={isRefreshing} onRefresh={refetch} />
         }
         ListEmptyComponent={
           isInitialLoad ? (
-            <View style={{ flex: 1, padding: 24, alignItems: 'center', justifyContent: 'center' }}>
+            <View
+              style={{
+                flex: 1,
+                padding: 24,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
               <ActivityIndicator />
-              <Text style={{ marginTop: 12, color: '#6B7280' }}>Cargando catálogo…</Text>
+              <Text style={{ marginTop: 12, color: '#6B7280' }}>
+                Cargando catálogo…
+              </Text>
             </View>
           ) : (
             <View style={{ padding: 24, alignItems: 'center' }}>
@@ -279,7 +316,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
               });
             } else {
               // Stock no disponible -> no arriesgar sobreventa (conservador)
-              // (opcional: mostrar toast/alerta)
               return;
             }
           };
@@ -306,15 +342,25 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
             <ProductCard
               product={productForCard}
               quantity={qty}
-              stock={effectiveStock} // el card calcula disponibilidad restante
-              onAdd={() => { void handleAdd(); }}
-              onInc={() => { void handleInc(); }}
+              stock={effectiveStock}
+              onAdd={() => {
+                void handleAdd();
+              }}
+              onInc={() => {
+                void handleInc();
+              }}
               onDec={handleDec}
               onRemove={() => remove(item.id)}
               onOpenDetail={() =>
                 navigation.navigate('ProductDetail', { id: item.id })
               }
-              showFavorite
+              // En Mercado (B2C): favoritos; en Bodega (B2B): casillero
+              showFavorite={!canUseLocker}
+              showLocker={canUseLocker}
+              isInLocker={canUseLocker && lockerIds.has(item.id)}
+              onToggleLocker={
+                canUseLocker ? () => toggleLocker(item) : undefined
+              }
             />
           );
         }}
