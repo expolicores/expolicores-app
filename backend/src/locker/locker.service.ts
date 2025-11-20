@@ -42,25 +42,32 @@ export class LockerService {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
     });
+
     if (!product) {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    await this.prisma.lockerItem.upsert({
-      where: {
-        userId_productId: {
+    // Buscamos si ya existe el registro en el casillero
+    const existing = await this.prisma.lockerItem.findFirst({
+      where: { userId, productId },
+      select: { id: true },
+    });
+
+    if (existing) {
+      // Solo "tocamos" updatedAt para trazabilidad
+      await this.prisma.lockerItem.update({
+        where: { id: existing.id },
+        data: { updatedAt: new Date() },
+      });
+    } else {
+      // Creamos nuevo item en casillero
+      await this.prisma.lockerItem.create({
+        data: {
           userId,
           productId,
         },
-      },
-      create: {
-        userId,
-        productId,
-      },
-      update: {
-        updatedAt: new Date(),
-      },
-    });
+      });
+    }
 
     return { ok: true };
   }
@@ -68,16 +75,10 @@ export class LockerService {
   async removeFromLocker(userId: number, role: Role, productId: number) {
     this.assertB2BOrAdmin(role);
 
-    await this.prisma.lockerItem
-      .delete({
-        where: {
-          userId_productId: {
-            userId,
-            productId,
-          },
-        },
-      })
-      .catch(() => undefined); // idempotente
+    // deleteMany es idempotente y usa LockerItemWhereInput (no WhereUniqueInput)
+    await this.prisma.lockerItem.deleteMany({
+      where: { userId, productId },
+    });
 
     return { ok: true };
   }
