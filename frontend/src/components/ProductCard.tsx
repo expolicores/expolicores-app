@@ -309,11 +309,12 @@ const styles = StyleSheet.create({
   },
   imageWrapper: {
     width: '100%',
-    height: 140,
+    height: 138,
     borderRadius: 12,
     backgroundColor: COLORS.bg, // fondo blanco para la “bodeguita”
     overflow: 'hidden',
     position: 'relative',
+    marginTop: 6,
   },
   image: {
     width: '100%',
@@ -395,3 +396,4 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8F3EC',
   },
 });
+

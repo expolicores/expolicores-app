@@ -67,16 +67,17 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 8,
+    paddingBottom: 4,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#111827',
     marginBottom: 4,
   },
   headerMessage: {
-    fontSize: 13,
+    fontSize: 11,
+    lineHeight: 16,
     color: '#6b7280',
   },
   body: {

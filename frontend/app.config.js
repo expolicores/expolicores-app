@@ -1,7 +1,7 @@
 // frontend/app.config.ts
 // Este es para ambiente de produccion (TestFlight)
-//npx -p eas-cli@latest eas build -p ios --profile production --clear-cache
-//npx --yes eas-cli@latest submit -p ios --latest   <<< Aqui si se requiere Submit
+// npx -p eas-cli@latest eas build -p ios --profile production --clear-cache
+// npx --yes eas-cli@latest submit -p ios --latest   <<< Aqui si se requiere Submit
 import { config as loadEnv } from 'dotenv';
 
 /**
@@ -21,6 +21,10 @@ export default () => {
   const androidPackage = isProd ? 'com.expolicores.app' : 'com.expolicores.app.dev';
   const scheme = isProd ? 'expolicores' : 'expolicoresdev54';
   const displayName = isProd ? 'Expolicores' : 'Expolicores Dev (NA54)';
+
+  // Versionado de la app (usado también para sugerir/forzar updates)
+  // APP_VERSION debe mantenerse sincronizada con /config/app/version en el backend
+  const APP_VERSION = process.env.APP_VERSION ?? '1.0.0';
 
   // iOS buildNumber via ENV (no usar autoIncrement con app.config)
   const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER ?? (isProd ? '200' : '4');
@@ -68,8 +72,8 @@ export default () => {
       owner: 'expolicores',
       scheme,
 
-      // Versionado app
-      version: '1.0.0',
+      // Versionado app (leído en runtime por el front para chequear updates)
+      version: APP_VERSION,
 
       // Forzar SDK 54 y runtime asociado
       sdkVersion: '54.0.0',
@@ -128,6 +132,9 @@ export default () => {
         // Perfil de build visible en el cliente
         EAS_BUILD_PROFILE: PROFILE,
         eas: { projectId: '1d03fcea-24a8-42d2-b3d8-c1a50919ac11' },
+
+        // Exponer versión al JS (además de Constants.expoConfig.version)
+        EXPO_PUBLIC_APP_VERSION: APP_VERSION,
 
         // Feature flags negocio
         EXPO_PUBLIC_FEATURE_B2B: process.env.EXPO_PUBLIC_FEATURE_B2B ?? 'true',

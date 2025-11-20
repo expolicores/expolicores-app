@@ -10,6 +10,7 @@ import {
   Pressable,
   TextInput,
   RefreshControl,
+  Image,
 } from 'react-native';
 import { useNavigation, useIsFocused, useRoute } from '@react-navigation/native';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
@@ -19,8 +20,9 @@ import { useCart } from '../context/CartContext';
 import ProductCard from '../components/ProductCard';
 import type { Product } from '../types/product';
 import { useFavorites } from '../hooks/useFavorites';
-import { useAuth } from '../context/AuthContext';          // ⬅️ NUEVO
-import { useLocker } from '../hooks/useLocker';            // ⬅️ NUEVO
+import { useAuth } from '../context/AuthContext';
+import { useLocker } from '../hooks/useLocker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Category = string;
 type Paged = { items: Product[]; nextPage?: number | null };
@@ -35,6 +37,46 @@ const VIRTUAL_TAGS = [
   { key: 'pack', label: 'Packs' },
 ];
 
+type CategoryImagesMap = Record<string, string>;
+const CATEGORY_IMAGES_URL =
+  process.env.EXPO_PUBLIC_CATEGORY_IMAGES_URL ||
+  'https://cdn.expressapp.net/products/categories/map.json';
+
+const CATEGORY_IMAGES_CACHE_KEY = 'cat:images:v1';
+const DEFAULT_CATEGORY_IMAGE =
+  'https://cdn.expressapp.net/products/categories/default.webp';
+
+// (Opcional) Pequeño helper por si quieres tolerancia de acentos/espacios.
+// Si prefieres coincidencia 100% exacta, puedes quitar el fallback a slugify.
+const slugify = (s: string) =>
+  s
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9\-]/g, '');
+
+async function loadCategoryImagesFromCache(): Promise<CategoryImagesMap | null> {
+  try {
+    const raw = await AsyncStorage.getItem(CATEGORY_IMAGES_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as CategoryImagesMap) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCategoryImagesToCache(map: CategoryImagesMap) {
+  try {
+    await AsyncStorage.setItem(CATEGORY_IMAGES_CACHE_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+async function fetchCategoryImages(): Promise<CategoryImagesMap> {
+  const res = await fetch(CATEGORY_IMAGES_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`No se pudo cargar CATEGORY_IMAGES_URL (${res.status})`);
+  const data = (await res.json()) as CategoryImagesMap;
+  return data && typeof data === 'object' ? data : {};
+}
+
 export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -43,8 +85,8 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const lastSearchTokenRef = useRef<unknown>(null);
   const { items: cartItems, add, setQty, remove } = useCart() as any;
   const { favoriteIds } = useFavorites();
-  const { user } = useAuth();                              // ⬅️ NUEVO
-  const { lockerIds, toggleLocker } = useLocker();         // ⬅️ NUEVO
+  const { user } = useAuth();
+  const { lockerIds, toggleLocker } = useLocker();
   const isB2B = variant === 'B2B';
 
   // solo en Bodega Virtual + usuario negocio/ADMIN permitimos casillero
@@ -63,7 +105,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const stockCacheRef = useRef<Record<number, number | null>>({});
   const pendingRef = useRef<Record<number, boolean>>({}); // anti multi-tap
 
-  // ----- CATEGORAS -----
+  // ----- CATEGORÍAS -----
   const { data: categories } = useQuery<Category[]>({
     queryKey: ['categories'],
     queryFn: async () => {
@@ -71,6 +113,38 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
       return r.data as string[];
     },
   });
+
+  // ----- IMÁGENES DE CATEGORÍA (desde JSON en R2) -----
+  const { data: categoryImages } = useQuery<CategoryImagesMap>({
+    queryKey: ['categoryImages', CATEGORY_IMAGES_URL],
+    queryFn: async () => {
+      const cached = await loadCategoryImagesFromCache();
+      try {
+        const fresh = await fetchCategoryImages();
+        // si vino vacío pero hay cache, usa cache
+        if (!fresh || Object.keys(fresh).length === 0) {
+          return cached ?? {};
+        }
+        // guarda y retorna
+        await saveCategoryImagesToCache(fresh);
+        return fresh;
+      } catch (e) {
+        // en error, usa cache si existe
+        return cached ?? {};
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const getCategoryImage = (label?: string) => {
+    if (!label || !categoryImages) return DEFAULT_CATEGORY_IMAGE;
+    // Coincidencia exacta primero (lo que tú mantienes en el JSON)
+    if (categoryImages[label]) return categoryImages[label];
+    // Fallback opcional a slug
+    const s = slugify(label);
+    if (categoryImages[s]) return categoryImages[s];
+    return DEFAULT_CATEGORY_IMAGE;
+  };
 
   // ----- PRODUCTOS (paginado) -----
   const {
@@ -230,13 +304,18 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
                   setTag(undefined);
                 }
               }}
-              style={[styles.chip, active && styles.chipActive]}
+              style={[styles.catCard, active && styles.catCardActive]}
             >
+              <View style={[styles.catThumb, active && styles.catThumbActive]}>
+                <Image
+                  source={{ uri: getCategoryImage(item.label) }}
+                  style={styles.catImage}
+                  resizeMode="contain"
+                />
+              </View>
               <Text
-                style={[
-                  styles.chipText,
-                  active && styles.chipTextActive,
-                ]}
+                style={[styles.catLabel, active && styles.catLabelActive]}
+                numberOfLines={2}
               >
                 {item.label}
               </Text>
@@ -245,8 +324,8 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
         }}
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
-        style={{ maxHeight: 48, marginTop: 8 }}
+        contentContainerStyle={{ paddingHorizontal: 1, gap: 1, paddingVertical: 8 }}
+        style={{ height: 150, marginTop: 2, marginBottom: -2 }}
       />
 
       {/* Grid de productos */}
@@ -257,8 +336,8 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
         numColumns={2}
         columnWrapperStyle={{ gap: 12, paddingHorizontal: 12 }}
         contentContainerStyle={{
-          paddingVertical: 12,
-          paddingBottom: 24,
+          paddingTop: 20,
+          paddingBottom: 26,
           gap: 12,
           flexGrow: 1,
         }}
@@ -311,7 +390,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
                 name: item.name,
                 price: unitPrice,
                 imageUrl: item.imageUrl ?? null,
-                stock: s, // guardamos el stock real en la lnea
+                stock: s, // guardamos el stock real en la línea
                 category: item.category ?? null,
               });
             } else {
@@ -343,12 +422,8 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
               product={productForCard}
               quantity={qty}
               stock={effectiveStock}
-              onAdd={() => {
-                void handleAdd();
-              }}
-              onInc={() => {
-                void handleInc();
-              }}
+              onAdd={() => { void handleAdd(); }}
+              onInc={() => { void handleInc(); }}
               onDec={handleDec}
               onRemove={() => remove(item.id)}
               onOpenDetail={() =>
@@ -358,9 +433,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
               showFavorite={!canUseLocker}
               showLocker={canUseLocker}
               isInLocker={canUseLocker && lockerIds.has(item.id)}
-              onToggleLocker={
-                canUseLocker ? () => toggleLocker(item) : undefined
-              }
+              onToggleLocker={canUseLocker ? () => toggleLocker(item) : undefined}
             />
           );
         }}
@@ -379,24 +452,52 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F3F4F6',
     marginHorizontal: 12,
-    marginTop: 10,
+    marginTop: 2,
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 40,
     gap: 8,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#111' },
-  chip: {
+  catCard: {
+    width: 96, //Aquí ayuda a reducir los espacio entre categorias. tambien se pueden en el gap de contentContainerStyle y el padding vertical
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 8,
+    minHeight: 92,
+  },
+  catCardActive: {},
+  catThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    height: 36,
-    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  chipActive: { backgroundColor: '#0E8A3A1A', borderColor: '#0E8A3A' },
-  chipText: { color: '#111', fontSize: 13, fontWeight: '600' },
-  chipTextActive: { color: '#0E8A3A' },
+  catThumbActive: {
+    borderColor: '#0E8A3A',
+    backgroundColor: '#E8F7EE',
+  },
+  catImage: {
+    width: 34,
+    height: 34,
+  },
+  catLabel: {
+    color: '#111',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    maxWidth: 94,
+  },
+  catLabelActive: { color: '#0E8A3A' },
 });

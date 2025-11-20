@@ -7,6 +7,10 @@ import {
   LogBox,
   NativeModules,
   type AppStateStatus,
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
 } from 'react-native';
 import Constants from 'expo-constants';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -36,6 +40,7 @@ import { AuthProvider } from './src/context/AuthContext';
 import { CartProvider } from './src/context/CartContext';
 import { NotificationsProvider } from './src/context/NotificationsContext';
 import AppNavigator from './src/navigation/AppNavigator';
+import { useAppUpdateCheck } from './src/hooks/useAppUpdateCheck';
 
 // Mantiene react-query en sync con el foco de la app
 function onAppStateChange(status: AppStateStatus) {
@@ -90,6 +95,9 @@ export default function App() {
     '`new NativeEventEmitter()` was called with a non-null argument without the required `addListener` method.',
     '`new NativeEventEmitter()` was called with a non-null argument without the required `removeListeners` method.',
   ]);
+
+  // Chequeo de versión de app (sugerir/forzar update)
+  const { mustUpdate, shouldSuggestUpdate, config, openStore } = useAppUpdateCheck();
 
   // 🔔 Crear canal Android "orders" al boot (heads-up)
   useEffect(() => {
@@ -225,13 +233,122 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <StatusBar barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'} />
+        <StatusBar
+          barStyle={Platform.OS === 'ios' ? 'dark-content' : 'light-content'}
+        />
         <QueryClientProvider client={queryClient}>
           {/* Mantener orden: Auth → Notifications → Cart */}
           <AuthProvider>
             <NotificationsProvider>
               <CartProvider>
+                {/* Banner de actualización sugerida (no bloquea la app) */}
+                {shouldSuggestUpdate && (
+                  <View
+                    style={{
+                      backgroundColor: '#FEF3C7',
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderBottomWidth: 1,
+                      borderBottomColor: '#FBBF24',
+                    }}
+                  >
+                    <Text style={{ color: '#92400E', fontWeight: '600' }}>
+                      {config?.messages?.title ?? 'Nueva versión disponible'}
+                    </Text>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginTop: 4,
+                      }}
+                    >
+                      <Text
+                        style={{ color: '#92400E', flex: 1, marginRight: 12 }}
+                        numberOfLines={2}
+                      >
+                        {config?.messages?.body ??
+                          'Actualiza para disfrutar de mejoras en estabilidad y nuevas funciones.'}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={openStore}
+                        style={{
+                          backgroundColor: '#F59E0B',
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 999,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: '#fff',
+                            fontWeight: '700',
+                          }}
+                        >
+                          Actualizar
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
                 <AppNavigator />
+
+                {/* Modal bloqueante para actualización obligatoria */}
+                <Modal visible={mustUpdate} transparent animationType="fade">
+                  <View
+                    style={{
+                      flex: 1,
+                      backgroundColor: 'rgba(0,0,0,0.6)',
+                      justifyContent: 'center',
+                      padding: 24,
+                    }}
+                  >
+                    <View
+                      style={{
+                        backgroundColor: '#fff',
+                        borderRadius: 16,
+                        padding: 20,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 18,
+                          fontWeight: '800',
+                          marginBottom: 8,
+                          color: '#111827',
+                        }}
+                      >
+                        {config?.messages?.forceTitle ?? 'Actualización requerida'}
+                      </Text>
+                      <Text style={{ color: '#4B5563', marginBottom: 16 }}>
+                        {config?.messages?.forceBody ??
+                          'Esta versión de la app ya no es compatible. Actualiza para continuar usando Expolicores.'}
+                      </Text>
+
+                      <TouchableOpacity
+                        onPress={openStore}
+                        style={{
+                          backgroundColor: '#10B981',
+                          paddingVertical: 12,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: '#fff',
+                            fontWeight: '700',
+                            fontSize: 16,
+                          }}
+                        >
+                          Ir a actualizar
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </Modal>
               </CartProvider>
             </NotificationsProvider>
           </AuthProvider>
