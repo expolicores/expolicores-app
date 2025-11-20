@@ -7,7 +7,7 @@ export class AppConfigController {
   getVersionConfig() {
     return {
       minSupportedVersion: '1.0.0', // por debajo de esto, bloqueas
-      latestVersion: '1.2.3',       // última en tiendas
+      latestVersion: '1.1.0',       // última en tiendas
       forceUpdate: false,           // si quieres obligar incluso si >= minSupported
       storeUrls: {
         android: 'https://play.google.com/store/apps/details?id=com.expolicores.app',
