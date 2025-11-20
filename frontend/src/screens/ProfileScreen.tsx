@@ -22,6 +22,7 @@ import type { Me } from '../types/auth';
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 import { FEATURES } from '../lib/flags';
 import { businessApply } from '../lib/api';
+import { openStoreListing } from '../lib/rateUs';
 
 // --------- Validacion ---------
 const phoneSchema = z
@@ -407,6 +408,18 @@ export default function ProfileScreen() {
           onPress={() => navigation.navigate('PrivacyAccount' as never)}
         >
           <Text style={styles.secondaryButtonText}>Privacidad y cuenta</Text>
+        </Pressable>
+
+        {/* Califícanos en la tienda */}
+        <Pressable
+          style={[
+            styles.secondaryButton,
+            styles.secondaryButtonBlue,
+            { marginTop: 16 },
+          ]}
+          onPress={openStoreListing}
+        >
+          <Text style={styles.secondaryButtonText}>Califícanos en la tienda</Text>
         </Pressable>
 
         {/* Cerrar sesión */}

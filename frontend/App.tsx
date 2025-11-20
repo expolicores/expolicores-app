@@ -41,6 +41,7 @@ import { CartProvider } from './src/context/CartContext';
 import { NotificationsProvider } from './src/context/NotificationsContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { useAppUpdateCheck } from './src/hooks/useAppUpdateCheck';
+import { useRateUsPrompt } from './src/lib/rateUs';
 
 // Mantiene react-query en sync con el foco de la app
 function onAppStateChange(status: AppStateStatus) {
@@ -98,6 +99,9 @@ export default function App() {
 
   // Chequeo de versión de app (sugerir/forzar update)
   const { mustUpdate, shouldSuggestUpdate, config, openStore } = useAppUpdateCheck();
+
+  // Popup "Califícanos"
+  const { showRateUs, onRateNow, onNoThanks } = useRateUsPrompt({ minLaunches: 3 });
 
   // 🔔 Crear canal Android "orders" al boot (heads-up)
   useEffect(() => {
@@ -346,6 +350,80 @@ export default function App() {
                           Ir a actualizar
                         </Text>
                       </TouchableOpacity>
+                    </View>
+                  </View>
+                </Modal>
+
+                {/* Modal "Califícanos" — solo si no hay actualización obligatoria */}
+                <Modal
+                  visible={showRateUs && !mustUpdate}
+                  transparent
+                  animationType="fade"
+                >
+                  <View
+                    style={{
+                      flex: 1,
+                      backgroundColor: 'rgba(0,0,0,0.5)',
+                      justifyContent: 'center',
+                      padding: 24,
+                    }}
+                  >
+                    <View
+                      style={{
+                        backgroundColor: '#ffffff',
+                        borderRadius: 16,
+                        padding: 20,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 18,
+                          fontWeight: '800',
+                          marginBottom: 8,
+                          color: '#111827',
+                        }}
+                      >
+                        ¿Te gusta Expolicores?
+                      </Text>
+                      <Text style={{ color: '#4B5563', marginBottom: 16 }}>
+                        Tu opinión nos ayuda a mejorar y a que más personas nos encuentren
+                        en la tienda.
+                      </Text>
+
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          justifyContent: 'flex-end',
+                          marginTop: 8,
+                        }}
+                      >
+                        <TouchableOpacity
+                          onPress={onNoThanks}
+                          style={{ paddingVertical: 8, paddingHorizontal: 12 }}
+                        >
+                          <Text style={{ color: '#6B7280' }}>Ahora no</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={onRateNow}
+                          style={{
+                            paddingVertical: 8,
+                            paddingHorizontal: 16,
+                            borderRadius: 999,
+                            backgroundColor: '#10B981',
+                            marginLeft: 8,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              color: '#ffffff',
+                              fontWeight: '700',
+                            }}
+                          >
+                            Calificar ahora
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 </Modal>
