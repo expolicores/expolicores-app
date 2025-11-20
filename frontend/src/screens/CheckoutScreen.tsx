@@ -16,7 +16,11 @@ import { useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useCart } from '../context/CartContext';
-import type { CreateOrderDto, OrderSuccess } from '../types/order';
+import type {
+  CreateOrderDto,
+  OrderSuccess,
+  PaymentMethod,
+} from '../types/order';
 import { validateGeo } from '../lib/api.geo';
 import { useAuth } from '../context/AuthContext';
 import { useSelectedAddress } from '../hooks/useSelectedAddress';
@@ -25,11 +29,20 @@ import type { Address } from '../types/address';
 import { presentLocalNotification } from '../lib/notifications';
 import { useNotifications } from '../context/NotificationsContext';
 
+// Etiquetas amigables para UI según método de pago
+const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  CASH: 'Efectivo',
+  TRANSFER: 'Transferencia',
+  CARD: 'Tarjeta',
+  CREDIT: 'Crédito',
+};
+
 export default function CheckoutScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
   const role = user?.role as 'ADMIN' | 'B2B' | 'B2C' | undefined;
   const isB2BPriceUser = role === 'ADMIN' || role === 'B2B';
+  const isBusinessUser = role === 'ADMIN' || role === 'B2B';
 
   const { items: cartItems, clear, remove } = useCart();
 
@@ -72,6 +85,17 @@ export default function CheckoutScreen() {
   const [shippingLoading, setShippingLoading] = React.useState(false);
   const [shippingError, setShippingError] =
     React.useState<string | null>(null);
+
+  // Forma de pago (default: efectivo)
+  const [paymentMethod, setPaymentMethod] =
+    React.useState<PaymentMethod>('CASH');
+
+  // Ajuste defensivo: si deja de ser negocio y tenía Crédito, volvemos a Efectivo
+  React.useEffect(() => {
+    if (!isBusinessUser && paymentMethod === 'CREDIT') {
+      setPaymentMethod('CASH');
+    }
+  }, [isBusinessUser, paymentMethod]);
 
   // NUEVO: modal de confirmación de mayoría de edad
   const [ageModalVisible, setAgeModalVisible] = React.useState(false);
@@ -206,6 +230,11 @@ export default function CheckoutScreen() {
             'Un producto ya no está disponible.',
           );
         }
+      } else if (code === 'PAYMENT_METHOD_CREDIT_NOT_ALLOWED') {
+        Alert.alert(
+          'Forma de pago',
+          'El método de pago Crédito solo está disponible para negocios.',
+        );
       } else if (typeof payload?.message === 'string') {
         Alert.alert('Error', payload.message);
       } else {
@@ -251,7 +280,8 @@ export default function CheckoutScreen() {
         quantity: it.qty,
       })),
       notes: notes.trim() || undefined,
-      paymentMethod: 'COD',
+      // Enviamos el método de pago real seleccionado
+      paymentMethod,
     };
 
     createOrderMutation.mutate(payload);
@@ -345,6 +375,63 @@ export default function CheckoutScreen() {
           )}
         </View>
 
+        {/* Forma de pago */}
+        <View
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#e5e7eb',
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8 }}>
+            Forma de pago
+          </Text>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {[
+              { key: 'CASH', label: 'Efectivo' },
+              { key: 'TRANSFER', label: 'Transferencia' },
+              { key: 'CARD', label: 'Tarjeta' },
+              // Crédito solo para B2B / ADMIN
+              ...(isBusinessUser
+                ? [{ key: 'CREDIT', label: 'Crédito' }]
+                : []),
+            ].map((opt) => {
+              const isSelected = paymentMethod === (opt.key as PaymentMethod);
+              return (
+                <Pressable
+                  key={opt.key}
+                  onPress={() =>
+                    setPaymentMethod(opt.key as PaymentMethod)
+                  }
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: isSelected ? '#10B981' : '#e5e7eb',
+                    backgroundColor: isSelected ? '#ECFDF5' : '#ffffff',
+                    marginRight: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '500',
+                      color: isSelected ? '#065F46' : '#111827',
+                    }}
+                  >
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
         {/* Tu pedido */}
         <View
           style={{
@@ -434,6 +521,11 @@ export default function CheckoutScreen() {
               <Row
                 label="Total"
                 value={computedSubtotal + shippingInfo.cost}
+              />
+              <Row
+                label="Forma de pago"
+                value={PAYMENT_LABELS[paymentMethod]}
+                isString
               />
             </>
           ) : null}

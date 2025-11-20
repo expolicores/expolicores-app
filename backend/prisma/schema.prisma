@@ -51,6 +51,16 @@ model EmailVerificationToken {
   @@index([expiresAt])
 }
 
+enum PaymentMethod {
+  CASH      // Efectivo
+  TRANSFER  // Transferencia
+  CARD      // Tarjeta
+  CREDIT    // Crédito (solo negocios)
+}
+
+
+
+
 model Order {
   id            Int                @id @default(autoincrement())
   userId        Int
@@ -61,6 +71,7 @@ model Order {
   notifications NotificationLog[]
   user          User               @relation(fields: [userId], references: [id])
   items         OrderItem[]
+  paymentMethod PaymentMethod @default(CASH)
   liveActivity  OrderLiveActivity? @relation("Order_LiveActivity")
 }
 

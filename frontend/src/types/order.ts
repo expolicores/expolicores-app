@@ -45,7 +45,14 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   CANCELADO: 'Cancelado',
 };
 
-export type PaymentMethod = 'COD';
+/**
+ * Métodos de pago soportados por el backend:
+ * - CASH      → Efectivo
+ * - TRANSFER  → Transferencia
+ * - CARD      → Tarjeta
+ * - CREDIT    → Crédito (solo negocios / B2B / ADMIN)
+ */
+export type PaymentMethod = 'CASH' | 'TRANSFER' | 'CARD' | 'CREDIT';
 
 export interface CreateOrderItem {
   productId: number;
