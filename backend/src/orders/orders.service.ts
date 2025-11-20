@@ -147,7 +147,7 @@ export class OrdersService {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          paymentMethod, // 👈 NUEVO: guardamos forma de pago
+          paymentMethod, // guardamos forma de pago
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,
@@ -171,7 +171,16 @@ export class OrdersService {
       return order;
     });
 
-    // ===== PUSH: Pedido creado (no bloquea) =====
+    // 🔔 Notificar a todos los ADMIN que llegó un nuevo pedido (no bloquea el flujo)
+    this.notifyAdminsNewOrder(created).catch((e) => {
+      this.logger.warn(
+        `notifyAdminsNewOrder failed for order ${
+          created.id
+        }: ${(e as Error).message}`,
+      );
+    });
+
+    // ===== PUSH: Pedido creado al cliente (no bloquea) =====
     try {
       await this.push.sendToUser(String(userId), {
         title: 'Pedido creado',
@@ -222,7 +231,7 @@ export class OrdersService {
       subtotal,
       shipping,
       total: created.total,
-      // 👇 Ahora enviamos el método real, por defecto CASH
+      // enviamos el método real, por defecto CASH
       paymentMethod,
       items: waItems,
       addressLabel,
@@ -406,7 +415,11 @@ export class OrdersService {
     }
 
     // ===== WhatsApp por estado (como estaba) =====
-    if (status === 'EN_CAMINO' || status === 'ENTREGADO' || status === 'CANCELADO') {
+    if (
+      status === 'EN_CAMINO' ||
+      status === 'ENTREGADO' ||
+      status === 'CANCELADO'
+    ) {
       const toPhone = this.normalizeCoPhone(order.user?.phone ?? '');
       const res = await this.whatsapp.sendStatusUpdate({
         toPhone,
@@ -444,6 +457,66 @@ export class OrdersService {
     await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
     await this.prisma.order.delete({ where: { id } });
     return { id };
+  }
+
+  /**
+   * Notifica a TODOS los ADMIN cuando se crea una nueva orden.
+   * Incluye:
+   * - ID del pedido
+   * - nombre del cliente (si existe)
+   * - total aproximado en COP
+   */
+  private async notifyAdminsNewOrder(order: {
+    id: number;
+    total: number | bigint | string;
+    user?: { name?: string | null; email?: string | null; phone?: string | null };
+  }) {
+    const admins = await this.prisma.user.findMany({
+      where: { role: Role.ADMIN },
+      select: { id: true },
+    });
+
+    if (!admins.length) return;
+
+    const customerName =
+      order.user?.name?.trim() ||
+      order.user?.email ||
+      order.user?.phone ||
+      'Cliente';
+
+    const totalNumber =
+      typeof order.total === 'number'
+        ? order.total
+        : Number(order.total) || 0;
+
+    const totalFormatted = totalNumber.toLocaleString('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      maximumFractionDigits: 0,
+    });
+
+    await Promise.all(
+      admins.map((admin) =>
+        this.push
+          .sendToUser(String(admin.id), {
+            title: `Nuevo pedido #${order.id}`,
+            body: `${customerName} · ${totalFormatted}`,
+            data: {
+              type: 'NEW_ORDER_ADMIN',
+              orderId: order.id,
+            },
+            priority: 'high',
+            sound: 'default',
+          })
+          .catch((e) => {
+            this.logger.warn(
+              `push NEW_ORDER_ADMIN failed for admin ${
+                admin.id
+              }: ${(e as Error).message}`,
+            );
+          }),
+      ),
+    );
   }
 
   // E.164 CO básica (+57) para Twilio WhatsApp

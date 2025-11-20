@@ -18,11 +18,30 @@ import { formatCurrency } from '../lib/formatCurrency';
 import { statusLabel } from '../lib/orderStatus';
 import StatusBadge from '../components/StatusBadge';
 import type { AxiosError } from 'axios';
-import type { OrderStatus, OrderWithUser } from '../types/order';
+import type { OrderStatus, OrderWithUser, PaymentMethod } from '../types/order';
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
+
+// Labels legibles para el admin
+const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  CASH: 'Efectivo',
+  TRANSFER: 'Transferencia',
+  CARD: 'Tarjeta',
+  CREDIT: 'Crédito',
+};
+
+// Colores para identificar rápido qué debe alistar el admin
+const PAYMENT_COLORS: Record<
+  PaymentMethod,
+  { bg: string; text: string }
+> = {
+  CASH: { bg: '#FEF3C7', text: '#92400E' },      // amarillo suave
+  TRANSFER: { bg: '#DBEAFE', text: '#1D4ED8' },  // azul
+  CARD: { bg: '#ECFDF5', text: '#065F46' },      // verde
+  CREDIT: { bg: '#F3E8FF', text: '#6B21A8' },    // morado
+};
 
 export default function AdminOrdersScreen() {
   const navigation = useNavigation<any>();
@@ -187,6 +206,7 @@ export default function AdminOrdersScreen() {
           .map((i) => `${i.quantity}x ${i.product?.name ?? 'Producto'}`)
           .join(' - ');
         const disabled = updatingId === item.id && changeStatus.isLoading;
+        const pm = item.paymentMethod as PaymentMethod | undefined;
 
         return (
           <View style={styles.card}>
@@ -206,6 +226,28 @@ export default function AdminOrdersScreen() {
             )}
 
             {summary ? <Text style={styles.items}>{summary}</Text> : null}
+
+            {/* Forma de pago visible para el admin */}
+            {pm && (
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Forma de pago:</Text>
+                <View
+                  style={[
+                    styles.paymentBadge,
+                    { backgroundColor: PAYMENT_COLORS[pm].bg },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.paymentBadgeText,
+                      { color: PAYMENT_COLORS[pm].text },
+                    ]}
+                  >
+                    {PAYMENT_LABELS[pm]}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             <Text style={styles.total}>{formatCurrency(item.total)}</Text>
 
@@ -271,6 +313,30 @@ const styles = StyleSheet.create({
   userName: { fontSize: 15, fontWeight: '600', color: '#111' },
   userMeta: { color: '#6b7280', marginTop: 2 },
   items: { marginTop: 10, color: '#374151' },
+
+  // NUEVO: estilos de forma de pago
+  paymentRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  paymentLabel: {
+    fontSize: 13,
+    color: '#4b5563',
+    marginRight: 6,
+  },
+  paymentBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  paymentBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
   total: { marginTop: 12, fontSize: 16, fontWeight: '700', color: '#111' },
   statusRow: { marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   statusChip: {
