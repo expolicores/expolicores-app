@@ -14,6 +14,9 @@ import { OrdersModule } from './orders/orders.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import features from './config/features';
 
+// Casillero B2B (mini-bodega por negocio)
+import { LockerModule } from './locker/locker.module';
+
 // Bodega (B2B) — catálogo/operaciones para NEGOCIO/ADMIN
 import { BodegaModule } from './bodega/bodega.module';
 
@@ -54,6 +57,9 @@ import { LiveActivitiesModule } from './live-activities/live-activities.module';
 
     OrdersModule,
     FavoritesModule,
+
+    // Casillero B2B (similar a favoritos pero orientado a planificación)
+    LockerModule,
 
     // Módulos B2B
     BodegaModule,     // Bodega Virtual (protegido por roles/estatus)

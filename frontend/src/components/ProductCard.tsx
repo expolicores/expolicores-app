@@ -23,6 +23,14 @@ type Props = {
 
   showFavorite?: boolean;
   onOpenDetail?: () => void;
+
+  /** ====== NUEVO: Casillero B2B ====== */
+  /** Si true, muestra el icono de casillero en la esquina inferior derecha de la imagen */
+  showLocker?: boolean;
+  /** Indica si este producto ya está en el casillero del usuario */
+  isInLocker?: boolean;
+  /** Handler para alternar en casillero (add/remove) */
+  onToggleLocker?: () => void;
 };
 
 const COLORS = {
@@ -46,6 +54,10 @@ export default function ProductCard({
   onRemove,
   showFavorite = true,
   onOpenDetail,
+
+  showLocker = false,
+  isInLocker = false,
+  onToggleLocker,
 }: Props) {
   const navigation = useNavigation<any>();
   const { isAuthenticated } = useAuth();
@@ -78,7 +90,7 @@ export default function ProductCard({
   const isOutOfStock = effectiveStock === 0;
   const canInc = effectiveStock == null ? true : effectiveQty < effectiveStock;
 
-  // ===== Handlers =====
+  // ===== Handlers carrito =====
   const addOne = () => {
     if (atMax) return;
     if (!autonomous) return onAdd?.();
@@ -148,19 +160,81 @@ export default function ProductCard({
     toggleFavorite(product);
   };
 
+  // ===== Casillero =====
+  const handleToggleLocker = () => {
+    if (!onToggleLocker) return;
+    onToggleLocker();
+  };
+
   const goToDetail = () => {
     if (onOpenDetail) return onOpenDetail();
     navigation.navigate('ProductDetail', { id: product.id });
   };
 
+  const remainingStock =
+    typeof effectiveStock === 'number'
+      ? Math.max(effectiveStock - effectiveQty, 0)
+      : null;
+
   return (
     <View style={styles.card}>
       <Pressable style={{ flex: 1 }} onPress={goToDetail}>
-        <Image
-          source={{ uri: productImageUri }}
-          style={styles.image}
-          resizeMode="contain" // evita recortes
-        />
+        <View style={styles.imageWrapper}>
+          <Image
+            source={{ uri: productImageUri }}
+            style={styles.image}
+            resizeMode="contain" // evita recortes
+          />
+
+          {/* Favorito en esquina superior derecha de la imagen */}
+          {showFavorite && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                handleFavorite();
+              }}
+              style={[styles.favBtn, isMutating && { opacity: 0.6 }]}
+              hitSlop={8}
+              accessibilityLabel={
+                isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'
+              }
+              disabled={isMutating}
+            >
+              <Ionicons
+                name={isFavorite ? 'heart' : 'heart-outline'}
+                size={20}
+                color={isFavorite ? '#EF4444' : '#111'}
+              />
+            </Pressable>
+          )}
+
+          {/* NUEVO: Casillero en esquina inferior derecha de la imagen */}
+          {showLocker && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                handleToggleLocker();
+              }}
+              style={[
+                styles.lockerBtn,
+                isInLocker && styles.lockerBtnActive,
+              ]}
+              hitSlop={8}
+              accessibilityLabel={
+                isInLocker
+                  ? 'Quitar de mi casillero'
+                  : 'Agregar a mi casillero'
+              }
+            >
+              <Ionicons
+                name={isInLocker ? 'cube' : 'cube-outline'}
+                size={18}
+                color={isInLocker ? COLORS.green : '#4B5563'}
+              />
+            </Pressable>
+          )}
+        </View>
+
         <Text style={styles.name} numberOfLines={2}>
           {product.name}
         </Text>
@@ -169,7 +243,7 @@ export default function ProductCard({
         </Text>
         {typeof effectiveStock === 'number' && (
           <Text style={styles.stockHint}>
-            Stock: {Math.max(effectiveStock - effectiveQty, 0)} / {effectiveStock}
+            Stock: {remainingStock} / {effectiveStock}
           </Text>
         )}
       </Pressable>
@@ -220,22 +294,6 @@ export default function ProductCard({
           <Text style={styles.addText}>Agregar</Text>
         </Pressable>
       )}
-
-      {showFavorite && (
-        <Pressable
-          onPress={handleFavorite}
-          style={[styles.favBtn, isMutating && { opacity: 0.6 }]}
-          hitSlop={8}
-          accessibilityLabel={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
-          disabled={isMutating}
-        >
-          <Ionicons
-            name={isFavorite ? 'heart' : 'heart-outline'}
-            size={20}
-            color={isFavorite ? '#EF4444' : '#111'}
-          />
-        </Pressable>
-      )}
     </View>
   );
 }
@@ -249,12 +307,17 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     padding: 10,
   },
-  image: {
+  imageWrapper: {
     width: '100%',
     height: 140,
     borderRadius: 12,
-    // antes: backgroundColor: COLORS.imgBg (gris)
-    backgroundColor: COLORS.bg, // 👈 ahora fondo blanco como la card
+    backgroundColor: COLORS.bg, // fondo blanco para la “bodeguita”
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  image: {
+    width: '100%',
+    height: '100%',
   },
   name: { marginTop: 8, color: COLORS.text, fontWeight: '600' },
   price: { color: COLORS.text, marginTop: 4, fontWeight: '800' },
@@ -316,5 +379,19 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
+  },
+  lockerBtn: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    backgroundColor: '#FFFFFFE6',
+    padding: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  lockerBtnActive: {
+    borderColor: COLORS.green,
+    backgroundColor: '#E8F3EC',
   },
 });

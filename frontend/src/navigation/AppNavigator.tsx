@@ -1,6 +1,10 @@
 ﻿// frontend/src/navigation/AppNavigator.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { NavigationContainer, useNavigationContainerRef, LinkingOptions } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  useNavigationContainerRef,
+  LinkingOptions,
+} from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,13 +35,14 @@ import OrderTrackingScreen from '../screens/OrderTrackingScreen';
 import CheckoutScreen from '../screens/CheckoutScreen';
 import OrderSuccessScreen from '../screens/OrderSuccessScreen';
 import FavoritesScreen from '../screens/FavoritesScreen';
+import LockerScreen from '../screens/LockerScreen'; // ⬅️ NUEVO
 
 /** ========== Screens (market / restaurantes placeholder / bodega) ========== */
 import MarketScreen from '../screens/MarketScreen';
 import RestaurantsPlaceholderScreen from '../screens/RestaurantsPlaceholderScreen';
 import BodegaScreen from '../screens/BodegaScreen';
-import HomeScreen from '../screens/HomeScreen';     // ← Home “viejo” (fallback)
-import FeedScreen from '../screens/FeedScreen';     // ← NUEVO feed como Home
+import HomeScreen from '../screens/HomeScreen'; // ← Home “viejo” (fallback)
+import FeedScreen from '../screens/FeedScreen'; // ← NUEVO feed como Home
 import BottomQuickActionsBar from '../components/BottomQuickActionsBar';
 
 /** ========== Admin — Solicitudes B2B (nuevo) ========== */
@@ -68,6 +73,7 @@ const FEED_JSON_ENABLED =
 const QUICK_ACTION_ROUTES = new Set<string>([
   'Dashboard',
   'Favorites',
+  'Locker', // ⬅️ NUEVO: casillero aparece en quick actions
   'MyOrders',
   'Profile',
   'AdminPriceListB2C',
@@ -198,7 +204,9 @@ const linking: LinkingOptions<any> = {
 /** ---------------- App Navigator ---------------- **/
 export default function AppNavigator() {
   const navigationRef = useNavigationContainerRef();
-  const [currentRouteName, setCurrentRouteName] = useState<string | undefined>(undefined);
+  const [currentRouteName, setCurrentRouteName] = useState<string | undefined>(
+    undefined,
+  );
   const { booting, isAuthenticated, user } = useAuth();
 
   // Estado/B2B del usuario
@@ -407,6 +415,11 @@ export default function AppNavigator() {
               name="Favorites"
               component={FavoritesScreen}
               options={{ title: 'Mis favoritos' }}
+            />
+            <RootStack.Screen
+              name="Locker"
+              component={LockerScreen}
+              options={{ title: 'Mi casillero' }} // ⬅️ NUEVO
             />
             <RootStack.Screen
               name="AdminPriceListB2C"
