@@ -430,6 +430,32 @@ export default function CheckoutScreen() {
               );
             })}
           </View>
+
+          {/* Advertencia específica para pago con tarjeta */}
+          {paymentMethod === 'CARD' && (
+            <View
+              style={{
+                marginTop: 8,
+                paddingVertical: 8,
+                paddingHorizontal: 10,
+                borderRadius: 8,
+                backgroundColor: '#FEF3C7', // amarillo suave
+                borderWidth: 1,
+                borderColor: '#FBBF24',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: '#92400E',
+                  fontWeight: '500',
+                }}
+              >
+                Advertencia pago con tarjeta es con datafono en físico
+                post-entrega de su pedido
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Tu pedido */}
