@@ -567,18 +567,22 @@ export class OrdersService {
     switch (status) {
       case 'EN_CAMINO':
         return { title: 'En camino', body: `#${orderId} ya va en camino.` };
+
       case 'ENTREGADO':
         return {
           title: 'Entregado',
-          body: `#${orderId} ha sido entregado. ¡Gracias!',
+          body: `#${orderId} ha sido entregado. ¡Gracias!`,
         };
+
       case 'CANCELADO':
         return {
           title: 'Pedido cancelado',
           body: `#${orderId} fue cancelado.`,
         };
+
       default:
-        return null; // RECIBIDO u otros no generan push extra
+        // RECIBIDO u otros no generan push extra
+        return null;
     }
   }
 }
