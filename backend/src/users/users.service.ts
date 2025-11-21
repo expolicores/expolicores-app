@@ -225,6 +225,38 @@ export class UsersService {
     return { id: userId, deleted: true };
   }
 
+  // ===== Feedback de usuario =====
+  async createFeedback(userId: number, message: string) {
+    const trimmed = (message ?? '').trim();
+
+    if (trimmed.length < 5) {
+      throw new BadRequestException('El comentario es muy corto.');
+    }
+
+    // Verificamos que el usuario exista y no esté soft-deleted
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, deletedAt: true },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new NotFoundException('User not found');
+    }
+
+    const feedback = await this.prisma.userFeedback.create({
+      data: {
+        userId,
+        message: trimmed,
+      },
+    });
+
+    // Podemos devolver solo datos mínimos; el contenido ya lo tiene el cliente
+    return {
+      id: feedback.id,
+      createdAt: feedback.createdAt,
+    };
+  }
+
   // ===== Admin =====
   async updateRole(id: number, role: Role) {
     const user = await this.prisma.user.update({

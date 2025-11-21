@@ -31,6 +31,8 @@ model User {
   // ⬇⬇⬇ NUEVO: marca de eliminación lógica
   deletedAt DateTime?
 
+  feedbacks   UserFeedback[]
+
   addresses   Address[]
   emailVerificationTokens EmailVerificationToken[]
   favorites   Favorite[]
@@ -309,4 +311,17 @@ enum PromotionAudience {
   ANY
   B2C
   B2B
+}
+
+model UserFeedback {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  message   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

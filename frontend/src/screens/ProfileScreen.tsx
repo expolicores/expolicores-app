@@ -1,6 +1,5 @@
 // frontend/src/screens/ProfileScreen.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -11,11 +10,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
+
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import type { Me } from '../types/auth';
@@ -24,7 +25,7 @@ import { FEATURES } from '../lib/flags';
 import { businessApply } from '../lib/api';
 import { openStoreListing } from '../lib/rateUs';
 
-// --------- Validacion ---------
+// --------- Validación ---------
 const phoneSchema = z
   .string()
   .trim()
@@ -40,12 +41,15 @@ const phoneSchema = z
   );
 
 const schema = z.object({
-  name: z.string().min(2, 'Tu nombre debe tener al menos 2 caracteres'),
+  name: z
+    .string()
+    .min(2, 'Tu nombre debe tener al menos 2 caracteres'),
   phone: phoneSchema,
 });
 
 type FormValues = z.infer<typeof schema>;
 
+// Normaliza a +57XXXXXXXXXX
 function normalizeCoPhone(v: string) {
   const digits = (v || '').replace(/\D/g, '');
   if (v?.startsWith('+')) return v;
@@ -54,6 +58,7 @@ function normalizeCoPhone(v: string) {
   return v;
 }
 
+// Tipos de apoyo
 type Role = 'ADMIN' | 'B2C' | 'B2B';
 type BusinessVerificationStatus = 'NONE' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
 type AdminProcessStatus = 'PENDING' | 'IN_PROGRESS' | 'ATTENDED';
@@ -76,13 +81,13 @@ export default function ProfileScreen() {
     staleTime: 60_000,
   });
 
-  const user = ctxUser ?? me ?? null;
+  const user = (ctxUser ?? me) ?? null;
 
   const role = (user as any)?.role as Role | undefined;
-  const businessVerificationStatus = (user as any)
-    ?.businessVerificationStatus as BusinessVerificationStatus | undefined;
-  const adminProcessStatus = (user as any)
-    ?.adminProcessStatus as AdminProcessStatus | undefined;
+  const businessVerificationStatus =
+    (user as any)?.businessVerificationStatus as BusinessVerificationStatus | undefined;
+  const adminProcessStatus =
+    (user as any)?.adminProcessStatus as AdminProcessStatus | undefined;
 
   const initialValues = useMemo(
     () => ({
@@ -105,6 +110,7 @@ export default function ProfileScreen() {
     reValidateMode: 'onChange',
   });
 
+  // Rellena el formulario al recibir perfil
   useEffect(() => {
     if (user) {
       reset(
@@ -125,11 +131,15 @@ export default function ProfileScreen() {
     }
   }, [user, reset, setValue]);
 
+  // Actualización de perfil
   const { mutate: updateMe, isLoading: isSaving } = useMutation({
     mutationFn: async (values: FormValues) => {
-      const payload = { ...values, phone: normalizeCoPhone(values.phone) };
+      const payload = {
+        ...values,
+        phone: normalizeCoPhone(values.phone),
+      };
       const res = await api.patch('/users/me', payload);
-      return res.data;
+      return res.data as Me;
     },
     onSuccess: async (updated) => {
       reset(
@@ -142,7 +152,10 @@ export default function ProfileScreen() {
       queryClient.setQueryData(['me'], updated);
       await queryClient.invalidateQueries({ queryKey: ['me'] });
       await refreshMe();
-      Alert.alert('Perfil actualizado', 'Tu informacion se guardo correctamente.');
+      Alert.alert(
+        'Perfil actualizado',
+        'Tu informacion se guardo correctamente.',
+      );
     },
     onError: (error: any) => {
       const msg =
@@ -167,7 +180,10 @@ export default function ProfileScreen() {
       setOpenB2BModal(false);
       await queryClient.invalidateQueries({ queryKey: ['me'] });
       await refreshMe();
-      Alert.alert('Solicitud enviada', 'Revisaremos tu solicitud de negocio.');
+      Alert.alert(
+        'Solicitud enviada',
+        'Revisaremos tu solicitud de negocio.',
+      );
     },
     onError: (error: any) => {
       const msg =
@@ -184,14 +200,47 @@ export default function ProfileScreen() {
     businessVerificationStatus !== 'SUBMITTED' &&
     businessVerificationStatus !== 'APPROVED';
 
+  // ===== Feedback de usuario (nuevo) =====
+  const [feedbackText, setFeedbackText] = useState('');
+  const feedbackMutation = useMutation({
+    mutationFn: async (message: string) => {
+      return (await api.post('/users/me/feedback', { message })).data;
+    },
+    onSuccess: () => {
+      setFeedbackText('');
+      Alert.alert(
+        '¡Gracias!',
+        'Tu comentario se envió correctamente. Esto nos ayuda a mejorar.',
+      );
+    },
+    onError: (error: any) => {
+      const msg =
+        error?.response?.data?.message ||
+        error?.message ||
+        'No se pudo enviar tu comentario.';
+      Alert.alert('Error', String(msg));
+    },
+  });
+
+  const handleSendFeedback = () => {
+    const trimmed = feedbackText.trim();
+    if (!trimmed) {
+      Alert.alert(
+        'Comentario vacío',
+        'Escribe algo sobre tu experiencia antes de enviar.',
+      );
+      return;
+    }
+    feedbackMutation.mutate(trimmed);
+  };
+
+  // Estados de carga
   if (booting || (!user && isFetching)) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={[styles.content, styles.center]}>
-          <ActivityIndicator size="large" color="#0E8A3A" />
-          <Text style={{ marginTop: 8, color: '#6b7280' }}>
-            Cargando perfil...
-          </Text>
+        <View style={[styles.center, { flex: 1 }]}>
+          <ActivityIndicator size="small" color="#0E8A3A" />
+          <Text style={styles.muted}>Cargando perfil...</Text>
         </View>
       </SafeAreaView>
     );
@@ -200,15 +249,11 @@ export default function ProfileScreen() {
   if (!user) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <View style={[styles.content, styles.center]}>
+        <View style={[styles.center, { flex: 1 }]}>
           <Text style={styles.title}>Mi perfil</Text>
           <Text style={styles.muted}>No autenticado</Text>
           <Pressable
-            style={[
-              styles.secondaryButton,
-              styles.secondaryButtonBlue,
-              { marginTop: 16 },
-            ]}
+            style={[styles.secondaryButton, styles.secondaryButtonBlue, { marginTop: 16 }]}
             onPress={() => refetch()}
           >
             <Text style={styles.secondaryButtonText}>Reintentar</Text>
@@ -228,33 +273,22 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: bottomPadding },
-        ]}
+        contentContainerStyle={[styles.content, { paddingBottom: bottomPadding }]}
       >
         <Text style={styles.title}>Mi perfil</Text>
 
         {/* Banners B2B */}
         {FEATURES.B2B && businessVerificationStatus === 'SUBMITTED' && (
-          <View
-            style={[
-              styles.banner,
-              { borderColor: '#f59e0b', backgroundColor: '#fffbeb' },
-            ]}
-          >
+          <View style={[styles.banner, { borderColor: '#f59e0b' }]}>
             <Text style={styles.bannerTitle}>Solicitud B2B en revisión</Text>
             <Text style={styles.bannerText}>
-              Te contactaremos por WhatsApp o teléfono para completar el
-              proceso.
+              Te contactaremos por WhatsApp o teléfono para completar el proceso.
             </Text>
             {!!adminProcessStatus && (
               <View
                 style={[
                   styles.badge,
-                  {
-                    backgroundColor: adminBadgeColor,
-                  },
+                  { backgroundColor: adminBadgeColor },
                 ]}
               >
                 <Text style={styles.badgeText}>
@@ -272,32 +306,25 @@ export default function ProfileScreen() {
         {FEATURES.B2B &&
           role === 'B2B' &&
           businessVerificationStatus === 'APPROVED' && (
-            <View
-              style={[
-                styles.banner,
-                { borderColor: '#10b981', backgroundColor: '#ecfdf5' },
-              ]}
-            >
-              <Text style={styles.bannerTitle}>Cuenta de negocio activa</Text>
+            <View style={[styles.banner, { borderColor: '#10b981' }]}>
+              <Text style={styles.bannerTitle}>
+                Cuenta de negocio activa
+              </Text>
               <Text style={styles.bannerText}>
                 Ya puedes comprar en Bodega Virtual con tus condiciones B2B.
               </Text>
             </View>
           )}
 
-        {FEATURES.B2B && businessVerificationStatus === 'REJECTED' && (
-          <View
-            style={[
-              styles.banner,
-              { borderColor: '#ef4444', backgroundColor: '#fef2f2' },
-            ]}
-          >
-            <Text style={styles.bannerTitle}>Solicitud rechazada</Text>
-            <Text style={styles.bannerText}>
-              Si crees que es un error, contáctanos para revisar tu caso.
-            </Text>
-          </View>
-        )}
+        {FEATURES.B2B &&
+          businessVerificationStatus === 'REJECTED' && (
+            <View style={[styles.banner, { borderColor: '#ef4444' }]}>
+              <Text style={styles.bannerTitle}>Solicitud rechazada</Text>
+              <Text style={styles.bannerText}>
+                Si crees que es un error, contáctanos para revisar tu caso.
+              </Text>
+            </View>
+          )}
 
         {/* Datos básicos */}
         <Text style={styles.label}>Email</Text>
@@ -313,10 +340,9 @@ export default function ProfileScreen() {
             <TextInput
               style={[
                 styles.input,
-                errors.name ? styles.inputError : undefined,
+                errors.name && styles.inputError,
               ]}
               placeholder="Tu nombre"
-              autoCapitalize="words"
               onBlur={onBlur}
               onChangeText={onChange}
               value={value}
@@ -335,7 +361,7 @@ export default function ProfileScreen() {
             <TextInput
               style={[
                 styles.input,
-                errors.phone ? styles.inputError : undefined,
+                errors.phone && styles.inputError,
               ]}
               placeholder="3001234567"
               keyboardType="phone-pad"
@@ -358,7 +384,7 @@ export default function ProfileScreen() {
           style={[
             styles.saveButton,
             saveDisabled ? styles.saveButtonDisabled : styles.saveButtonEnabled,
-            { marginTop: 20 },
+            { marginTop: 16 },
           ]}
           disabled={saveDisabled}
           onPress={handleSubmit(onSubmit)}
@@ -391,35 +417,80 @@ export default function ProfileScreen() {
           style={[
             styles.secondaryButton,
             styles.secondaryButtonBlue,
-            { marginTop: 32 },
+            { marginTop: 24 },
           ]}
           onPress={() => navigation.navigate('Addresses' as never)}
         >
           <Text style={styles.secondaryButtonText}>Mis direcciones</Text>
         </Pressable>
 
-        {/* Privacidad y cuenta (nuevo screen) */}
+        {/* Privacidad y cuenta */}
         <Pressable
           style={[
             styles.secondaryButton,
             styles.secondaryButtonBlack,
-            { marginTop: 16 },
+            { marginTop: 12 },
           ]}
           onPress={() => navigation.navigate('PrivacyAccount' as never)}
         >
-          <Text style={styles.secondaryButtonText}>Privacidad y cuenta</Text>
+          <Text style={styles.secondaryButtonText}>
+            Privacidad y cuenta
+          </Text>
         </Pressable>
 
         {/* Califícanos en la tienda */}
         <Pressable
           style={[
             styles.secondaryButton,
-            styles.secondaryButtonBlue,
-            { marginTop: 16 },
+            styles.secondaryButtonBlack,
+            { marginTop: 12 },
           ]}
           onPress={openStoreListing}
         >
-          <Text style={styles.secondaryButtonText}>Califícanos en la tienda</Text>
+          <Text style={styles.secondaryButtonText}>
+            Califícanos en la tienda
+          </Text>
+        </Pressable>
+
+        {/* 👇 NUEVO: comentarios dentro de la app */}
+        <Text style={[styles.label, { marginTop: 20 }]}>
+          Comentarios sobre el servicio / la app (opcional)
+        </Text>
+        <TextInput
+          style={[
+            styles.input,
+            {
+              minHeight: 80,
+              textAlignVertical: 'top',
+              backgroundColor: '#ffffff',
+            },
+          ]}
+          multiline
+          placeholder="Cuéntanos qué te gusta, qué mejorarías, temas de precios, tiempos de entrega..."
+          value={feedbackText}
+          onChangeText={setFeedbackText}
+        />
+        <Text style={styles.hint}>
+          Estos comentarios llegan directamente al equipo de Expolicores Villa
+          de Leyva.
+        </Text>
+
+        <Pressable
+          style={[
+            styles.secondaryButton,
+            feedbackMutation.isLoading
+              ? styles.saveButtonDisabled
+              : styles.saveButtonEnabled,
+            { marginTop: 8 },
+          ]}
+          disabled={feedbackMutation.isLoading}
+          onPress={handleSendFeedback}
+        >
+          {feedbackMutation.isLoading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.saveButtonText}>Enviar comentario</Text>
+          )}
         </Pressable>
 
         {/* Cerrar sesión */}
@@ -427,7 +498,7 @@ export default function ProfileScreen() {
           style={[
             styles.secondaryButton,
             styles.secondaryButtonRed,
-            { marginTop: 32 },
+            { marginTop: 24 },
           ]}
           onPress={async () => {
             try {
@@ -442,15 +513,15 @@ export default function ProfileScreen() {
         >
           <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
         </Pressable>
-      </ScrollView>
 
-      {/* Modal B2B */}
-      <ModalB2B
-        visible={openB2BModal}
-        onClose={() => setOpenB2BModal(false)}
-        onApply={applyB2B}
-        loading={isApplyingB2B}
-      />
+        {/* Modal B2B */}
+        <ModalB2B
+          visible={openB2BModal}
+          onClose={() => setOpenB2BModal(false)}
+          onApply={applyB2B}
+          loading={isApplyingB2B}
+        />
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -468,6 +539,7 @@ function ModalB2B({
   loading: boolean;
 }) {
   if (!visible) return null;
+
   return (
     <View style={styles.modalBackdrop}>
       <View style={styles.modalCard}>
@@ -477,8 +549,9 @@ function ModalB2B({
           (RUT y datos fiscales). Podemos contactarte por WhatsApp o teléfono
           para validar información.
         </Text>
+
         <View style={styles.modalActions}>
-          <Pressable onPress={onClose} disabled={loading}>
+          <Pressable onPress={onClose}>
             <Text style={styles.modalCancel}>Cancelar</Text>
           </Pressable>
           <Pressable onPress={onApply} disabled={loading}>

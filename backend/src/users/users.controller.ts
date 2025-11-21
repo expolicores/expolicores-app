@@ -7,6 +7,7 @@ import {
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
@@ -21,6 +22,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 import { Role } from '@prisma/client';
+import { CreateFeedbackDto } from './create-feedback.dto';
 
 @Controller('users')
 export class UsersController {
@@ -40,6 +42,16 @@ export class UsersController {
     // Permite actualizar name/email/phone/password (según DTO)
     // En OTP-first, lo más común es actualizar solo name y email
     return this.usersService.updateSelf(id, dto);
+  }
+
+  // NUEVO: feedback libre del usuario autenticado
+  @UseGuards(JwtAuthGuard)
+  @Post('me/feedback')
+  createFeedback(
+    @CurrentUser('id') id: number,
+    @Body() dto: CreateFeedbackDto,
+  ) {
+    return this.usersService.createFeedback(id, dto.message);
   }
 
   // NUEVO: eliminar la propia cuenta (soft delete + limpieza)
