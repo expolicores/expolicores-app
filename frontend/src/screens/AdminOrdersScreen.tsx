@@ -205,6 +205,7 @@ export default function AdminOrdersScreen() {
         const summary = (item.items ?? [])
           .map((i) => `${i.quantity}x ${i.product?.name ?? 'Producto'}`)
           .join(' - ');
+        const note = item.notes?.trim();
         const disabled = updatingId === item.id && changeStatus.isLoading;
         const pm = item.paymentMethod as PaymentMethod | undefined;
 
@@ -226,6 +227,12 @@ export default function AdminOrdersScreen() {
             )}
 
             {summary ? <Text style={styles.items}>{summary}</Text> : null}
+            {note ? (
+              <View style={styles.noteBlock}>
+                <Text style={styles.noteLabel}>Nota del cliente</Text>
+                <Text style={styles.noteText}>{note}</Text>
+              </View>
+            ) : null}
 
             {/* Forma de pago visible para el admin */}
             {pm && (
@@ -335,6 +342,23 @@ const styles = StyleSheet.create({
   paymentBadgeText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+
+  noteBlock: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  noteLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  noteText: {
+    color: '#111827',
   },
 
   total: { marginTop: 12, fontSize: 16, fontWeight: '700', color: '#111' },

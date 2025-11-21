@@ -481,18 +481,43 @@ export default function CheckoutScreen() {
                 style={{
                   flexDirection: 'row',
                   justifyContent: 'space-between',
-                  marginBottom: 4,
+                  flexWrap: 'wrap',
+                  alignItems: 'flex-start',
+                  marginBottom: 8,
                 }}
               >
-                <Text style={{ color: '#111827' }}>
+                <Text
+                  style={{
+                    color: '#111827',
+                    flexShrink: 1,
+                    flexBasis: '70%',
+                  }}
+                >
                   {item.name} × {qty}
                 </Text>
-                <Text style={{ color: '#111827', fontWeight: '600' }}>
+                <Text
+                  style={{
+                    color: '#111827',
+                    fontWeight: '700',
+                    textAlign: 'right',
+                    flexShrink: 0,
+                    flexBasis: '30%',
+                  }}
+                >
                   {currency(lineTotal)}
                 </Text>
               </View>
             );
           })}
+          <Text
+            style={{
+              fontSize: 11,
+              color: '#9CA3AF',
+              marginTop: 4,
+            }}
+          >
+            La factura fisica suele entregarse con tu pedido
+          </Text>
         </View>
 
         {/* Notas */}

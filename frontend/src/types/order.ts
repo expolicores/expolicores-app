@@ -109,6 +109,7 @@ export interface Order {
   status: OrderStatus;
   createdAt: string;      // ISO
   updatedAt?: string;     // ISO | undefined
+  notes?: string;
   items: OrderItem[];
   user?: OrderUserSummary | null;
 }
