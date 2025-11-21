@@ -137,6 +137,7 @@ export class OrdersService {
       }
       shipping = geo.shippingCost;
     }
+
     const total = subtotal + shipping;
 
     // ===== Crear orden + descontar stock =====
@@ -147,7 +148,6 @@ export class OrdersService {
           total,
           status: OrderStatus.RECIBIDO,
           paymentMethod, // guardamos forma de pago
-          notes,
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,

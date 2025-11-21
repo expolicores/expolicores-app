@@ -66,7 +66,6 @@ model Order {
   userId        Int
   total         Float
   status        OrderStatus        @default(RECIBIDO)
-  notes         String?
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   notifications NotificationLog[]
