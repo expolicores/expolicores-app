@@ -49,7 +49,7 @@ export class OrdersService {
     },
   } as const;
 
-  async create(userId: number, dto: CreateOrderDto, role: Role) {
+  async create(userId: number, dto: CreateOrderDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, role: true, phone: true },
@@ -75,14 +75,31 @@ export class OrdersService {
       typeof address.lat === 'number' && typeof address.lng === 'number';
 
     // ===== Método de pago =====
-    const paymentMethod: PaymentMethodEnum =
-      (dto.paymentMethod as PaymentMethodEnum) ?? PaymentMethodEnum.CASH;
+    // Lo que viene del DTO (desde la app). Default: CASH (efectivo).
+    const rawPayment = dto.paymentMethod ?? 'CASH';
+
+    let paymentMethod: PaymentMethodEnum;
+    switch (rawPayment) {
+      case 'TRANSFER':
+        paymentMethod = PaymentMethodEnum.TRANSFER;
+        break;
+      case 'CARD':
+        paymentMethod = PaymentMethodEnum.CARD;
+        break;
+      case 'CREDIT':
+        paymentMethod = PaymentMethodEnum.CREDIT;
+        break;
+      case 'CASH':
+      default:
+        paymentMethod = PaymentMethodEnum.CASH;
+        break;
+    }
 
     // Solo negocios (B2B) o ADMIN pueden usar crédito
     if (
       paymentMethod === PaymentMethodEnum.CREDIT &&
-      role !== Role.B2B &&
-      role !== Role.ADMIN
+      user.role !== Role.B2B &&
+      user.role !== Role.ADMIN
     ) {
       throw new BadRequestException('PAYMENT_METHOD_CREDIT_NOT_ALLOWED');
     }
@@ -147,8 +164,8 @@ export class OrdersService {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          paymentMethod,                // forma de pago
-          notes: dto.notes?.trim() || null, // guardamos notas del cliente
+          paymentMethod, // se guarda en la tabla Order
+          notes: dto.notes?.trim() || null, // NUEVO: notas del cliente
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,
@@ -172,16 +189,7 @@ export class OrdersService {
       return order;
     });
 
-    // 🔔 Notificar a todos los ADMIN que llegó un nuevo pedido (no bloquea el flujo)
-    this.notifyAdminsNewOrder(created).catch((e) => {
-      this.logger.warn(
-        `notifyAdminsNewOrder failed for order ${
-          created.id
-        }: ${(e as Error).message}`,
-      );
-    });
-
-    // ===== PUSH: Pedido creado al cliente (no bloquea) =====
+    // ===== PUSH: Pedido creado (cliente) (no bloquea) =====
     try {
       await this.push.sendToUser(String(userId), {
         title: 'Pedido creado',
@@ -197,6 +205,15 @@ export class OrdersService {
         }`,
       );
     }
+
+    // ===== PUSH: Pedido creado (admins) (no bloquea) =====
+    this.notifyAdminsNewOrder(created as any).catch((e) => {
+      this.logger.warn(
+        `notifyAdminsNewOrder failed for order ${created.id}: ${
+          (e as Error).message
+        }`,
+      );
+    });
 
     // Live Activities: el frontend iOS inicia la Activity y llama /live-activities/register.
     // Aquí NO enviamos update aún; lo haremos cuando cambie el estado.
@@ -226,13 +243,15 @@ export class OrdersService {
         .filter((n) => n.length > 0)
         .join(' | ') || undefined;
 
+    const waPaymentLabel = this.mapPaymentMethodToLabel(paymentMethod);
+
     const waRes = await this.whatsapp.sendOrderConfirmation({
       toPhone,
       orderId: created.id,
       subtotal,
       shipping,
       total: created.total,
-      // OJO: no enviamos paymentMethod aquí porque el DTO de WhatsApp no lo define
+      paymentMethod: waPaymentLabel, // etiqueta legible
       items: waItems,
       addressLabel,
       addressLine,
@@ -459,60 +478,72 @@ export class OrdersService {
     return { id };
   }
 
-  /**
-   * Notifica a TODOS los ADMIN cuando se crea una nueva orden.
-   * Incluye:
-   * - ID del pedido
-   * - nombre del cliente (si existe)
-   * - total aproximado en COP
-   */
-  private async notifyAdminsNewOrder(order: any) {
-    const admins = await this.prisma.user.findMany({
-      where: { role: Role.ADMIN },
-      select: { id: true },
-    });
+  // ===== Helpers privados =====
 
-    if (!admins.length) return;
+  // Notificación push a todos los admins cuando entra un nuevo pedido
+  private async notifyAdminsNewOrder(order: {
+    id: number;
+    total: number;
+    paymentMethod: PaymentMethodEnum;
+    user?: { name?: string | null; email?: string | null; phone?: string | null } | null;
+    items?: { quantity: number; product?: { name: string } | null }[];
+  }) {
+    try {
+      const admins = await this.prisma.user.findMany({
+        where: { role: Role.ADMIN },
+        select: { id: true },
+      });
 
-    const customerName =
-      order.user?.name?.trim() ||
-      order.user?.email ||
-      order.user?.phone ||
-      'Cliente';
+      if (!admins.length) return;
 
-    const totalNumber =
-      typeof order.total === 'number'
-        ? order.total
-        : Number(order.total) || 0;
+      const title = `Nuevo pedido #${order.id}`;
+      const medio = this.mapPaymentMethodToLabel(order.paymentMethod);
+      const firstItem = order.items?.[0];
+      const resumenPrimeraLinea = firstItem?.product?.name
+        ? `${firstItem.quantity}x ${firstItem.product.name}`
+        : undefined;
 
-    const totalFormatted = totalNumber.toLocaleString('es-CO', {
-      style: 'currency',
-      currency: 'COP',
-      maximumFractionDigits: 0,
-    });
+      const bodyParts = [
+        resumenPrimeraLinea,
+        `Total: $${Math.round(order.total).toLocaleString('es-CO')}`,
+        `Pago: ${medio}`,
+      ].filter(Boolean);
 
-    await Promise.all(
-      admins.map((admin) =>
-        this.push
-          .sendToUser(String(admin.id), {
-            title: `Nuevo pedido #${order.id}`,
-            body: `${customerName} · ${totalFormatted}`,
-            data: {
-              type: 'NEW_ORDER_ADMIN',
-              orderId: order.id,
-            },
+      const body = bodyParts.join(' · ');
+
+      await Promise.all(
+        admins.map((adm) =>
+          this.push.sendToUser(String(adm.id), {
+            title,
+            body,
+            data: { type: 'ADMIN_ORDER_CREATED', orderId: order.id },
             priority: 'high',
             sound: 'default',
-          })
-          .catch((e) => {
-            this.logger.warn(
-              `push NEW_ORDER_ADMIN failed for admin ${
-                admin.id
-              }: ${(e as Error).message}`,
-            );
           }),
-      ),
-    );
+        ),
+      );
+    } catch (e) {
+      this.logger.warn(
+        `notifyAdminsNewOrder error for order ${
+          order.id
+        }: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  private mapPaymentMethodToLabel(pm: PaymentMethodEnum): string {
+    switch (pm) {
+      case PaymentMethodEnum.CASH:
+        return 'Efectivo';
+      case PaymentMethodEnum.TRANSFER:
+        return 'Transferencia';
+      case PaymentMethodEnum.CARD:
+        return 'Tarjeta';
+      case PaymentMethodEnum.CREDIT:
+        return 'Crédito';
+      default:
+        return 'Contraentrega';
+    }
   }
 
   // E.164 CO básica (+57) para Twilio WhatsApp
