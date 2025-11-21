@@ -147,8 +147,8 @@ export class OrdersService {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          paymentMethod, // guardamos forma de pago
-          notes: dto.notes?.trim() || null, // ⬅️ GUARDAR NOTAS DEL CLIENTE
+          paymentMethod,                // forma de pago
+          notes: dto.notes?.trim() || null, // guardamos notas del cliente
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,
@@ -232,8 +232,7 @@ export class OrdersService {
       subtotal,
       shipping,
       total: created.total,
-      // enviamos el método real, por defecto CASH
-      paymentMethod,
+      // OJO: no enviamos paymentMethod aquí porque el DTO de WhatsApp no lo define
       items: waItems,
       addressLabel,
       addressLine,
@@ -467,11 +466,7 @@ export class OrdersService {
    * - nombre del cliente (si existe)
    * - total aproximado en COP
    */
-  private async notifyAdminsNewOrder(order: {
-    id: number;
-    total: number | bigint | string;
-    user?: { name?: string | null; email?: string | null; phone?: string | null };
-  }) {
+  private async notifyAdminsNewOrder(order: any) {
     const admins = await this.prisma.user.findMany({
       where: { role: Role.ADMIN },
       select: { id: true },
