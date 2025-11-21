@@ -20,7 +20,7 @@ import StatusBadge from '../components/StatusBadge';
 import type { AxiosError } from 'axios';
 import type { OrderStatus, OrderWithUser, PaymentMethod } from '../types/order';
 import { getBottomQuickActionsPadding } from '../components/BottomQuickActionsBar';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
 
@@ -33,14 +33,11 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
 };
 
 // Colores para identificar rápido qué debe alistar el admin
-const PAYMENT_COLORS: Record<
-  PaymentMethod,
-  { bg: string; text: string }
-> = {
-  CASH: { bg: '#FEF3C7', text: '#92400E' },      // amarillo suave
-  TRANSFER: { bg: '#DBEAFE', text: '#1D4ED8' },  // azul
-  CARD: { bg: '#ECFDF5', text: '#065F46' },      // verde
-  CREDIT: { bg: '#F3E8FF', text: '#6B21A8' },    // morado
+const PAYMENT_COLORS: Record<PaymentMethod, { bg: string; text: string }> = {
+  CASH: { bg: '#FEF3C7', text: '#92400E' }, // amarillo suave
+  TRANSFER: { bg: '#DBEAFE', text: '#1D4ED8' }, // azul
+  CARD: { bg: '#ECFDF5', text: '#065F46' }, // verde
+  CREDIT: { bg: '#F3E8FF', text: '#6B21A8' }, // morado
 };
 
 export default function AdminOrdersScreen() {
@@ -107,7 +104,7 @@ export default function AdminOrdersScreen() {
       queryClient.setQueryData<OrderWithUser[]>(['admin-orders'], (old) => {
         if (!old) return old;
         return old.map((order) =>
-          order.id === orderId ? { ...order, status, updatedAt: new Date().toISOString() } : order
+          order.id === orderId ? { ...order, status, updatedAt: new Date().toISOString() } : order,
         );
       });
 
@@ -129,7 +126,7 @@ export default function AdminOrdersScreen() {
 
   const orders = useMemo(
     () => (data ?? []).slice().sort((a, b) => b.id - a.id),
-    [data]
+    [data],
   );
 
   if (!isAdmin) {
@@ -191,7 +188,7 @@ export default function AdminOrdersScreen() {
           style: 'destructive',
           onPress: () => changeStatus.mutate({ orderId: order.id, status }),
         },
-      ]
+      ],
     );
   };
 
@@ -226,6 +223,9 @@ export default function AdminOrdersScreen() {
             )}
 
             {summary ? <Text style={styles.items}>{summary}</Text> : null}
+
+            {/* Notas del cliente */}
+            {item.notes ? <Text style={styles.notes}>Nota: {item.notes}</Text> : null}
 
             {/* Forma de pago visible para el admin */}
             {pm && (
@@ -314,7 +314,14 @@ const styles = StyleSheet.create({
   userMeta: { color: '#6b7280', marginTop: 2 },
   items: { marginTop: 10, color: '#374151' },
 
-  // NUEVO: estilos de forma de pago
+  // NUEVO: estilo para notas
+  notes: {
+    marginTop: 6,
+    color: '#4B5563',
+    fontStyle: 'italic',
+  },
+
+  // Forma de pago
   paymentRow: {
     marginTop: 10,
     flexDirection: 'row',

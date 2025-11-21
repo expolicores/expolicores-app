@@ -148,6 +148,7 @@ export class OrdersService {
           total,
           status: OrderStatus.RECIBIDO,
           paymentMethod, // guardamos forma de pago
+          notes: dto.notes?.trim() || null, // ⬅️ GUARDAR NOTAS DEL CLIENTE
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,

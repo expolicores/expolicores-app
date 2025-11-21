@@ -111,6 +111,12 @@ export interface Order {
   updatedAt?: string;     // ISO | undefined
   items: OrderItem[];
   user?: OrderUserSummary | null;
+
+  // NUEVO: notas que escribe el cliente en el checkout
+  notes?: string | null;
+
+  // NUEVO: método de pago usado para este pedido
+  paymentMethod?: PaymentMethod;
 }
 
 export type OrderListItem = Order;
