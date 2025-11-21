@@ -137,19 +137,6 @@ export class OrdersService {
       }
       shipping = geo.shippingCost;
     }
-
-    const notesFromPayload = [dto.notes, address.notes];
-    if (!hasGeo) {
-      notesFromPayload.push(
-        'AtenciA3n: validar cobertura, direcciA3n sin coordenadas',
-      );
-    }
-    const notes =
-      notesFromPayload
-        .map((n) => (n ?? '').trim())
-        .filter((n) => n.length > 0)
-        .join(' | ') || undefined;
-
     const total = subtotal + shipping;
 
     // ===== Crear orden + descontar stock =====
