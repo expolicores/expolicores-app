@@ -49,7 +49,8 @@ export class OrdersService {
     },
   } as const;
 
-  async create(userId: number, dto: CreateOrderDto) {
+  // 👇 volvemos a aceptar (userId, dto, role) para que cuadre con el controller
+  async create(userId: number, dto: CreateOrderDto, role: Role) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, role: true, phone: true },
@@ -98,8 +99,8 @@ export class OrdersService {
     // Solo negocios (B2B) o ADMIN pueden usar crédito
     if (
       paymentMethod === PaymentMethodEnum.CREDIT &&
-      user.role !== Role.B2B &&
-      user.role !== Role.ADMIN
+      role !== Role.B2B &&
+      role !== Role.ADMIN
     ) {
       throw new BadRequestException('PAYMENT_METHOD_CREDIT_NOT_ALLOWED');
     }
@@ -164,8 +165,8 @@ export class OrdersService {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          paymentMethod, // se guarda en la tabla Order
-          notes: dto.notes?.trim() || null, // NUEVO: notas del cliente
+          paymentMethod,                 // se guarda en la tabla Order
+          notes: dto.notes?.trim() || null, // notas del cliente
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,
@@ -569,7 +570,7 @@ export class OrdersService {
       case 'ENTREGADO':
         return {
           title: 'Entregado',
-          body: `#${orderId} ha sido entregado. ¡Gracias!`,
+          body: `#${orderId} ha sido entregado. ¡Gracias!',
         };
       case 'CANCELADO':
         return {
