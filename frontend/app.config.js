@@ -27,7 +27,7 @@ export default () => {
   const APP_VERSION = process.env.APP_VERSION ?? '1.0.0';
 
   // iOS buildNumber via ENV (no usar autoIncrement con app.config)
-  const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER ?? (isProd ? '200' : '4');
+  const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER ?? (isProd ? '201' : '4');
 
   // Live Activities (PAUSADO en iOS por decisión): default 'none' en producción
   // Cambiar a 'expo' si se reanuda la Ruta C más adelante.
@@ -51,6 +51,7 @@ export default () => {
         ios: {
           newArchitecture: true,
           deploymentTarget: '26.0',
+          //El unico aceptado para IOS que acepte Live activities en iOS es 26.0. No tocar nada de esto.
           // useFrameworks: 'static', // ← mantener desactivado salvo que un pod lo exija
         },
         android: {
@@ -75,9 +76,20 @@ export default () => {
       // Versionado app (leído en runtime por el front para chequear updates)
       version: APP_VERSION,
 
-      // Forzar SDK 54 y runtime asociado
+      // SDK objetivo (para compatibilidad)
       sdkVersion: '54.0.0',
-      runtimeVersion: { policy: 'sdkVersion' },
+
+      // Runtime para OTA: se agrupan por versión de app
+      runtimeVersion: {
+        policy: 'appVersion',
+      },
+
+      // OTA / EAS Update
+      updates: {
+        url: 'https://u.expo.dev/1d03fcea-24a8-42d2-b3d8-c1a50919ac11',
+        checkAutomatically: 'ON_LOAD',
+        fallbackToCacheTimeout: 0,
+      },
 
       orientation: 'portrait',
       icon: './assets/icon.png',
@@ -110,7 +122,7 @@ export default () => {
 
       android: {
         package: androidPackage,
-        versionCode: isProd ? 14 : 100,
+        versionCode: isProd ? 16 : 100,
         adaptiveIcon: {
           foregroundImage: './assets/adaptive-icon.png',
           backgroundColor: '#ffffff',

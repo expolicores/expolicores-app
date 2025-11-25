@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcryptjs';
+  import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -34,7 +34,9 @@ export class AuthService {
 
   private readonly OTP_TTL_MIN =
     parseInt(process.env.OTP_TTL_MIN ?? '', 10) ||
-    Math.ceil((parseInt(process.env.OTP_TTL_SECONDS ?? '', 10) || 600) / 60); // compat con OTP_TTL_SECONDS
+    Math.ceil(
+      (parseInt(process.env.OTP_TTL_SECONDS ?? '', 10) || 600) / 60,
+    ); // compat con OTP_TTL_SECONDS
 
   private readonly OTP_MIN_INTERVAL_SEC =
     parseInt(process.env.OTP_MIN_INTERVAL_SEC ?? '', 10) ||
@@ -51,11 +53,19 @@ export class AuthService {
   // Fallback de QA (devOtp)
   private readonly FEATURE_DEV_OTP =
     (process.env.FEATURE_DEV_OTP ?? 'false') === 'true';
-  private readonly ALLOWED_DEV_OTP_PHONES: string[] = (process.env.ALLOWED_DEV_OTP_PHONES ?? '')
+  private readonly ALLOWED_DEV_OTP_PHONES: string[] = (
+    process.env.ALLOWED_DEV_OTP_PHONES ?? ''
+  )
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   // Nota: DEV_OTP_FIXED no se usa para cambiar el código guardado; siempre devolvemos el real para que verifique contra DB.
+
+  // Cuenta de prueba para revisión (Google Play / App Store)
+  private readonly REVIEWER_TEST_PHONE =
+    process.env.REVIEWER_TEST_PHONE ?? '+573505336910';
+  private readonly REVIEWER_TEST_OTP =
+    process.env.REVIEWER_TEST_OTP ?? '123456';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -65,6 +75,7 @@ export class AuthService {
   ) {}
 
   // ========== Helpers de normalización ==========
+
   public normalizeEmail(email?: string | null) {
     return String(email ?? '').trim().toLowerCase();
   }
@@ -80,6 +91,7 @@ export class AuthService {
   }
 
   // ========== OTP helpers ==========
+
   private generateOtp(): string {
     const min = Math.pow(10, this.OTP_DIGITS - 1);
     const max = Math.pow(10, this.OTP_DIGITS) - 1;
@@ -90,15 +102,22 @@ export class AuthService {
   /** Devuelve "salt:hash" (sha256) para guardar en otpCodeHash. */
   private hashOtpSha(otp: string) {
     const salt = randomBytes(8).toString('hex');
-    const hash = createHash('sha256').update(`${salt}:${otp}`).digest('hex');
+    const hash = createHash('sha256')
+      .update(`${salt}:${otp}`)
+      .digest('hex');
     return `${salt}:${hash}`;
   }
 
   /** Verifica un OTP con compatibilidad: "salt:hash" (sha256) o bcrypt legacy. */
-  private async verifyOtpHash(candidate: string, stored: string): Promise<boolean> {
+  private async verifyOtpHash(
+    candidate: string,
+    stored: string,
+  ): Promise<boolean> {
     if (stored.includes(':')) {
       const [salt, hash] = stored.split(':');
-      const cand = createHash('sha256').update(`${salt}:${candidate}`).digest('hex');
+      const cand = createHash('sha256')
+        .update(`${salt}:${candidate}`)
+        .digest('hex');
       return cand === hash;
     }
     // Legacy bcrypt
@@ -110,13 +129,20 @@ export class AuthService {
   }
 
   /** Firma JWT — público para uso desde controller. */
-  public async signToken(user: { id: number; email?: string | null; role: Role }) {
+  public async signToken(user: {
+    id: number;
+    email?: string | null;
+    role: Role;
+  }) {
     const payload = { sub: user.id, email: user.email ?? '', role: user.role };
-    const access_token = await this.jwt.signAsync(payload, { expiresIn: '7d' });
+    const access_token = await this.jwt.signAsync(payload, {
+      expiresIn: '7d',
+    });
     return { access_token };
   }
 
   // ===== Envío de OTP (SIN fallback entre canales) =====
+
   private ensureChannelAllowed(channel: 'whatsapp' | 'sms') {
     if (channel === 'sms' && !this.FEATURE_SMS_OTP) {
       throw new BadRequestException('Canal SMS deshabilitado');
@@ -127,7 +153,11 @@ export class AuthService {
   }
 
   /** Envío de OTP exactamente por el canal solicitado. Sin fallback. */
-  private async sendOtpExact(toPhoneE164: string, code: string, channel: 'whatsapp' | 'sms') {
+  private async sendOtpExact(
+    toPhoneE164: string,
+    code: string,
+    channel: 'whatsapp' | 'sms',
+  ) {
     this.ensureChannelAllowed(channel);
     if (channel === 'sms') {
       await this.sms.sendOtp(toPhoneE164, code, this.OTP_TTL_MIN);
@@ -195,13 +225,23 @@ export class AuthService {
       throw new BadRequestException('Debes enviar phone o email');
     }
 
+    // ¿Es el teléfono de prueba para revisión?
+    const reviewerPhoneNormalized = this.normalizePhone(
+      this.REVIEWER_TEST_PHONE,
+    );
+    const isReviewerPhone = phone === reviewerPhoneNormalized;
+
     // Throttling por último envío
     const existing = await this.prisma.user.findUnique({ where: { phone } });
     if (existing?.lastOtpSentAt) {
-      const deltaSec = Math.floor((Date.now() - existing.lastOtpSentAt.getTime()) / 1000);
+      const deltaSec = Math.floor(
+        (Date.now() - existing.lastOtpSentAt.getTime()) / 1000,
+      );
       if (deltaSec < this.OTP_MIN_INTERVAL_SEC) {
         const remainingSeconds = this.OTP_MIN_INTERVAL_SEC - deltaSec;
-        this.logger.debug(`OTP throttled ${phone} (${remainingSeconds}s rem)`);
+        this.logger.debug(
+          `OTP throttled ${phone} (${remainingSeconds}s rem)`,
+        );
         return {
           ok: true,
           throttled: true,
@@ -214,10 +254,15 @@ export class AuthService {
     }
 
     // Generar y almacenar OTP (salt:hash)
-    const code = this.generateOtp();
+    // Para el reviewer usamos siempre REVIEWER_TEST_OTP, para el resto generamos uno aleatorio
+    const code = isReviewerPhone
+      ? this.REVIEWER_TEST_OTP
+      : this.generateOtp();
     const otpCodeHash = this.hashOtpSha(code);
     const now = new Date();
-    const otpExpiresAt = new Date(now.getTime() + this.OTP_TTL_MIN * 60 * 1000);
+    const otpExpiresAt = new Date(
+      now.getTime() + this.OTP_TTL_MIN * 60 * 1000,
+    );
 
     await this.prisma.user.upsert({
       where: { phone },
@@ -245,21 +290,41 @@ export class AuthService {
     // Enviar por el canal solicitado (sin fallback) con logs de diagnóstico
     let devOtpToReturn: string | undefined;
     try {
-      await this.sendOtpExact(phone, code, channel as 'whatsapp' | 'sms');
+      if (!isReviewerPhone) {
+        // Usuarios normales: sí enviamos SMS/WhatsApp
+        await this.sendOtpExact(phone, code, channel as 'whatsapp' | 'sms');
+      } else {
+        // Cuenta de revisión: no enviamos SMS, solo log
+        this.logger.log(
+          `[REVIEW-OTP] phone=${phone} code=${code} (no SMS sent; reviewer account)`,
+        );
+      }
+
       if (isDevEcho) {
-        this.logger.log(`[DEV-OTP] phone=${phone} code=${code} via=${channel}`);
+        this.logger.log(
+          `[DEV-OTP] phone=${phone} code=${code} via=${channel} reviewer=${isReviewerPhone}`,
+        );
       }
     } catch (e: any) {
       // Registro detallado para ver exactamente qué responde el proveedor (Twilio u otro)
       this.logger.error(
-        `OTP delivery FAIL phone=${phone} via=${channel} code=${e?.code ?? 'n/a'} status=${e?.status ?? 'n/a'} more=${e?.moreInfo ?? 'n/a'} msg=${e?.message ?? e}`,
+        `OTP delivery FAIL phone=${phone} via=${channel} code=${
+          e?.code ?? 'n/a'
+        } status=${e?.status ?? 'n/a'} more=${e?.moreInfo ?? 'n/a'} msg=${
+          e?.message ?? e
+        }`,
       );
 
       // Fallback QA: si FEATURE_DEV_OTP=true y el número está permitido (o la lista está vacía → permitir todos)
       const allowAll = this.ALLOWED_DEV_OTP_PHONES.length === 0;
-      const isAllowed = allowAll || this.ALLOWED_DEV_OTP_PHONES.includes(phone);
+      const isAllowed =
+        allowAll || this.ALLOWED_DEV_OTP_PHONES.includes(phone);
       if (this.FEATURE_DEV_OTP && isAllowed) {
-        this.logger.warn(`Fallback a devOtp para ${phone} (FEATURE_DEV_OTP=true${allowAll ? ', allowAll' : ''})`);
+        this.logger.warn(
+          `Fallback a devOtp para ${phone} (FEATURE_DEV_OTP=true${
+            allowAll ? ', allowAll' : ''
+          })`,
+        );
         devOtpToReturn = code; // devolvemos el mismo que guardamos en DB para que verifique
       } else {
         // Sin fallback → error al cliente
@@ -301,7 +366,9 @@ export class AuthService {
       const email = this.normalizeEmail(dto.email);
       const byEmail = await this.prisma.user.findUnique({ where: { email } });
       if (!byEmail?.phone)
-        throw new BadRequestException('No hay teléfono asociado al correo');
+        throw new BadRequestException(
+          'No hay teléfono asociado al correo',
+        );
       phone = this.normalizePhone(byEmail.phone);
     } else {
       throw new BadRequestException('Debes enviar phone o email');
@@ -325,14 +392,16 @@ export class AuthService {
     };
 
     // Guardar nombre si llegó y el usuario no lo tenía
-    if (dto.name && (!user.name || user.name === 'Cliente')) updateData.name = dto.name.trim();
+    if (dto.name && (!user.name || user.name === 'Cliente'))
+      updateData.name = dto.name.trim();
 
     // Enrolar email opcional (si vino en verifyOtp)
     if (dto.emailEnroll) {
       const email = this.normalizeEmail(dto.emailEnroll);
       if (email && email !== user.email) {
         const taken = await this.prisma.user.findUnique({ where: { email } });
-        if (taken) throw new BadRequestException('Ese correo ya está en uso');
+        if (taken)
+          throw new BadRequestException('Ese correo ya está en uso');
         updateData.email = email;
         updateData.isEmailVerified = false;
         await this.enqueueEmailVerificationToken(user.id);
@@ -386,6 +455,7 @@ export class AuthService {
   }
 
   // ========== Enrolar email (usado por /auth/enroll-email y/o /users/me) ==========
+
   async enrollEmail(userId: number, rawEmail: string) {
     const email = this.normalizeEmail(rawEmail);
     if (!email) throw new BadRequestException('Email requerido');
@@ -407,6 +477,7 @@ export class AuthService {
   }
 
   // ========== Legacy (compat email+password) ==========
+
   async validateUser(email: string, password: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: this.normalizeEmail(email) },
