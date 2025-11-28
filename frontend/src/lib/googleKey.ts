@@ -1,25 +1,19 @@
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
-
+// lib/googleKey.ts
 /**
- * Selecciona la key correcta:
- * - En Expo Go o __DEV__: usa siempre la DEV (sin Application restrictions).
- * - En build nativa (dev client / release): usa la de plataforma.
+ * Devuelve la API key de Google Places / Maps Web Service.
+ *
+ * Usamos una única key "web-service" (sin restricciones de aplicación,
+ * solo restringida por API en la consola de Google).
+ *
+ * Asegúrate de tener en tu .env:
+ *   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=tu_key_aquí
  */
 export function getGooglePlacesKey(): string {
-  const dev = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_DEV;
-  const android = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_ANDROID;
-  const ios = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY_IOS;
+  const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
-  const isExpoGo = Constants.appOwnership === 'expo'; // Expo Go
-  if (isExpoGo || __DEV__) {
-    if (dev) return dev;
+  if (!key) {
+    throw new Error('EXPO_PUBLIC_GOOGLE_MAPS_API_KEY no está configurada');
   }
 
-  if (Platform.OS === 'ios' && ios) return ios;
-  if (Platform.OS === 'android' && android) return android;
-
-  // fallback final
-  if (dev) return dev;
-  throw new Error('Google Places API key not configured');
+  return key;
 }
