@@ -46,12 +46,12 @@ const CATEGORY_IMAGES_CACHE_KEY = 'cat:images:v1';
 const DEFAULT_CATEGORY_IMAGE =
   'https://cdn.expressapp.net/products/categories/default.webp';
 
-// (Opcional) Pequeño helper por si quieres tolerancia de acentos/espacios.
-// Si prefieres coincidencia 100% exacta, puedes quitar el fallback a slugify.
 const slugify = (s: string) =>
   s
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9\-]/g, '');
 
@@ -89,7 +89,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const { lockerIds, toggleLocker } = useLocker();
   const isB2B = variant === 'B2B';
 
-  // solo en Bodega Virtual + usuario negocio/ADMIN permitimos casillero
   const canUseLocker =
     isB2B &&
     (user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN');
@@ -101,7 +100,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const [category, setCategory] = useState<Category | undefined>(undefined);
   const [tag, setTag] = useState<string | undefined>(undefined);
 
-  // Cache local de stock (cuando el listado viene sin stock)
   const stockCacheRef = useRef<Record<number, number | null>>({});
   const pendingRef = useRef<Record<number, boolean>>({}); // anti multi-tap
 
@@ -114,22 +112,17 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
     },
   });
 
-  // ----- IMÁGENES DE CATEGORÍA (desde JSON en R2) -----
+  // ----- IMÁGENES DE CATEGORÍA (desde JSON en CDN) -----
   const { data: categoryImages } = useQuery<CategoryImagesMap>({
     queryKey: ['categoryImages', CATEGORY_IMAGES_URL],
     queryFn: async () => {
       const cached = await loadCategoryImagesFromCache();
       try {
         const fresh = await fetchCategoryImages();
-        // si vino vacío pero hay cache, usa cache
-        if (!fresh || Object.keys(fresh).length === 0) {
-          return cached ?? {};
-        }
-        // guarda y retorna
+        if (!fresh || Object.keys(fresh).length === 0) return cached ?? {};
         await saveCategoryImagesToCache(fresh);
         return fresh;
-      } catch (e) {
-        // en error, usa cache si existe
+      } catch {
         return cached ?? {};
       }
     },
@@ -138,9 +131,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
 
   const getCategoryImage = (label?: string) => {
     if (!label || !categoryImages) return DEFAULT_CATEGORY_IMAGE;
-    // Coincidencia exacta primero (lo que tú mantienes en el JSON)
     if (categoryImages[label]) return categoryImages[label];
-    // Fallback opcional a slug
     const s = slugify(label);
     if (categoryImages[s]) return categoryImages[s];
     return DEFAULT_CATEGORY_IMAGE;
@@ -225,7 +216,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
   const qtyInCart = (pid: number) =>
     cartItems.find((it: any) => it.productId === pid)?.qty ?? 0;
 
-  // Obtiene stock confiable: listado -> cache -> fetch detalle
   const ensureStock = async (item: Product): Promise<number | null> => {
     if (typeof item.stock === 'number') {
       stockCacheRef.current[item.id] = item.stock;
@@ -235,7 +225,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
     const cached = stockCacheRef.current[item.id];
     if (typeof cached === 'number' || cached === null) return cached;
 
-    if (pendingRef.current[item.id]) return null; // evita paralelizar
+    if (pendingRef.current[item.id]) return null;
     pendingRef.current[item.id] = true;
     try {
       const r = await api.get(`/products/${item.id}`);
@@ -243,9 +233,8 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
         typeof r.data?.stock === 'number' ? r.data.stock : null;
       stockCacheRef.current[item.id] = s;
 
-      // Si ya hay qty y excede el stock recién conocido, clampeamos
-      const q = qtyInCart(item.id);
-      if (typeof s === 'number' && q > s) setQty(item.id, s);
+      const qCart = qtyInCart(item.id);
+      if (typeof s === 'number' && qCart > s) setQty(item.id, s);
 
       return s;
     } catch {
@@ -310,7 +299,7 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
                 <Image
                   source={{ uri: getCategoryImage(item.label) }}
                   style={styles.catImage}
-                  resizeMode="contain"
+                  resizeMode="cover"
                 />
               </View>
               <Text
@@ -370,7 +359,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
           const unitPrice = isB2B ? item.b2bPrice : item.price;
           const productForCard: Product = { ...item, price: unitPrice };
 
-          // Stock efectivo para mostrar: cache > listado > null
           const cached = stockCacheRef.current[item.id];
           const effectiveStock =
             typeof cached === 'number'
@@ -382,20 +370,17 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
           const handleAdd = async () => {
             if (pendingRef.current[item.id]) return;
 
-            const s = await ensureStock(item); // null = desconocido
+            const s = await ensureStock(item);
             if (typeof s === 'number') {
-              if (qty >= s) return; // tope
+              if (qty >= s) return;
               add({
                 productId: item.id,
                 name: item.name,
                 price: unitPrice,
                 imageUrl: item.imageUrl ?? null,
-                stock: s, // guardamos el stock real en la línea
+                stock: s,
                 category: item.category ?? null,
               });
-            } else {
-              // Stock no disponible -> no arriesgar sobreventa (conservador)
-              return;
             }
           };
 
@@ -406,9 +391,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
             if (typeof s === 'number') {
               if (qty >= s) return;
               setQty(item.id, Math.min(qty + 1, s));
-            } else {
-              // sin stock conocido -> no incrementamos (conservador)
-              return;
             }
           };
 
@@ -429,7 +411,6 @@ export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
               onOpenDetail={() =>
                 navigation.navigate('ProductDetail', { id: item.id })
               }
-              // En Mercado (B2C): favoritos; en Bodega (B2B): casillero
               showFavorite={!canUseLocker}
               showLocker={canUseLocker}
               isInLocker={canUseLocker && lockerIds.has(item.id)}
@@ -459,8 +440,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#111' },
+
   catCard: {
-    width: 96, //Aquí ayuda a reducir los espacio entre categorias. tambien se pueden en el gap de contentContainerStyle y el padding vertical
+    width: 96,
     paddingVertical: 8,
     paddingHorizontal: 6,
     borderRadius: 14,
@@ -472,6 +454,7 @@ const styles = StyleSheet.create({
     minHeight: 92,
   },
   catCardActive: {},
+
   catThumb: {
     width: 52,
     height: 52,
@@ -482,15 +465,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    position: 'relative',
   },
   catThumbActive: {
     borderColor: '#0E8A3A',
     backgroundColor: '#E8F7EE',
   },
+
+  // ✅ Fix final: recorte circular + “zoom” para comerse padding interno del asset
   catImage: {
-    width: 34,
-    height: 34,
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 26,
+    transform: [{ scale: 1.35 }],
   },
+
   catLabel: {
     color: '#111',
     fontSize: 11,
