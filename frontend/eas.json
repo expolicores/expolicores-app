@@ -17,7 +17,7 @@
       }
     },
     "production": {
-      "android": { "buildType": "app-bundle" },   // ← antes decía "aab"
+      "android": { "buildType": "app-bundle" },
       "ios": { "image": "latest", "resourceClass": "m-medium" },
       "channel": "production",
       "env": {
