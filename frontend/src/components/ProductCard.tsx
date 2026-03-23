@@ -1,11 +1,14 @@
 // src/components/ProductCard.tsx
-import React, { useMemo, useState } from 'react';
-import { View, Text, Image, StyleSheet, Pressable, Alert } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, Image, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import type { Product } from '../types/product';
+import { useFavorites } from '../hooks/useFavorites';
+import { formatCurrency } from '../lib/formatCurrency';
+import { resolveProductImageUri } from '../lib/image';
 
 type Props = {
   product: Product;
@@ -20,6 +23,14 @@ type Props = {
 
   showFavorite?: boolean;
   onOpenDetail?: () => void;
+
+  /** ====== NUEVO: Casillero B2B ====== */
+  /** Si true, muestra el icono de casillero en la esquina inferior derecha de la imagen */
+  showLocker?: boolean;
+  /** Indica si este producto ya está en el casillero del usuario */
+  isInLocker?: boolean;
+  /** Handler para alternar en casillero (add/remove) */
+  onToggleLocker?: () => void;
 };
 
 const COLORS = {
@@ -27,7 +38,7 @@ const COLORS = {
   border: '#E5E7EB',
   bg: '#FFFFFF',
   imgBg: '#F3F4F6',
-  green: '#0E8A3A', // CTA Boyacá
+  green: '#0E8A3A', // CTA Boyaca
   greenLight: '#E8F3EC',
   grayText: '#6B7280',
   red: '#D32F2F',
@@ -43,12 +54,22 @@ export default function ProductCard({
   onRemove,
   showFavorite = true,
   onOpenDetail,
+
+  showLocker = false,
+  isInLocker = false,
+  onToggleLocker,
 }: Props) {
   const navigation = useNavigation<any>();
-  const { user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const cart = useCart();
+  const { favoriteIds, toggleFavorite, isMutating } = useFavorites();
 
-  // ===== MODO AUTÓNOMO (si no vienen handlers/cantidad desde el padre) =====
+  const productImageUri = useMemo(
+    () => resolveProductImageUri(product.imageUrl),
+    [product.imageUrl],
+  );
+
+  // ===== MODO AUTONOMO =====
   const autonomous = typeof quantity !== 'number' && !onAdd && !onInc && !onDec;
 
   const qtyFromCart = useMemo(() => {
@@ -56,10 +77,8 @@ export default function ProductCard({
     return cart.items.find((it: any) => it.productId === product.id)?.qty ?? 0;
   }, [autonomous, cart.items, product.id]);
 
-  // Cantidad efectiva que se muestra
   const effectiveQty = autonomous ? qtyFromCart : quantity ?? 0;
 
-  // Stock efectivo: number -> limitado, null/undefined -> sin límite conocido
   const productStock =
     (typeof stock === 'number' ? stock : (product as any).stock) as
       | number
@@ -71,31 +90,30 @@ export default function ProductCard({
   const isOutOfStock = effectiveStock === 0;
   const canInc = effectiveStock == null ? true : effectiveQty < effectiveStock;
 
-  // ===== Handlers efectivos =====
+  // ===== Handlers carrito =====
   const addOne = () => {
-    if (atMax) return; // 🚫 no exceder stock
+    if (atMax) return;
     if (!autonomous) return onAdd?.();
 
-    // Si tu CartContext tiene add(product) úsalo; si no, subimos qty con setQty
     const existing = qtyFromCart;
     if (typeof cart.add === 'function') {
-      // muchos proyectos definen add(product)
       cart.add({
         productId: product.id,
         name: product.name,
         price: product.price,
-        imageUrl: product.imageUrl ?? undefined,
+        imageUrl: productImageUri,
         stock: (product as any).stock ?? undefined,
         category: (product as any).category ?? null,
       });
     } else if (typeof cart.setQty === 'function') {
-      const next = effectiveStock == null ? existing + 1 : Math.min(existing + 1, effectiveStock);
+      const next =
+        effectiveStock == null ? existing + 1 : Math.min(existing + 1, effectiveStock);
       cart.setQty(product.id, next);
     }
   };
 
   const incOne = () => {
-    if (atMax) return; // 🚫
+    if (atMax) return;
     if (!autonomous) return onInc?.();
 
     if (typeof cart.add === 'function') {
@@ -103,12 +121,15 @@ export default function ProductCard({
         productId: product.id,
         name: product.name,
         price: product.price,
-        imageUrl: product.imageUrl ?? undefined,
+        imageUrl: productImageUri,
         stock: (product as any).stock ?? undefined,
         category: (product as any).category ?? null,
       });
     } else if (typeof cart.setQty === 'function') {
-      const next = effectiveStock == null ? effectiveQty + 1 : Math.min(effectiveQty + 1, effectiveStock);
+      const next =
+        effectiveStock == null
+          ? effectiveQty + 1
+          : Math.min(effectiveQty + 1, effectiveStock);
       cart.setQty(product.id, next);
     }
   };
@@ -118,7 +139,6 @@ export default function ProductCard({
     if (effectiveQty > 1) {
       cart.setQty(product.id, effectiveQty - 1);
     } else {
-      // qty === 1 -> eliminar
       if (typeof cart.remove === 'function') cart.remove(product.id);
       else cart.setQty(product.id, 0);
     }
@@ -130,22 +150,20 @@ export default function ProductCard({
     else cart.setQty(product.id, 0);
   };
 
-  // ===== Favoritos (login-gate) =====
-  const [fav, setFav] = useState(false);
+  // ===== Favoritos =====
+  const isFavorite = (product.isFavorite ?? false) || favoriteIds.has(product.id);
   const handleFavorite = () => {
-    if (!user) {
-      Alert.alert(
-        'Inicia sesión',
-        'Necesitas estar logueado para guardar favoritos.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Ingresar', onPress: () => navigation.navigate('Login') },
-        ],
-      );
+    if (!isAuthenticated) {
+      navigation.navigate('Login', { message: 'Inicia sesion para guardar favoritos' });
       return;
     }
-    setFav((v) => !v);
-    // TODO: integrar /favorites
+    toggleFavorite(product);
+  };
+
+  // ===== Casillero =====
+  const handleToggleLocker = () => {
+    if (!onToggleLocker) return;
+    onToggleLocker();
   };
 
   const goToDetail = () => {
@@ -153,32 +171,92 @@ export default function ProductCard({
     navigation.navigate('ProductDetail', { id: product.id });
   };
 
+  const remainingStock =
+    typeof effectiveStock === 'number'
+      ? Math.max(effectiveStock - effectiveQty, 0)
+      : null;
+
   return (
     <View style={styles.card}>
       <Pressable style={{ flex: 1 }} onPress={goToDetail}>
-        <Image
-          source={{ uri: product.imageUrl ?? 'https://via.placeholder.com/300' }}
-          style={styles.image}
-        />
+        <View style={styles.imageWrapper}>
+          <Image
+            source={{ uri: productImageUri }}
+            style={styles.image}
+            resizeMode="contain" // evita recortes
+          />
+
+          {/* Favorito en esquina superior derecha de la imagen */}
+          {showFavorite && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                handleFavorite();
+              }}
+              style={[styles.favBtn, isMutating && { opacity: 0.6 }]}
+              hitSlop={8}
+              accessibilityLabel={
+                isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'
+              }
+              disabled={isMutating}
+            >
+              <Ionicons
+                name={isFavorite ? 'heart' : 'heart-outline'}
+                size={20}
+                color={isFavorite ? '#EF4444' : '#111'}
+              />
+            </Pressable>
+          )}
+
+          {/* NUEVO: Casillero en esquina inferior derecha de la imagen */}
+          {showLocker && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                handleToggleLocker();
+              }}
+              style={[
+                styles.lockerBtn,
+                isInLocker && styles.lockerBtnActive,
+              ]}
+              hitSlop={8}
+              accessibilityLabel={
+                isInLocker
+                  ? 'Quitar de mi casillero'
+                  : 'Agregar a mi casillero'
+              }
+            >
+              <Ionicons
+                name={isInLocker ? 'cube' : 'cube-outline'}
+                size={18}
+                color={isInLocker ? COLORS.green : '#4B5563'}
+              />
+            </Pressable>
+          )}
+        </View>
+
         <Text style={styles.name} numberOfLines={2}>
           {product.name}
         </Text>
         <Text style={styles.price}>
-          ${product.price.toLocaleString('es-CO')}
+          {formatCurrency(product.price)}
         </Text>
         {typeof effectiveStock === 'number' && (
-          <Text style={styles.stockHint}>Stock: {effectiveStock}</Text>
+          <Text style={styles.stockHint}>
+            Stock: {remainingStock} / {effectiveStock}
+          </Text>
         )}
       </Pressable>
 
-      {/* Acción principal: Agregar / Contador / Agotado */}
       {effectiveQty > 0 ? (
         <>
           <View style={styles.counter}>
             <Pressable
               onPress={effectiveQty === 1 ? removeLine : decOne}
               style={[styles.roundBtn, effectiveQty === 1 && styles.deleteBtn]}
-              accessibilityLabel={effectiveQty === 1 ? 'Eliminar del carrito' : 'Disminuir'}
+              accessibilityLabel={
+                effectiveQty === 1 ? 'Eliminar del carrito' : 'Disminuir'
+              }
             >
               {effectiveQty === 1 ? (
                 <Ionicons name="trash-outline" size={18} color={COLORS.red} />
@@ -200,27 +278,20 @@ export default function ProductCard({
               <Ionicons name="add" size={18} color="#fff" />
             </Pressable>
           </View>
-          {atMax && <Text style={styles.stockNote}>Sin más stock</Text>}
+          {atMax && <Text style={styles.stockNote}>Sin mas stock</Text>}
         </>
       ) : isOutOfStock ? (
         <View style={[styles.addBtn, { backgroundColor: '#E5E7EB' }]}>
           <Text style={[styles.addText, { color: COLORS.grayText }]}>Agotado</Text>
         </View>
       ) : (
-        <Pressable onPress={addOne} style={styles.addBtn} accessibilityLabel={`Agregar ${product.name}`}>
+        <Pressable
+          onPress={addOne}
+          style={styles.addBtn}
+          accessibilityLabel={`Agregar ${product.name}`}
+        >
           <Ionicons name="add" size={18} color="#FFF" />
           <Text style={styles.addText}>Agregar</Text>
-        </Pressable>
-      )}
-
-      {showFavorite && (
-        <Pressable
-          onPress={handleFavorite}
-          style={styles.favBtn}
-          hitSlop={8}
-          accessibilityLabel="Agregar a favoritos"
-        >
-          <Ionicons name={fav ? 'heart' : 'heart-outline'} size={20} color={fav ? '#EF4444' : '#111'} />
         </Pressable>
       )}
     </View>
@@ -236,11 +307,18 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     padding: 10,
   },
+  imageWrapper: {
+    width: '100%',
+    height: 138,
+    borderRadius: 12,
+    backgroundColor: COLORS.bg, // fondo blanco para la “bodeguita”
+    overflow: 'hidden',
+    position: 'relative',
+    marginTop: 6,
+  },
   image: {
     width: '100%',
-    height: 120,
-    borderRadius: 12,
-    backgroundColor: COLORS.imgBg,
+    height: '100%',
   },
   name: { marginTop: 8, color: COLORS.text, fontWeight: '600' },
   price: { color: COLORS.text, marginTop: 4, fontWeight: '800' },
@@ -303,4 +381,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
+  lockerBtn: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    backgroundColor: '#FFFFFFE6',
+    padding: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  lockerBtnActive: {
+    borderColor: COLORS.green,
+    backgroundColor: '#E8F3EC',
+  },
 });
+

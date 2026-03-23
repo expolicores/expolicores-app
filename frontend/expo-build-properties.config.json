@@ -1,0 +1,6 @@
+{
+  "ios": {
+    "deploymentTarget": "26.0",
+    "useFrameworks": "static"
+  }
+}

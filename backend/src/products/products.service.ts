@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './create-product.dto';
 import { UpdateProductDto } from './update-product.dto';
-import { QueryProductsDto, SortOption } from './query-products.dto';
+import { QueryProductsDto, SortOption, TagOption } from './query-products.dto';
 
 @Injectable()
 export class ProductsService {
@@ -11,7 +11,12 @@ export class ProductsService {
 
   // ---------- CRUD (admin) ----------
   async create(data: CreateProductDto) {
-    return this.prisma.product.create({ data });
+    return this.prisma.product.create({
+      data: {
+        ...data,
+        b2bPrice: data.b2bPrice ?? data.price,
+      },
+    });
   }
 
   findAll() {
@@ -30,12 +35,60 @@ export class ProductsService {
     return this.prisma.product.delete({ where: { id } });
   }
 
-  // ---------- Catálogo (público) ----------
+  async getPriceList(audience: 'B2C' | 'B2B') {
+    const orderBy: Prisma.ProductOrderByWithRelationInput =
+      audience === 'B2B' ? { updatedAt: 'desc' } : { name: 'asc' };
+
+    const select = {
+      id: true,
+      name: true,
+      price: true,
+      b2bPrice: true,
+      imageUrl: true,
+      category: true,
+      stock: true,
+      description: true,
+      createdAt: true,
+      updatedAt: true,
+    } satisfies Prisma.ProductSelect;
+
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.product.count(),
+      this.prisma.product.findMany({
+        select,
+        orderBy,
+      }),
+    ]);
+
+    return {
+      total,
+      items: items.map((item) => ({
+        ...item,
+        b2bPrice: item.b2bPrice ?? item.price,
+      })),
+    };
+  }
+
+  // ---------- Catálogo publico ----------
   async listPublic() {
-    return this.prisma.product.findMany({
-      select: { id: true, name: true, price: true, imageUrl: true, category: true },
+    const items = await this.prisma.product.findMany({
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        b2bPrice: true,
+        imageUrl: true,
+        category: true,
+        stock: true,
+        description: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
+
+    return items.map((item) => ({
+      ...item,
+      b2bPrice: item.b2bPrice ?? item.price,
+    }));
   }
 
   async listCategories() {
@@ -48,71 +101,148 @@ export class ProductsService {
     return rows.map((r) => r.category as string);
   }
 
-  // ---------- Nuevo: búsqueda + filtros + orden + paginación ----------
-  private orderBySql(sort: SortOption | undefined) {
+  async findPublicBasicsByIds(ids: number[]) {
+    if (!ids.length) return [];
+
+    const rows = await this.prisma.product.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        price: true,
+        b2bPrice: true,
+        stock: true,
+      },
+    });
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return ids
+      .map((id) => byId.get(id))
+      .filter((row): row is (typeof rows)[number] => !!row)
+      .map((row) => ({
+        ...row,
+        b2bPrice: row.b2bPrice ?? row.price,
+      }));
+  }
+
+  // ---------- Búsqueda + filtros + orden + paginación ----------
+  private resolveOrderBy(sort: SortOption | undefined): Prisma.ProductOrderByWithRelationInput {
     switch (sort) {
       case 'price_asc':
-        return Prisma.sql`"price" ASC`;
+        return { price: 'asc' };
       case 'price_desc':
-        return Prisma.sql`"price" DESC`;
+        return { price: 'desc' };
       case 'name_asc':
-        return Prisma.sql`unaccent(lower("name")) ASC`;
+        return { name: 'asc' };
       case 'name_desc':
-        return Prisma.sql`unaccent(lower("name")) DESC`;
+        return { name: 'desc' };
       case 'newest':
       default:
-        return Prisma.sql`"createdAt" DESC`;
+        return { createdAt: 'desc' };
     }
   }
 
-  /**
-   * Requiere: CREATE EXTENSION IF NOT EXISTS unaccent;
-   */
+  private applyTagFilter(where: Prisma.ProductWhereInput, tag?: TagOption) {
+    if (!tag) return;
+
+    const addAnd = (clause: Prisma.ProductWhereInput) => {
+      if (!where.AND) {
+        where.AND = clause;
+      } else if (Array.isArray(where.AND)) {
+        where.AND.push(clause);
+      } else {
+        where.AND = [where.AND, clause];
+      }
+    };
+
+    const addOr = (...clauses: Prisma.ProductWhereInput[]) => {
+      const existing = where.OR;
+      const buffer = Array.isArray(existing)
+        ? existing.slice()
+        : existing
+        ? [existing]
+        : [];
+      buffer.push(...clauses);
+      where.OR = buffer;
+    };
+
+    switch (tag) {
+      case 'low_price':
+        addAnd({ price: { lte: 16_000 } });
+        break;
+      case 'oferta':
+        addOr(
+          { name: { contains: 'oferta', mode: 'insensitive' } },
+          { description: { contains: 'oferta', mode: 'insensitive' } },
+          { name: { contains: 'promo', mode: 'insensitive' } },
+          { description: { contains: 'promo', mode: 'insensitive' } },
+          { name: { contains: 'descuento', mode: 'insensitive' } },
+          { description: { contains: 'descuento', mode: 'insensitive' } },
+        );
+        break;
+      case 'pack':
+        addOr(
+          { name: { contains: 'pack', mode: 'insensitive' } },
+          { name: { contains: 'combo', mode: 'insensitive' } },
+          { description: { contains: 'pack', mode: 'insensitive' } },
+          { description: { contains: 'combo', mode: 'insensitive' } },
+        );
+        break;
+    }
+  }
+
   async findPublicWithQuery(query: QueryProductsDto) {
     const qRaw = (query.q ?? '').trim();
     const category = (query.category ?? '').trim();
     const page = Math.max(1, Number(query.page ?? 1));
     const limit = Math.min(50, Math.max(1, Number(query.limit ?? 20)));
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
     const sort = (query.sort as SortOption) ?? 'newest';
 
-    const conds: Prisma.Sql[] = [];
+    const where: Prisma.ProductWhereInput = {};
 
     if (qRaw) {
-      const like = `%${qRaw}%`;
-      conds.push(
-        Prisma.sql`(unaccent(lower("name")) LIKE unaccent(lower(${like}))
-                 OR unaccent(lower("description")) LIKE unaccent(lower(${like})))`,
-      );
+      where.OR = [
+        { name: { contains: qRaw, mode: 'insensitive' } },
+        { description: { contains: qRaw, mode: 'insensitive' } },
+      ];
     }
+
     if (category) {
-      conds.push(Prisma.sql`"category" = ${category}`);
+      where.category = { equals: category };
     }
-    // conds.push(Prisma.sql`"stock" > 0`); // opcional
 
-    // ⚠️ En tu versión, el separador de Prisma.join debe ser string, no Prisma.sql
-    const where =
-      conds.length > 0
-        ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}`
-        : Prisma.empty;
+    this.applyTagFilter(where, query.tag);
 
-    const orderBy = this.orderBySql(sort);
+    const orderBy = this.resolveOrderBy(sort);
 
-    const items = await this.prisma.$queryRaw<
-      { id: number; name: string; price: number; imageUrl: string | null; category: string | null }[]
-    >(Prisma.sql`
-      SELECT "id","name","price","imageUrl","category"
-      FROM "Product"
-      ${where}
-      ORDER BY ${orderBy}
-      LIMIT ${limit} OFFSET ${offset};
-    `);
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          b2bPrice: true,
+          imageUrl: true,
+          category: true,
+          stock: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
 
-    const totalRow = await this.prisma.$queryRaw<{ count: bigint }[]>(
-      Prisma.sql`SELECT COUNT(*)::bigint AS count FROM "Product" ${where};`,
-    );
-    const total = Number(totalRow[0]?.count ?? 0);
-
-    return { total, items };
+    return {
+      total,
+      items: items.map((item) => ({
+        ...item,
+        b2bPrice: item.b2bPrice ?? item.price,
+      })),
+    };
   }
 }

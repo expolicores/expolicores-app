@@ -1,24 +1,58 @@
-import { Injectable, NotFoundException /*, BadRequestException */ } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { UpdateUserDto } from './update-user.dto';
-import * as bcrypt from 'bcrypt';
+// backend/src/users/users.service.ts
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 import { Role } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+
+type UpdateMeInput = {
+  name?: string;
+  email?: string | null;
+  /** Alias que puede venir del front; si viene y no hay `email`, se usa este. */
+  emailEnroll?: string | null;
+  /** Cambiar phone desde aquí NO verifica OTP. Si se cambia, se marca isPhoneVerified=false. */
+  phone?: string | null;
+  password?: string | null;
+};
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Nunca devolvemos el hash de password
+  /** Proyección segura: nunca devolvemos password ni campos sensibles */
   private readonly safeUserSelect = {
     id: true,
-    email: true,
     name: true,
+    email: true,
     phone: true,
     role: true,
+    isEmailVerified: true,
+    isPhoneVerified: true,
     createdAt: true,
     updatedAt: true,
+    // NOTA: `deletedAt` no se expone aquí a propósito
   } as const;
 
+  // ===== Helpers =====
+  private normalizeEmail(email?: string | null) {
+    const s = String(email ?? '').trim().toLowerCase();
+    return s.length ? s : null;
+  }
+
+  /** Normaliza a E.164 CO (+57...). Acepta “+57…”, “57…”, “03…”, “3…”. */
+  private normalizePhone(raw?: string | null) {
+    const v = String(raw ?? '').trim();
+    if (!v) return null;
+    if (v.startsWith('+')) return v;
+    const digits = v.replace(/\D/g, '').replace(/^0+/, '');
+    const withCountry = digits.startsWith('57') ? digits : `57${digits}`;
+    return `+${withCountry}`;
+  }
+
+  // ===== Lectura =====
   async findAll() {
     return this.prisma.user.findMany({ select: this.safeUserSelect });
   }
@@ -32,24 +66,198 @@ export class UsersService {
     return user;
   }
 
-  // Actualización de datos del propio usuario (o admin sobre cualquier id)
-  async updateSelf(id: number, dto: UpdateUserDto) {
-    const data: any = {};
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.phone !== undefined) data.phone = dto.phone;
-    if (dto.password !== undefined) {
-      data.password = await bcrypt.hash(dto.password, 10);
-    }
-
-    const user = await this.prisma.user.update({
+  /** Versión pública/segura por id (para /users/me) */
+  async findPublicById(id: number) {
+    const user = await this.prisma.user.findUnique({
       where: { id },
-      data,
       select: this.safeUserSelect,
     });
+    if (!user) throw new NotFoundException('User not found');
     return user;
   }
 
-  // Cambiar rol (solo ADMIN)
+  // ===== Escritura (perfil propio) =====
+  /**
+   * Actualiza el propio perfil del usuario autenticado.
+   * - `name`: texto (min 2).
+   * - `email` o `emailEnroll`: normaliza y garantiza unicidad; marca isEmailVerified=false.
+   * - `phone`: **opcional**; si cambia, normaliza a E.164 y marca isPhoneVerified=false.
+   * - `password`: compat (hash).
+   *
+   * Nota: la verificación OTP de teléfono NO se hace aquí.
+   */
+  async updateMe(userId: number, data: UpdateMeInput) {
+    const patch: any = {};
+
+    // name
+    if (typeof data.name === 'string') {
+      const name = data.name.trim();
+      if (name.length < 2) throw new BadRequestException('Nombre demasiado corto.');
+      patch.name = name;
+    }
+
+    // Resolver fuente de email: `email` tiene prioridad; si no, `emailEnroll`
+    const incomingEmailRaw =
+      data.email !== undefined ? data.email : data.emailEnroll;
+
+    if (incomingEmailRaw !== undefined) {
+      const email = this.normalizeEmail(incomingEmailRaw);
+      const current = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+
+      // Si realmente cambia el email…
+      if ((current?.email ?? null) !== (email ?? null)) {
+        if (email) {
+          const exists = await this.prisma.user.findUnique({ where: { email } });
+          if (exists && exists.id !== userId) {
+            throw new BadRequestException('Ese correo ya está en uso.');
+          }
+        }
+        patch.email = email; // puede ser null para limpiar
+        patch.isEmailVerified = false;
+        // TODO: opcional — generar token y enviar verificación por correo
+      }
+    }
+
+    // phone — si decides permitirlo desde perfil (sin OTP). Se marca como no verificado.
+    if (data.phone !== undefined) {
+      const newPhone = this.normalizePhone(data.phone);
+      const current = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { phone: true },
+      });
+
+      if ((current?.phone ?? null) !== (newPhone ?? null)) {
+        if (newPhone) {
+          // Chequear unicidad si hay índice único condicional en phone
+          const clash = await this.prisma.user.findUnique({
+            where: { phone: newPhone },
+          });
+          if (clash && clash.id !== userId) {
+            throw new BadRequestException('Ese teléfono ya está asociado a otra cuenta.');
+          }
+        }
+        patch.phone = newPhone; // puede ser null para limpiar
+        patch.isPhoneVerified = false;
+      }
+    }
+
+    // password (compat)
+    if (data.password) {
+      if (String(data.password).length < 8) {
+        throw new BadRequestException('La contraseña debe tener al menos 8 caracteres.');
+      }
+      patch.password = await bcrypt.hash(String(data.password), 10);
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return this.findPublicById(userId);
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: patch,
+    });
+
+    return this.findPublicById(userId);
+  }
+
+  /**
+   * Compat: algunos controladores antiguos llamaban updateSelf.
+   * Redirige a updateMe.
+   */
+  async updateSelf(id: number, dto: UpdateMeInput) {
+    return this.updateMe(id, dto);
+  }
+
+  /**
+   * Elimina la propia cuenta (soft delete + limpieza básica de datos personales).
+   * - Anonimiza el usuario (name/email/phone/password/OTP).
+   * - Marca `deletedAt`.
+   * - Limpia tokens push, favoritos, direcciones y tokens de verificación de email.
+   * - NO borra órdenes para mantener historial operativo.
+   */
+  async deleteSelf(userId: number) {
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        deletedAt: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Idempotente: si ya estaba eliminada, devolvemos OK
+    if (existing.deletedAt) {
+      return { id: userId, deleted: true };
+    }
+
+    await this.prisma.$transaction([
+      // Limpieza de “cosas vivas”
+      this.prisma.userPushToken.deleteMany({ where: { userId } }),
+      this.prisma.favorite.deleteMany({ where: { userId } }),
+      this.prisma.address.deleteMany({ where: { userId } }),
+      this.prisma.emailVerificationToken.deleteMany({ where: { userId } }),
+
+      // Anonimizar usuario y marcar eliminado
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          name: 'Cuenta eliminada',
+          email: null,
+          phone: null,
+          password: null,
+          isEmailVerified: false,
+          isPhoneVerified: false,
+          otpCodeHash: null,
+          otpExpiresAt: null,
+          lastOtpSentAt: null,
+          deletedAt: new Date(),
+        },
+      }),
+    ]);
+
+    return { id: userId, deleted: true };
+  }
+
+  // ===== Feedback de usuario =====
+  async createFeedback(userId: number, message: string) {
+    const trimmed = (message ?? '').trim();
+
+    if (trimmed.length < 5) {
+      throw new BadRequestException('El comentario es muy corto.');
+    }
+
+    // Verificamos que el usuario exista y no esté soft-deleted
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, deletedAt: true },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new NotFoundException('User not found');
+    }
+
+    const feedback = await this.prisma.userFeedback.create({
+      data: {
+        userId,
+        message: trimmed,
+      },
+    });
+
+    // Podemos devolver solo datos mínimos; el contenido ya lo tiene el cliente
+    return {
+      id: feedback.id,
+      createdAt: feedback.createdAt,
+    };
+  }
+
+  // ===== Admin =====
   async updateRole(id: number, role: Role) {
     const user = await this.prisma.user.update({
       where: { id },
@@ -65,12 +273,35 @@ export class UsersService {
   }
 
   /* (Opcional) Crear usuarios desde ADMIN
-  async createByAdmin(dto: { name: string; email: string; phone: string; password: string; role?: Role }) {
-    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (exists) throw new BadRequestException('Email ya registrado');
-    const password = await bcrypt.hash(dto.password, 10);
+  async createByAdmin(dto: {
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    password?: string | null;
+    role?: Role;
+  }) {
+    const email = this.normalizeEmail(dto.email);
+    if (email) {
+      const exists = await this.prisma.user.findUnique({ where: { email } });
+      if (exists) throw new BadRequestException('Email ya registrado');
+    }
+    const phone = this.normalizePhone(dto.phone);
+    if (phone) {
+      const clash = await this.prisma.user.findUnique({ where: { phone } });
+      if (clash) throw new BadRequestException('Teléfono ya registrado');
+    }
+    const password = dto.password ? await bcrypt.hash(dto.password, 10) : null;
+
     const user = await this.prisma.user.create({
-      data: { name: dto.name, email: dto.email, phone: dto.phone, password, role: dto.role ?? 'CLIENTE' },
+      data: {
+        name: dto.name.trim(),
+        email,
+        phone,
+        password,
+        role: dto.role ?? ('USER' as Role),
+        isEmailVerified: false,
+        isPhoneVerified: !!phone && false,
+      },
       select: this.safeUserSelect,
     });
     return user;

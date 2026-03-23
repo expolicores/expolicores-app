@@ -1,49 +1,105 @@
 // src/screens/MarketScreen.tsx
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  SafeAreaView,
   View,
   Text,
+  ActivityIndicator,
   StyleSheet,
   FlatList,
   Pressable,
   TextInput,
   RefreshControl,
+  Image,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useIsFocused, useRoute } from '@react-navigation/native';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../lib/api';
 import { useCart } from '../context/CartContext';
 import ProductCard from '../components/ProductCard';
+import type { Product } from '../types/product';
+import { useFavorites } from '../hooks/useFavorites';
+import { useAuth } from '../context/AuthContext';
+import { useLocker } from '../hooks/useLocker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Category = string;
-export type Product = {
-  id: number;
-  name: string;
-  price: number;
-  imageUrl?: string | null;
-  stock?: number | null;     // en listado puede llegar null
-  category?: string | null;
-};
 type Paged = { items: Product[]; nextPage?: number | null };
+
+const AUTO_REFRESH_INTERVAL = 10_000;
+type MarketScreenProps = { variant?: 'B2C' | 'B2B' };
 
 // Tags virtuales (UI)
 const VIRTUAL_TAGS = [
   { key: 'oferta', label: 'Ofertas' },
-  { key: 'low_price', label: '≤ $16.000' },
+  { key: 'low_price', label: '<= $16.000' },
   { key: 'pack', label: 'Packs' },
 ];
 
-export default function MarketScreen() {
-  const navigation = useNavigation<any>();
-  const { items: cartItems, add, setQty, remove } = useCart() as any;
+type CategoryImagesMap = Record<string, string>;
+const CATEGORY_IMAGES_URL =
+  process.env.EXPO_PUBLIC_CATEGORY_IMAGES_URL ||
+  'https://cdn.expressapp.net/products/categories/map.json';
 
-  const [q, setQ] = useState('');
+const CATEGORY_IMAGES_CACHE_KEY = 'cat:images:v1';
+const DEFAULT_CATEGORY_IMAGE =
+  'https://cdn.expressapp.net/products/categories/default.webp';
+
+const slugify = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9\-]/g, '');
+
+async function loadCategoryImagesFromCache(): Promise<CategoryImagesMap | null> {
+  try {
+    const raw = await AsyncStorage.getItem(CATEGORY_IMAGES_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as CategoryImagesMap) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCategoryImagesToCache(map: CategoryImagesMap) {
+  try {
+    await AsyncStorage.setItem(CATEGORY_IMAGES_CACHE_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+async function fetchCategoryImages(): Promise<CategoryImagesMap> {
+  const res = await fetch(CATEGORY_IMAGES_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`No se pudo cargar CATEGORY_IMAGES_URL (${res.status})`);
+  const data = (await res.json()) as CategoryImagesMap;
+  return data && typeof data === 'object' ? data : {};
+}
+
+export default function MarketScreen({ variant = 'B2C' }: MarketScreenProps) {
+  const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const isFocused = useIsFocused();
+  const listRef = useRef<FlatList<Product> | null>(null);
+  const lastSearchTokenRef = useRef<unknown>(null);
+  const { items: cartItems, add, setQty, remove } = useCart() as any;
+  const { favoriteIds } = useFavorites();
+  const { user } = useAuth();
+  const { lockerIds, toggleLocker } = useLocker();
+  const isB2B = variant === 'B2B';
+
+  const canUseLocker =
+    isB2B &&
+    (user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN');
+
+  const [q, setQ] = useState(() => {
+    const initial = route?.params?.initialQuery;
+    return typeof initial === 'string' ? initial : '';
+  });
   const [category, setCategory] = useState<Category | undefined>(undefined);
   const [tag, setTag] = useState<string | undefined>(undefined);
 
-  // Cache local de stock (cuando el listado viene sin stock)
   const stockCacheRef = useRef<Record<number, number | null>>({});
   const pendingRef = useRef<Record<number, boolean>>({}); // anti multi-tap
 
@@ -56,6 +112,31 @@ export default function MarketScreen() {
     },
   });
 
+  // ----- IMÁGENES DE CATEGORÍA (desde JSON en CDN) -----
+  const { data: categoryImages } = useQuery<CategoryImagesMap>({
+    queryKey: ['categoryImages', CATEGORY_IMAGES_URL],
+    queryFn: async () => {
+      const cached = await loadCategoryImagesFromCache();
+      try {
+        const fresh = await fetchCategoryImages();
+        if (!fresh || Object.keys(fresh).length === 0) return cached ?? {};
+        await saveCategoryImagesToCache(fresh);
+        return fresh;
+      } catch {
+        return cached ?? {};
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const getCategoryImage = (label?: string) => {
+    if (!label || !categoryImages) return DEFAULT_CATEGORY_IMAGE;
+    if (categoryImages[label]) return categoryImages[label];
+    const s = slugify(label);
+    if (categoryImages[s]) return categoryImages[s];
+    return DEFAULT_CATEGORY_IMAGE;
+  };
+
   // ----- PRODUCTOS (paginado) -----
   const {
     data,
@@ -65,7 +146,7 @@ export default function MarketScreen() {
     refetch,
     isFetching,
   } = useInfiniteQuery<Paged>({
-    queryKey: ['products', { q, category, tag }],
+    queryKey: ['products', { q, category, tag, variant }],
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       const r = await api.get('/products', {
@@ -73,27 +154,78 @@ export default function MarketScreen() {
       });
       const total = parseInt(r.headers['x-total-count'] || '0', 10);
       const next = pageParam * 20 < total ? pageParam + 1 : null;
-      return { items: r.data as Product[], nextPage: next };
+      const rawItems = Array.isArray(r.data) ? (r.data as Product[]) : [];
+      const items = rawItems.map((item) => ({
+        ...item,
+        b2bPrice:
+          typeof item.b2bPrice === 'number' && !Number.isNaN(item.b2bPrice)
+            ? item.b2bPrice
+            : item.price,
+      }));
+      return { items, nextPage: next };
     },
     getNextPageParam: (last) => last.nextPage ?? undefined,
+    refetchInterval: isFocused ? AUTO_REFRESH_INTERVAL : false,
+    refetchIntervalInBackground: false,
+    staleTime: AUTO_REFRESH_INTERVAL,
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
+    retry: 1,
+    placeholderData: (prev) => prev,
   });
 
-  const products = useMemo(
-    () => data?.pages.flatMap((p) => p.items) ?? [],
-    [data],
+  useEffect(() => {
+    const nextQueryParam = route?.params?.initialQuery;
+    const token = route?.params?.searchToken ?? nextQueryParam;
+
+    if (typeof nextQueryParam !== 'string') return;
+    const trimmed = nextQueryParam.trim();
+    if (!trimmed.length) return;
+
+    const tokenKey = token ?? trimmed;
+    if (lastSearchTokenRef.current === tokenKey) return;
+
+    lastSearchTokenRef.current = tokenKey;
+    setQ(trimmed);
+    setCategory(undefined);
+    setTag(undefined);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    refetch();
+  }, [route?.params?.initialQuery, route?.params?.searchToken, refetch]);
+
+  const favoriteKey = useMemo(
+    () => Array.from(favoriteIds).join(','),
+    [favoriteIds],
   );
+
+  const products = useMemo(() => {
+    const flat = data?.pages.flatMap((p) => p.items) ?? [];
+    return flat.map((item) => ({
+      ...item,
+      // en Bodega mostramos precio B2B; en Mercado, precio público
+      price: isB2B ? item.b2bPrice : item.price,
+      isFavorite: favoriteIds.has(item.id),
+    }));
+  }, [data, isB2B, favoriteKey, favoriteIds]);
+
+  const isInitialLoad = !data && isFetching && !isFetchingNextPage;
+  const isRefreshing = !!data && isFetching && !isFetchingNextPage;
 
   const qtyInCart = (pid: number) =>
     cartItems.find((it: any) => it.productId === pid)?.qty ?? 0;
 
-  // Obtiene stock confiable: listado -> cache -> fetch detalle
   const ensureStock = async (item: Product): Promise<number | null> => {
-    if (typeof item.stock === 'number') return item.stock;
+    if (typeof item.stock === 'number') {
+      stockCacheRef.current[item.id] = item.stock;
+      return item.stock;
+    }
 
     const cached = stockCacheRef.current[item.id];
     if (typeof cached === 'number' || cached === null) return cached;
 
-    if (pendingRef.current[item.id]) return null; // evita paralelizar
+    if (pendingRef.current[item.id]) return null;
     pendingRef.current[item.id] = true;
     try {
       const r = await api.get(`/products/${item.id}`);
@@ -101,9 +233,8 @@ export default function MarketScreen() {
         typeof r.data?.stock === 'number' ? r.data.stock : null;
       stockCacheRef.current[item.id] = s;
 
-      // Si ya hay qty y excede el stock recién conocido → clampeamos
-      const q = qtyInCart(item.id);
-      if (typeof s === 'number' && q > s) setQty(item.id, s);
+      const qCart = qtyInCart(item.id);
+      if (typeof s === 'number' && qCart > s) setQty(item.id, s);
 
       return s;
     } catch {
@@ -132,28 +263,49 @@ export default function MarketScreen() {
       {/* Chips: virtuales + reales */}
       <FlatList
         data={[
-          ...VIRTUAL_TAGS.map((t) => ({ type: 'tag', key: t.key, label: t.label } as const)),
-          ...(categories?.map((c) => ({ type: 'cat', key: c, label: c })) || []),
+          ...VIRTUAL_TAGS.map(
+            (t) => ({ type: 'tag', key: t.key, label: t.label } as const),
+          ),
+          ...(categories?.map((c) => ({
+            type: 'cat',
+            key: c,
+            label: c,
+          })) || []),
         ]}
         keyExtractor={(it) => `${it.type}:${it.key}`}
         renderItem={({ item }) => {
           const active =
-            item.type === 'tag' ? tag === item.key : category === (item.key as string);
+            item.type === 'tag'
+              ? tag === item.key
+              : category === (item.key as string);
           return (
             <Pressable
               onPress={() => {
                 if (item.type === 'tag') {
-                  setTag(item.key as string);
+                  setTag((prev) =>
+                    prev === item.key ? undefined : (item.key as string),
+                  );
                   setCategory(undefined);
                 } else {
-                  setCategory(item.key as string);
+                  setCategory((prev) =>
+                    prev === item.key ? undefined : (item.key as string),
+                  );
                   setTag(undefined);
                 }
-                refetch();
               }}
-              style={[styles.chip, active && styles.chipActive]}
+              style={[styles.catCard, active && styles.catCardActive]}
             >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+              <View style={[styles.catThumb, active && styles.catThumbActive]}>
+                <Image
+                  source={{ uri: getCategoryImage(item.label) }}
+                  style={styles.catImage}
+                  resizeMode="cover"
+                />
+              </View>
+              <Text
+                style={[styles.catLabel, active && styles.catLabelActive]}
+                numberOfLines={2}
+              >
                 {item.label}
               </Text>
             </Pressable>
@@ -161,32 +313,52 @@ export default function MarketScreen() {
         }}
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
-        style={{ maxHeight: 48, marginTop: 8 }}
+        contentContainerStyle={{ paddingHorizontal: 1, gap: 1, paddingVertical: 8 }}
+        style={{ height: 150, marginTop: 2, marginBottom: -2 }}
       />
 
       {/* Grid de productos */}
       <FlatList
-        data={products}
+        ref={listRef}
+        data={isInitialLoad ? [] : products}
         keyExtractor={(p) => String(p.id)}
         numColumns={2}
         columnWrapperStyle={{ gap: 12, paddingHorizontal: 12 }}
-        contentContainerStyle={{ paddingVertical: 12, paddingBottom: 24, gap: 12 }}
+        contentContainerStyle={{
+          paddingTop: 20,
+          paddingBottom: 26,
+          gap: 12,
+          flexGrow: 1,
+        }}
         refreshControl={
-          <RefreshControl
-            refreshing={isFetching && !isFetchingNextPage}
-            onRefresh={refetch}
-          />
+          <RefreshControl refreshing={isRefreshing} onRefresh={refetch} />
         }
         ListEmptyComponent={
-          <View style={{ padding: 24, alignItems: 'center' }}>
-            <Text style={{ color: '#6B7280' }}>Sin resultados</Text>
-          </View>
+          isInitialLoad ? (
+            <View
+              style={{
+                flex: 1,
+                padding: 24,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <ActivityIndicator />
+              <Text style={{ marginTop: 12, color: '#6B7280' }}>
+                Cargando catálogo…
+              </Text>
+            </View>
+          ) : (
+            <View style={{ padding: 24, alignItems: 'center' }}>
+              <Text style={{ color: '#6B7280' }}>Sin resultados</Text>
+            </View>
+          )
         }
         renderItem={({ item }) => {
           const qty = qtyInCart(item.id);
+          const unitPrice = isB2B ? item.b2bPrice : item.price;
+          const productForCard: Product = { ...item, price: unitPrice };
 
-          // Stock efectivo para mostrar: cache > listado > null
           const cached = stockCacheRef.current[item.id];
           const effectiveStock =
             typeof cached === 'number'
@@ -198,21 +370,17 @@ export default function MarketScreen() {
           const handleAdd = async () => {
             if (pendingRef.current[item.id]) return;
 
-            const s = await ensureStock(item); // null = desconocido
+            const s = await ensureStock(item);
             if (typeof s === 'number') {
-              if (qty >= s) return; // tope
+              if (qty >= s) return;
               add({
                 productId: item.id,
                 name: item.name,
-                price: item.price,
+                price: unitPrice,
                 imageUrl: item.imageUrl ?? null,
-                stock: s, // guardamos el stock real en la línea
+                stock: s,
                 category: item.category ?? null,
               });
-            } else {
-              // Stock no disponible → no arriesgar sobreventa (conservador)
-              // (opcional: mostrar toast/alerta)
-              return;
             }
           };
 
@@ -223,9 +391,6 @@ export default function MarketScreen() {
             if (typeof s === 'number') {
               if (qty >= s) return;
               setQty(item.id, Math.min(qty + 1, s));
-            } else {
-              // sin stock conocido → no incrementamos (conservador)
-              return;
             }
           };
 
@@ -236,9 +401,9 @@ export default function MarketScreen() {
 
           return (
             <ProductCard
-              product={item}
+              product={productForCard}
               quantity={qty}
-              stock={effectiveStock} // el card muestra "stock" si lo conoce
+              stock={effectiveStock}
               onAdd={() => { void handleAdd(); }}
               onInc={() => { void handleInc(); }}
               onDec={handleDec}
@@ -246,7 +411,10 @@ export default function MarketScreen() {
               onOpenDetail={() =>
                 navigation.navigate('ProductDetail', { id: item.id })
               }
-              showFavorite
+              showFavorite={!canUseLocker}
+              showLocker={canUseLocker}
+              isInLocker={canUseLocker && lockerIds.has(item.id)}
+              onToggleLocker={canUseLocker ? () => toggleLocker(item) : undefined}
             />
           );
         }}
@@ -265,24 +433,59 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F3F4F6',
     marginHorizontal: 12,
-    marginTop: 10,
+    marginTop: 2,
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 40,
     gap: 8,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#111' },
-  chip: {
+
+  catCard: {
+    width: 96,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 8,
+    minHeight: 92,
+  },
+  catCardActive: {},
+
+  catThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    height: 36,
-    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
   },
-  chipActive: { backgroundColor: '#0E8A3A1A', borderColor: '#0E8A3A' },
-  chipText: { color: '#111', fontSize: 13, fontWeight: '600' },
-  chipTextActive: { color: '#0E8A3A' },
+  catThumbActive: {
+    borderColor: '#0E8A3A',
+    backgroundColor: '#E8F7EE',
+  },
+
+  // ✅ Fix final: recorte circular + “zoom” para comerse padding interno del asset
+  catImage: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 26,
+    transform: [{ scale: 1.35 }],
+  },
+
+  catLabel: {
+    color: '#111',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    maxWidth: 94,
+  },
+  catLabelActive: { color: '#0E8A3A' },
 });

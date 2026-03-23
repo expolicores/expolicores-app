@@ -1,13 +1,14 @@
+// src/notifications/whatsapp.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import whatsappConfig from '../config/whatsapp';
-import { WhatsAppService } from './whatsapp.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { WhatsAppService } from './whatsapp.service';
 
 @Module({
   imports: [
-    PrismaModule,                        // <- para loguear envíos
-    ConfigModule.forFeature(whatsappConfig),
+    PrismaModule, // para guardar NotificationLog y consultas
+    ConfigModule.forFeature(whatsappConfig), // inyecta configuración tipada de WhatsApp
   ],
   providers: [WhatsAppService],
   exports: [WhatsAppService],

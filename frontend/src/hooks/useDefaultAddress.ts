@@ -31,7 +31,7 @@ export function useDefaultAddress() {
 
   return {
     ...q,
-    addresses: q.data?.addresses ?? [],
+    addresses: q.data?.addresses ?? null,
     defaultAddress: q.data?.defaultAddress ?? null,
   };
 }

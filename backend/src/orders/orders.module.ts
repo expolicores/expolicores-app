@@ -1,23 +1,28 @@
-// src/orders/orders.module.ts
-import { Module } from '@nestjs/common';
-import { OrdersService } from './orders.service';
-import { OrdersController } from './orders.controller';
-
-import { PrismaModule } from '../prisma/prisma.module';
-import { WhatsAppModule } from '../notifications/whatsapp.module';
-import { OrderNotificationsController } from './notifications.controller';
-
-// 👇 agrega ConfigModule.forFeature(shippingConfig)
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import shippingConfig from '../config/shipping';
+import { OrdersService } from './orders.service';
+import { OrdersController } from './orders.controller';
+import { PrismaService } from '../prisma/prisma.service';
+import { WhatsAppService } from '../notifications/whatsapp.service';
+import { PushService } from '../notifications/push.service'; // ajusta la ruta si difiere
+import { LiveActivitiesModule } from '../live-activities/live-activities.module';
 
 @Module({
   imports: [
-    PrismaModule,
-    WhatsAppModule,
-    ConfigModule.forFeature(shippingConfig), // <- hace visible CONFIGURATION(shipping)
+    // Hace disponible CONFIGURATION(shipping) dentro de OrdersModule
+    ConfigModule.forFeature(shippingConfig),
+
+    // Solo si Orders ↔ LiveActivities tienen dependencia mutua, deja forwardRef
+    forwardRef(() => LiveActivitiesModule),
   ],
-  controllers: [OrdersController, OrderNotificationsController],
-  providers: [OrdersService],
+  controllers: [OrdersController],
+  providers: [
+    OrdersService,
+    PrismaService,
+    WhatsAppService,
+    PushService,
+  ],
+  exports: [OrdersService],
 })
 export class OrdersModule {}
