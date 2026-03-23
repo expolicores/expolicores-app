@@ -20,7 +20,7 @@ const colors = {
 };
 
 // Alto fijo igual que en Feed
-const CARD_H = 240;
+const CARD_H = 280;
 
 // ---------- Cache-busting de imágenes ----------
 const FEED_BUILD =
@@ -230,7 +230,7 @@ function ProductMiniCardBase({
           }}
         />
 
-        <View style={{ padding: spacing.sm }}>
+        <View style={{ padding: spacing.sm, paddingBottom: spacing.sm + 44 }}>
           {badgeText ? (
             <View
               style={{

@@ -35,7 +35,7 @@ import {
   type PricingView,
 } from '../lib/api';
 import { bus } from '../lib/bus';
-import { OrderProgressBanner } from '../components/OrderProgressBanner'; // 👈 Banner de pedido
+import { OrderProgressBanner } from '../components/OrderProgressBanner';
 
 // ---------- helpers de formato ----------
 const formatCOP = (n?: number) =>
@@ -152,7 +152,8 @@ const HERO_H = Math.min(280, SCREEN_W * 0.6);
 const COL_GAP = spacing.sm;
 const COLS = 2;
 const CARD_W = Math.floor((SCREEN_W - spacing.md * 2 - COL_GAP) / COLS);
-const CARD_H = 240;
+const CARD_H = 280;
+const PRODUCT_IMG_H = 130;
 
 // ---------- Utils UI ----------
 function useTapOnce(cb: () => void, ms = 500) {
@@ -179,6 +180,13 @@ type ProductOverrides = {
   imageUrl?: string;
 };
 
+// ---------- Image Fit por slot ----------
+type ImageFit = 'cover' | 'contain';
+function normalizeImageFit(v: any): ImageFit {
+  const s = String(v ?? '').toLowerCase().trim();
+  return s === 'contain' ? 'contain' : 'cover';
+}
+
 // ======================================================================
 // FEED SCREEN
 // ======================================================================
@@ -200,7 +208,9 @@ export default function FeedScreen() {
   const [data, setData] = useState<FeedResponse | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [overlay, setOverlay] = useState<OverlayItem[]>([]);
-  const FEED_CACHE_KEY = 'feed:last:v2';
+
+  // 🔥 bump de cache para que el app tome los nuevos campos del JSON (imageFit, etc.)
+  const FEED_CACHE_KEY = 'feed:last:v3';
 
   // Cart helpers
   const cart = (useCart() as any) ?? {};
@@ -219,13 +229,10 @@ export default function FeedScreen() {
           ? (typeof product.b2bPrice === 'number' ? product.b2bPrice : product.price)
           : product.price;
 
-        const unitPrice =
-          typeof payload.priceOverride === 'number' ? payload.priceOverride : basePrice;
+        const unitPrice = typeof payload.priceOverride === 'number' ? payload.priceOverride : basePrice;
 
         const displayName =
-          (payload.nameOverride && String(payload.nameOverride).trim()) ||
-          product.name ||
-          `Item ${pid}`;
+          (payload.nameOverride && String(payload.nameOverride).trim()) || product.name || `Item ${pid}`;
 
         const attempts: Array<() => Promise<any> | any> = [
           () =>
@@ -242,14 +249,13 @@ export default function FeedScreen() {
               nameOverride: displayName,
               priceOverride: unitPrice,
             }),
-          () =>
-            (cart as any)?.addToCart?.({ ...product, name: displayName, price: unitPrice }, 1, {}),
+          () => (cart as any)?.addToCart?.({ ...product, name: displayName, price: unitPrice }, 1, {}),
         ];
 
         let done = false;
         for (const fn of attempts) {
           try {
-            const r = await fn?.();
+            await fn?.();
             done = true;
             break;
           } catch {}
@@ -267,11 +273,14 @@ export default function FeedScreen() {
     console.log('FeedScreen isReady/token?', isReady, hasToken, (user as any)?.role);
   }, [isReady, hasToken, user]);
 
-  const persistFeed = useCallback(async (res: FeedResponse) => {
-    try {
-      await AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify({ data: res, ts: Date.now() }));
-    } catch {}
-  }, []);
+  const persistFeed = useCallback(
+    async (res: FeedResponse) => {
+      try {
+        await AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify({ data: res, ts: Date.now() }));
+      } catch {}
+    },
+    [FEED_CACHE_KEY],
+  );
 
   const loadFromCache = useCallback(async (): Promise<FeedResponse | null> => {
     try {
@@ -282,7 +291,7 @@ export default function FeedScreen() {
     } catch {
       return null;
     }
-  }, []);
+  }, [FEED_CACHE_KEY]);
 
   // 🔄 overlay REMOTO
   const reloadOverlay = useCallback(async () => {
@@ -313,11 +322,8 @@ export default function FeedScreen() {
     } catch (e: any) {
       setErrMsg(e?.message ?? 'Error');
       const cached = await loadFromCache();
-      if (cached) {
-        setData(cached);
-      } else {
-        setData(null);
-      }
+      if (cached) setData(cached);
+      else setData(null);
       await reloadOverlay();
     } finally {
       setLoading(false);
@@ -373,7 +379,7 @@ export default function FeedScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [load]);
+  }, [FEED_CACHE_KEY, load]);
 
   const handleSearchSubmit = useCallback(
     (term: string) => {
@@ -405,8 +411,7 @@ export default function FeedScreen() {
         // collection/:slug -> Catalog
         if (u.host === 'collection' || path.startsWith('collection/')) {
           const slug =
-            (u.host === 'collection' ? path : path.replace(/^collection\//, '')) ||
-            path.split('/').pop();
+            (u.host === 'collection' ? path : path.replace(/^collection\//, '')) || path.split('/').pop();
           if (slug) navigation.navigate('Catalog', { slug });
           return;
         }
@@ -414,8 +419,7 @@ export default function FeedScreen() {
         // product/:id -> ProductDetail
         if (u.host === 'product' || path.startsWith('product/')) {
           const productId =
-            (u.host === 'product' ? path : path.replace(/^product\//, '')) ||
-            path.split('/').pop();
+            (u.host === 'product' ? path : path.replace(/^product\//, '')) || path.split('/').pop();
           if (productId) navigation.navigate('ProductDetail', { productId });
           return;
         }
@@ -473,7 +477,12 @@ export default function FeedScreen() {
         {__DEV__ && (
           <TouchableOpacity
             onPress={clearLocalCaches}
-            style={{ marginTop: spacing.md, padding: spacing.sm, backgroundColor: '#111', borderRadius: 10 }}
+            style={{
+              marginTop: spacing.md,
+              padding: spacing.sm,
+              backgroundColor: '#111',
+              borderRadius: 10,
+            }}
           >
             <Text style={{ color: '#fff', fontWeight: '700' }}>Limpiar caché</Text>
           </TouchableOpacity>
@@ -496,18 +505,17 @@ export default function FeedScreen() {
             userRole={slotUserRole}
             overlay={overlay}
             onDeeplink={handleDeeplink}
-            // 👇 Navegar a ProductDetail con overrides calculados desde el slot
             onItemPress={(p) =>
               navigation.navigate('ProductDetail', {
                 productId: String(p.productId),
-                overrides: p.overrides, // { name?, description?, price?, imageUrl? }
+                overrides: p.overrides,
                 from: 'feed',
               })
             }
             onAddToCart={(p) => addFromFeed(p as any)}
           />
         )}
-        // @ts-ignore typings viejos
+        // @ts-ignore
         estimatedItemSize={300}
         contentContainerStyle={{ paddingBottom: spacing.xl + bottomPadding }}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
@@ -525,9 +533,7 @@ export default function FeedScreen() {
         }
         ListEmptyComponent={
           <Centered>
-            <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
-              No hay promociones por ahora
-            </Text>
+            <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>No hay promociones por ahora</Text>
             <Text
               style={{
                 color: colors.textMuted,
@@ -560,7 +566,6 @@ export default function FeedScreen() {
         }
       />
 
-      {/* Botón dev flotante */}
       {__DEV__ && (
         <TouchableOpacity
           onPress={clearLocalCaches}
@@ -628,17 +633,11 @@ const FeedHeader = React.memo(function FeedHeader({
     >
       <HomeSearchBar onSubmit={onSubmitSearch} isB2B={isB2BSearch} />
 
-      {/* ===== Banner de estado de pedido (encima de Mercado / Bodega Virtual) ===== */}
       {process.env.EXPO_PUBLIC_FEATURE_INAPP_ORDER_BANNER !== 'false' && (
         <OrderProgressBanner showDeliveredWindowMin={20} />
       )}
-      {/* ========================================================================== */}
 
-      <QuickAccessTiles
-        showBodega={showBodega}
-        onPressMarket={onPressMarket}
-        onPressBodega={onPressBodega}
-      />
+      <QuickAccessTiles showBodega={showBodega} onPressMarket={onPressMarket} onPressBodega={onPressBodega} />
     </View>
   );
 });
@@ -712,9 +711,7 @@ const QuickAccessTiles = React.memo(function QuickAccessTiles({
         }}
       >
         <Ionicons name="basket-outline" size={28} color="#0E8A3A" />
-        <Text style={{ marginTop: spacing.xs, color: colors.text, fontWeight: '700', fontSize: 15 }}>
-          Mercado
-        </Text>
+        <Text style={{ marginTop: spacing.xs, color: colors.text, fontWeight: '700', fontSize: 15 }}>Mercado</Text>
         <Text style={{ marginTop: 4, color: colors.textMuted, fontSize: 12 }}>Compra ahora</Text>
       </TouchableOpacity>
 
@@ -765,14 +762,7 @@ const SlotRenderer = React.memo(function SlotRenderer({
 }) {
   switch (slot.type) {
     case 'hero':
-      return (
-        <HeroSlot
-          slot={slot}
-          overlay={overlay}
-          onDeeplink={onDeeplink}
-          onAddToCart={onAddToCart}
-        />
-      );
+      return <HeroSlot slot={slot} overlay={overlay} onDeeplink={onDeeplink} onAddToCart={onAddToCart} />;
     case 'collection':
       return (
         <CollectionSlot
@@ -830,19 +820,21 @@ const HeroSlot = React.memo(function HeroSlot({
   return (
     <View style={{ backgroundColor: colors.bg, paddingHorizontal: spacing.md }}>
       {slot.title ? (
-        <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
-          {slot.title}
-        </Text>
+        <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 4 }}>{slot.title}</Text>
       ) : null}
       {slot.subtitle ? (
-        <Text style={{ fontSize: 14, color: colors.textMuted, marginBottom: spacing.sm }}>
-          {slot.subtitle}
-        </Text>
+        <Text style={{ fontSize: 14, color: colors.textMuted, marginBottom: spacing.sm }}>{slot.subtitle}</Text>
       ) : null}
+
       {img ? (
         <Image
           source={{ uri: withCacheBust(img, ov?.publishedAt ?? slotBannerKey) }}
-          style={{ width: '100%', height: HERO_H, borderRadius: radius.lg, backgroundColor: colors.bgAlt }}
+          style={{
+            width: '100%',
+            height: HERO_H,
+            borderRadius: radius.lg,
+            backgroundColor: colors.bgAlt,
+          }}
           contentFit="cover"
           transition={150}
           cachePolicy="memory-disk"
@@ -851,6 +843,7 @@ const HeroSlot = React.memo(function HeroSlot({
           }}
         />
       ) : null}
+
       {slot.cta?.label ? (
         <TouchableOpacity
           onPress={onCta}
@@ -872,9 +865,7 @@ const HeroSlot = React.memo(function HeroSlot({
         <View style={{ marginTop: spacing.sm, gap: 6 }}>
           <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{ov.name}</Text>
           {typeof ov.price === 'number' ? (
-            <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>
-              {formatCOP(ov.price)}
-            </Text>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: colors.text }}>{formatCOP(ov.price)}</Text>
           ) : null}
           {!!ov.productId && (
             <TouchableOpacity
@@ -912,6 +903,10 @@ const CollectionSlot = React.memo(function CollectionSlot({
   onAddToCart: (p: AddToCartPayload) => void;
   onDeeplink: (url?: string) => void;
 }) {
+  // ✅ per-slot control de cómo encaja la imagen (viene del JSON: slot.imageFit)
+  // Ejemplo para under_20k: "imageFit": "contain"
+  const slotImageFit: ImageFit = normalizeImageFit((slot as any)?.imageFit);
+
   // Soporte de chips (categorías/atajos)
   if (slot.layout === 'chips') {
     return (
@@ -922,17 +917,11 @@ const CollectionSlot = React.memo(function CollectionSlot({
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{slot.title}</Text>
             ) : null}
             {slot.subtitle ? (
-              <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 2 }}>
-                {slot.subtitle}
-              </Text>
+              <Text style={{ fontSize: 13, color: colors.textMuted, marginTop: 2 }}>{slot.subtitle}</Text>
             ) : null}
           </View>
         )}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: spacing.md }}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.md }}>
           {(slot.items ?? []).map((chip, idx) => (
             <TouchableOpacity
               key={chip.id ?? `chip-${idx}`}
@@ -948,9 +937,7 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 marginRight: 8,
               }}
             >
-              <Text style={{ color: colors.text, fontWeight: '600' }}>
-                {(chip as any).title ?? 'Ver'}
-              </Text>
+              <Text style={{ color: colors.text, fontWeight: '600' }}>{(chip as any).title ?? 'Ver'}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -961,27 +948,23 @@ const CollectionSlot = React.memo(function CollectionSlot({
   // ------------------- Fuente overlay para promos (ACTIVAS) con visual 100% del JSON -------------------
   const useOverlaySource =
     (slot as any).source === 'overlay' ||
-    (((slot.id || '') as string).toLowerCase().startsWith('promos_') &&
-      ((slot as any).items?.length ?? 0) === 0);
+    (((slot.id || '') as string).toLowerCase().startsWith('promos_') && ((slot as any).items?.length ?? 0) === 0);
 
   let itemsRaw: Array<any> = [];
 
   if (useOverlaySource) {
-    // Index de items del JSON por id/productId para tomar textos/imagen/precio visuales
     const jsonById = new Map<string, any>();
     for (const it of slot.items ?? []) {
       const key = String(((it as any).id ?? (it as any).productId) ?? '').trim();
       if (key) jsonById.set(key, it);
     }
 
-    // Solo overlay activos; visual desde JSON cuando exista matching
     const built = (overlay || [])
       .map((ov) => {
         const pid = (ov?.productId ?? '').trim();
         if (!pid) return null;
         const conf = jsonById.get(pid);
 
-        // Si hay matching en JSON, tomamos TODO lo visual del JSON
         if (conf) {
           const item: FeedItem = {
             id: pid,
@@ -996,7 +979,6 @@ const CollectionSlot = React.memo(function CollectionSlot({
           return item;
         }
 
-        // Si no hay matching, como último recurso mostramos overlay (para no perder promos activas)
         const fallbackItem: FeedItem = {
           id: pid,
           productId: pid,
@@ -1008,21 +990,19 @@ const CollectionSlot = React.memo(function CollectionSlot({
       })
       .filter(Boolean) as FeedItem[];
 
-    // Para source=overlay NO hacemos fallback al JSON si no hay overlay: la sección queda vacía (solo activas)
     itemsRaw = built;
   } else {
-    // Colecciones de productos del feed (respetamos lo que venga del JSON)
-    itemsRaw = (slot.items ?? []);
+    itemsRaw = slot.items ?? [];
   }
 
-  // Filtramos los que no tengan image (el card no renderiza sin image)
   const itemsFiltered = itemsRaw.filter((it) => !!it.image && !!it.image.trim());
 
-  // ---------- Precio/NOMBRE desde JSON, overlay SOLO si falta algo (lógica de carrito y fallback de price) ----------
   const itemsWithOverrides = itemsFiltered.map((it) => {
-    const ov = useOverlaySource
-      ? findOverlayForItem(overlay, { image: it.image, productId: (it as any).productId, id: (it as any).id })
-      : findOverlayForItem(overlay, { image: it.image, productId: (it as any).productId, id: (it as any).id });
+    const ov = findOverlayForItem(overlay, {
+      image: it.image,
+      productId: (it as any).productId,
+      id: (it as any).id,
+    });
 
     const effectiveProductId =
       (it as any).id != null
@@ -1031,37 +1011,28 @@ const CollectionSlot = React.memo(function CollectionSlot({
         ? String((it as any).productId)
         : undefined;
 
-    // Precio desde JSON según pricingView/rol
     const jsonPriceForRole: number | undefined =
       typeof (it as any).priceB2C === 'number' || typeof (it as any).priceB2B === 'number'
-        ? (slot.pricingView === 'B2B_DEFAULT'
-            ? (it as any).priceB2B ?? (it as any).priceB2C
-            : slot.pricingView === 'B2C_ONLY'
-            ? (it as any).priceB2C
-            : slot.pricingView === 'PUBLIC_REFERENCE'
-            ? (it as any).priceB2C
-            : // COMPARATIVE / otros
-              (userRole === 'B2B'
-                ? (it as any).priceB2B ?? (it as any).priceB2C
-                : (it as any).priceB2C))
+        ? slot.pricingView === 'B2B_DEFAULT'
+          ? (it as any).priceB2B ?? (it as any).priceB2C
+          : slot.pricingView === 'B2C_ONLY'
+          ? (it as any).priceB2C
+          : slot.pricingView === 'PUBLIC_REFERENCE'
+          ? (it as any).priceB2C
+          : userRole === 'B2B'
+          ? (it as any).priceB2B ?? (it as any).priceB2C
+          : (it as any).priceB2C
         : undefined;
 
-    // NOMBRE SIEMPRE desde JSON cuando exista
     const nameFromJson = (it as any).title as string | undefined;
 
     return {
       item: { ...it, productId: effectiveProductId },
       overlay: ov,
-      // Visual SIEMPRE prioriza JSON
       promoNameOverride: nameFromJson ?? undefined,
-      // Precio: JSON primero; si falta, usamos overlay.price como fallback
       promoPriceOverride:
-        typeof jsonPriceForRole === 'number'
-          ? jsonPriceForRole
-          : typeof ov?.price === 'number'
-          ? ov.price
-          : undefined,
-      jsonPriceForRole, // para add-to-cart y overrides
+        typeof jsonPriceForRole === 'number' ? jsonPriceForRole : typeof ov?.price === 'number' ? ov.price : undefined,
+      jsonPriceForRole,
       promoProductIdOverride: ov?.productId ?? effectiveProductId,
       effectiveId: ov?.productId ?? effectiveProductId,
     };
@@ -1088,19 +1059,15 @@ const CollectionSlot = React.memo(function CollectionSlot({
           horizontal
           showsHorizontalScrollIndicator={false}
           data={itemsWithOverrides}
-          // @ts-ignore typings viejos
+          // @ts-ignore
           estimatedItemSize={CARD_W}
-          keyExtractor={(row, idx) =>
-            (row.item.productId as any) ?? ((row.item as any).id as any) ?? `i${idx}`
-          }
+          keyExtractor={(row, idx) => (row.item.productId as any) ?? ((row.item as any).id as any) ?? `i${idx}`}
           contentContainerStyle={{ paddingHorizontal: spacing.md }}
           ItemSeparatorComponent={() => <View style={{ width: COL_GAP }} />}
           renderItem={({ item: row }) => {
-            const productIdEffective =
-              row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
+            const productIdEffective = row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
             const itemForCard: FeedItem = { ...row.item, productId: productIdEffective as any };
 
-            // Overrides para ProductDetail (100% desde JSON cuando haya)
             const overrides: ProductOverrides = {
               name: (row.item as any).title ?? row.promoNameOverride,
               description: (row.item as any).description,
@@ -1115,19 +1082,14 @@ const CollectionSlot = React.memo(function CollectionSlot({
                 pricingView={slot.pricingView}
                 userRole={userRole}
                 width={CARD_W}
+                imageFit={slotImageFit}
                 promoNameOverride={row.promoNameOverride ?? (row.item as any).title}
                 promoPriceOverride={row.promoPriceOverride}
                 effectiveProductId={productIdEffective as any}
-                onPress={() =>
-                  onItemPress({
-                    productId: productIdEffective as any,
-                    overrides,
-                  })
-                }
+                onPress={() => onItemPress({ productId: productIdEffective as any, overrides })}
                 onAddToCart={() =>
                   onAddToCart({
                     productId: productIdEffective as any,
-                    // prioridad visual JSON; si no existe, overlay; BD queda solo para lógica
                     priceOverride: row.promoPriceOverride ?? row.jsonPriceForRole,
                     nameOverride: row.promoNameOverride ?? (row.item as any).title,
                   })
@@ -1141,19 +1103,15 @@ const CollectionSlot = React.memo(function CollectionSlot({
           key={`col-${slot.id}-v`}
           data={itemsWithOverrides}
           numColumns={COLS}
-          // @ts-ignore typings viejos
+          // @ts-ignore
           estimatedItemSize={CARD_H}
-          keyExtractor={(row, idx) =>
-            (row.item.productId as any) ?? ((row.item as any).id as any) ?? `i${idx}`
-          }
+          keyExtractor={(row, idx) => (row.item.productId as any) ?? ((row.item as any).id as any) ?? `i${idx}`}
           contentContainerStyle={{ paddingHorizontal: spacing.md }}
           ItemSeparatorComponent={() => <View style={{ height: COL_GAP }} />}
           renderItem={({ item: row, index }) => {
-            const productIdEffective =
-              row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
+            const productIdEffective = row.effectiveId ?? row.promoProductIdOverride ?? row.item.productId;
             const itemForCard: FeedItem = { ...row.item, productId: productIdEffective as any };
 
-            // Overrides para ProductDetail
             const overrides: ProductOverrides = {
               name: (row.item as any).title ?? row.promoNameOverride,
               description: (row.item as any).description,
@@ -1169,15 +1127,11 @@ const CollectionSlot = React.memo(function CollectionSlot({
                   pricingView={slot.pricingView}
                   userRole={userRole}
                   width={CARD_W}
+                  imageFit={slotImageFit}
                   promoNameOverride={row.promoNameOverride ?? (row.item as any).title}
                   promoPriceOverride={row.promoPriceOverride}
                   effectiveProductId={productIdEffective as any}
-                  onPress={() =>
-                    onItemPress({
-                      productId: productIdEffective as any,
-                      overrides,
-                    })
-                  }
+                  onPress={() => onItemPress({ productId: productIdEffective as any, overrides })}
                   onAddToCart={() =>
                     onAddToCart({
                       productId: productIdEffective as any,
@@ -1194,7 +1148,6 @@ const CollectionSlot = React.memo(function CollectionSlot({
         />
       )}
 
-      {/* CTA opcional (ej. "Ver más") */}
       {slot.cta?.label && slot.cta?.deeplink ? (
         <View style={{ paddingHorizontal: spacing.md, marginTop: spacing.sm }}>
           <TouchableOpacity
@@ -1225,6 +1178,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   pricingView,
   userRole,
   width,
+  imageFit = 'cover',
   promoNameOverride,
   promoPriceOverride,
   effectiveProductId,
@@ -1236,6 +1190,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   pricingView: PricingView;
   userRole: 'B2B' | 'B2C';
   width: number;
+  imageFit?: ImageFit; // ✅ nuevo
   promoNameOverride?: string;
   promoPriceOverride?: number;
   effectiveProductId?: string;
@@ -1245,17 +1200,14 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   if (!item.image || !item.image.trim()) return null;
   const img = item.image.trim();
 
-  // id efectivo
   const baseId = (item as any)?.id ?? (item as any)?.productId;
   const pidStr = (effectiveProductId ?? baseId) != null ? String(effectiveProductId ?? baseId) : undefined;
   const pidNum = pidStr ? Number(pidStr) : NaN;
   const pidKey: any = Number.isFinite(pidNum) ? pidNum : pidStr;
 
-  // Cart
   const cart = (useCart() as any) ?? {};
   const cartItems: Array<any> = cart?.items ?? cart?.lines ?? [];
 
-  // slotItem para helpers del carrito
   const slotItem = useMemo(
     () => ({
       id: (item as any)?.id,
@@ -1265,7 +1217,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     [item],
   );
 
-  // ---------- Fallback de detalles ----------
   const [fallback, setFallback] = React.useState<{ name?: string; price?: number; b2bPrice?: number } | null>(null);
 
   useEffect(() => {
@@ -1297,7 +1248,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     };
   }, [pidStr, item.title, item.subtitle, promoNameOverride, promoPriceOverride, item.priceB2C, item.priceB2B]);
 
-  // Qty
   const qty = useMemo(() => {
     if (cart?.qtyFromFeed) {
       try {
@@ -1312,9 +1262,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   const handlePlus = () => onAddToCart();
 
   const handleMinus = () => {
-    if (cart?.decrementFromFeed) {
-      return cart.decrementFromFeed({ slotItem, overlay });
-    }
+    if (cart?.decrementFromFeed) return cart.decrementFromFeed({ slotItem, overlay });
     if (!pidStr) return;
     const next = Math.max(0, qty - 1);
     const attempts: Array<() => any> = [
@@ -1334,9 +1282,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   };
 
   const handleRemove = () => {
-    if (cart?.removeFromFeed) {
-      return cart.removeFromFeed({ slotItem, overlay });
-    }
+    if (cart?.removeFromFeed) return cart.removeFromFeed({ slotItem, overlay });
     if (!pidStr) return;
     const attempts: Array<() => any> = [
       () => cart.removeItem?.(pidKey),
@@ -1352,22 +1298,17 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
     }
   };
 
-  // Precio activo (respeta override + fallback detalle)
   const priceActive = useMemo(() => {
     if (typeof promoPriceOverride === 'number') return promoPriceOverride;
 
-    // del feed
     if (typeof item.priceB2C === 'number') return item.priceB2C;
     if (pricingView === 'B2B_DEFAULT') return item.priceB2B;
     if (pricingView === 'B2C_ONLY') return item.priceB2C;
     if (pricingView === 'PUBLIC_REFERENCE') return item.priceB2C;
     if (pricingView === 'COMPARATIVE') {
-      return userRole === 'B2B'
-        ? (item.priceB2B ?? item.priceB2C)
-        : item.priceB2C;
+      return userRole === 'B2B' ? item.priceB2B ?? item.priceB2C : item.priceB2C;
     }
 
-    // fallback de detalle
     if (userRole === 'B2B' && typeof fallback?.b2bPrice === 'number') return fallback.b2bPrice;
     if (typeof fallback?.price === 'number') return fallback.price;
 
@@ -1377,12 +1318,8 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
   const secondaryLine = useMemo(() => {
     if (promoPriceOverride != null) return undefined;
     const refB2C = item.priceB2C ?? fallback?.price;
-    if (pricingView === 'COMPARATIVE' && refB2C && userRole === 'B2B') {
-      return `Público: ${formatCOP(refB2C)}`;
-    }
-    if (pricingView === 'PUBLIC_REFERENCE' && refB2C && userRole === 'B2B') {
-      return `Público (ref): ${formatCOP(refB2C)}`;
-    }
+    if (pricingView === 'COMPARATIVE' && refB2C && userRole === 'B2B') return `Público: ${formatCOP(refB2C)}`;
+    if (pricingView === 'PUBLIC_REFERENCE' && refB2C && userRole === 'B2B') return `Público (ref): ${formatCOP(refB2C)}`;
     return undefined;
   }, [pricingView, userRole, item.priceB2C, promoPriceOverride, fallback]);
 
@@ -1414,8 +1351,13 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
       >
         <Image
           source={{ uri: withCacheBust(img, overlay?.publishedAt ?? pidStr) }}
-          style={{ width: '100%', height: 130, backgroundColor: colors.bgAlt }}
-          contentFit="cover"
+          style={{
+            width: '100%',
+            height: PRODUCT_IMG_H,
+            backgroundColor: imageFit === 'contain' ? '#fff' : colors.bgAlt, // ✅ ayuda visual cuando hay padding en la foto
+          }}
+          contentFit={imageFit} // ✅ aquí está el fix
+          contentPosition="center"
           transition={120}
           cachePolicy="memory-disk"
           onError={(err) => {
@@ -1423,7 +1365,7 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
           }}
         />
 
-        <View style={{ padding: spacing.sm }}>
+        <View style={{ padding: spacing.sm, paddingBottom: spacing.sm + 44 }}>
           {badgeText ? (
             <View
               style={{
@@ -1452,12 +1394,9 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
             </Text>
           ) : null}
 
-          {secondaryLine ? (
-            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{secondaryLine}</Text>
-          ) : null}
+          {secondaryLine ? <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>{secondaryLine}</Text> : null}
         </View>
 
-        {/* Controles de carrito estilo Catálogo */}
         {qty > 0 ? (
           <View
             style={{
@@ -1471,7 +1410,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
             }}
             pointerEvents="box-none"
           >
-            {/* eliminar / menos */}
             <TouchableOpacity
               onPress={qty <= 1 ? handleRemove : handleMinus}
               activeOpacity={0.85}
@@ -1487,14 +1425,9 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
                 justifyContent: 'center',
               }}
             >
-              {qty <= 1 ? (
-                <Ionicons name="trash-outline" size={18} color="#ef4444" />
-              ) : (
-                <Ionicons name="remove" size={18} color={colors.text} />
-              )}
+              {qty <= 1 ? <Ionicons name="trash-outline" size={18} color="#ef4444" /> : <Ionicons name="remove" size={18} color={colors.text} />}
             </TouchableOpacity>
 
-            {/* qty */}
             <View
               style={{
                 minWidth: 52,
@@ -1511,7 +1444,6 @@ const ProductMiniCard = React.memo(function ProductMiniCard({
               <Text style={{ fontWeight: '700', color: colors.text }}>{qty}</Text>
             </View>
 
-            {/* plus (+) */}
             <TouchableOpacity
               onPress={handlePlus}
               activeOpacity={0.9}
