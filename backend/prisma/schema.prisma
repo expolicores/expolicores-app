@@ -62,20 +62,34 @@ enum PaymentMethod {
 
 
 
-
 model Order {
-  id            Int                @id @default(autoincrement())
-  userId        Int
-  total         Float
-  status        OrderStatus        @default(RECIBIDO)
-  notes         String?       // 👈 NUEVO: notas libres del cliente
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  notifications NotificationLog[]
-  user          User               @relation(fields: [userId], references: [id])
-  items         OrderItem[]
-  paymentMethod PaymentMethod @default(CASH)
-  liveActivity  OrderLiveActivity? @relation("Order_LiveActivity")
+  id                   Int                @id @default(autoincrement())
+  userId               Int
+  total                Float
+  status               OrderStatus        @default(RECIBIDO)
+  notes                String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  notifications        NotificationLog[]
+  user                 User               @relation(fields: [userId], references: [id])
+  items                OrderItem[]
+  paymentMethod        PaymentMethod      @default(CASH)
+  liveActivity         OrderLiveActivity? @relation("Order_LiveActivity")
+
+  // Snapshot de entrega
+  deliveryLabel        String?
+  deliveryRecipient    String?
+  deliveryPhone        String?
+  deliveryLine1        String?
+  deliveryLine2        String?
+  deliveryNeighborhood String?
+  deliveryCity         String?
+  deliveryState        String?
+  deliveryCountry      String?
+  deliveryNotes        String?
+  deliveryLat          Float?
+  deliveryLng          Float?
+  deliveryAddressShort String?
 }
 
 model NotificationLog {
