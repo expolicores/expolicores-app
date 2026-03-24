@@ -13,3 +13,4 @@ ADD COLUMN     "deliveryPhone" TEXT,
 ADD COLUMN     "deliveryRecipient" TEXT,
 ADD COLUMN     "deliveryState" TEXT,
 ADD COLUMN     "notes" TEXT;
+ADD COLUMN     "deliveryState" TEXT;
