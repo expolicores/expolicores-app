@@ -1,4 +1,3 @@
-// backend/src/orders/orders.service.ts
 import {
   BadRequestException,
   ConflictException,
@@ -23,6 +22,22 @@ import { validateGeo } from '../common/geo';
 import { PushService } from '../notifications/push.service';
 import { LiveActivitiesService } from '../live-activities/live-activities.service';
 
+type AddressSnapshot = {
+  id: number;
+  label: string;
+  recipient: string;
+  phone: string;
+  line1: string;
+  line2: string | null;
+  neighborhood: string | null;
+  city: string;
+  state: string;
+  country: string;
+  lat: number | null;
+  lng: number | null;
+  notes: string | null;
+};
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -35,6 +50,51 @@ export class OrdersService {
     private readonly push: PushService,
     private readonly liveActivities: LiveActivitiesService,
   ) {}
+
+  private shortAddress(address?: {
+    line1?: string | null;
+    neighborhood?: string | null;
+    city?: string | null;
+  }) {
+    if (!address) return null;
+
+    return (
+      [address.line1, address.neighborhood, address.city]
+        .filter((v) => !!v && String(v).trim().length > 0)
+        .join(', ')
+        .trim() || null
+    );
+  }
+
+  private serializeOrder<T extends Record<string, any>>(order: T) {
+    const addressShort =
+      order.deliveryAddressShort ||
+      this.shortAddress({
+        line1: order.deliveryLine1,
+        neighborhood: order.deliveryNeighborhood,
+        city: order.deliveryCity,
+      });
+
+    return {
+      ...order,
+      addressShort,
+      address: {
+        label: order.deliveryLabel ?? null,
+        recipient: order.deliveryRecipient ?? null,
+        phone: order.deliveryPhone ?? null,
+        line1: order.deliveryLine1 ?? null,
+        line2: order.deliveryLine2 ?? null,
+        neighborhood: order.deliveryNeighborhood ?? null,
+        city: order.deliveryCity ?? null,
+        state: order.deliveryState ?? null,
+        country: order.deliveryCountry ?? null,
+        notes: order.deliveryNotes ?? null,
+        lat: order.deliveryLat ?? null,
+        lng: order.deliveryLng ?? null,
+        short: addressShort,
+      },
+    };
+  }
 
   private readonly orderInclude = {
     items: { include: { product: true } },
@@ -49,7 +109,6 @@ export class OrdersService {
     },
   } as const;
 
-  // 👇 volvemos a aceptar (userId, dto, role) para que cuadre con el controller
   async create(userId: number, dto: CreateOrderDto, role: Role) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -62,9 +121,14 @@ export class OrdersService {
       select: {
         id: true,
         label: true,
+        recipient: true,
+        phone: true,
         line1: true,
+        line2: true,
         neighborhood: true,
         city: true,
+        state: true,
+        country: true,
         lat: true,
         lng: true,
         notes: true,
@@ -75,8 +139,6 @@ export class OrdersService {
     const hasGeo =
       typeof address.lat === 'number' && typeof address.lng === 'number';
 
-    // ===== Método de pago =====
-    // Lo que viene del DTO (desde la app). Default: CASH (efectivo).
     const rawPayment = dto.paymentMethod ?? 'CASH';
 
     let paymentMethod: PaymentMethodEnum;
@@ -96,7 +158,6 @@ export class OrdersService {
         break;
     }
 
-    // Solo negocios (B2B) o ADMIN pueden usar crédito
     if (
       paymentMethod === PaymentMethodEnum.CREDIT &&
       role !== Role.B2B &&
@@ -105,7 +166,6 @@ export class OrdersService {
       throw new BadRequestException('PAYMENT_METHOD_CREDIT_NOT_ALLOWED');
     }
 
-    // ===== Productos y subtotal =====
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('EMPTY_CART');
     }
@@ -121,6 +181,7 @@ export class OrdersService {
         stock: true,
       },
     });
+
     if (products.length !== ids.length) {
       const foundIds = new Set(products.map((p) => p.id));
       const missing = ids.filter((id) => !foundIds.has(id));
@@ -133,6 +194,7 @@ export class OrdersService {
 
     const byId = new Map(products.map((p) => [p.id, p]));
     const usesB2B = user.role === Role.B2B || user.role === Role.ADMIN;
+
     let subtotal = 0;
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
@@ -143,30 +205,46 @@ export class OrdersService {
       subtotal += unitPrice * it.quantity;
     }
 
-    // ===== Envío (misma lógica de /geo/validate) =====
     let shipping = this.shipping.min;
     if (hasGeo) {
       const geo = validateGeo({
         lat: address.lat as number,
         lng: address.lng as number,
       });
+
       if (!geo.inCoverage) {
         throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
       }
+
       shipping = geo.shippingCost;
     }
 
     const total = subtotal + shipping;
+    const deliveryAddressShort = this.shortAddress(address);
 
-    // ===== Crear orden + descontar stock =====
     const created = await this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          paymentMethod,                 // se guarda en la tabla Order
-          notes: dto.notes?.trim() || null, // notas del cliente
+          paymentMethod,
+          notes: dto.notes?.trim() || null,
+
+          deliveryLabel: address.label ?? null,
+          deliveryRecipient: address.recipient ?? null,
+          deliveryPhone: address.phone ?? null,
+          deliveryLine1: address.line1 ?? null,
+          deliveryLine2: address.line2 ?? null,
+          deliveryNeighborhood: address.neighborhood ?? null,
+          deliveryCity: address.city ?? null,
+          deliveryState: address.state ?? null,
+          deliveryCountry: address.country ?? null,
+          deliveryNotes: address.notes ?? null,
+          deliveryLat: address.lat ?? null,
+          deliveryLng: address.lng ?? null,
+          deliveryAddressShort: deliveryAddressShort || null,
+
           items: {
             create: dto.items.map((i) => ({
               productId: i.productId,
@@ -182,6 +260,7 @@ export class OrdersService {
           where: { id: it.productId, stock: { gte: it.quantity } },
           data: { stock: { decrement: it.quantity } },
         });
+
         if (res.count !== 1) {
           throw new ConflictException(`OUT_OF_STOCK:${it.productId}`);
         }
@@ -190,7 +269,6 @@ export class OrdersService {
       return order;
     });
 
-    // ===== PUSH: Pedido creado (cliente) (no bloquea) =====
     try {
       await this.push.sendToUser(String(userId), {
         title: 'Pedido creado',
@@ -207,7 +285,6 @@ export class OrdersService {
       );
     }
 
-    // ===== PUSH: Pedido creado (admins) (no bloquea) =====
     this.notifyAdminsNewOrder(created as any).catch((e) => {
       this.logger.warn(
         `notifyAdminsNewOrder failed for order ${created.id}: ${
@@ -216,17 +293,16 @@ export class OrdersService {
       );
     });
 
-    // Live Activities: el frontend iOS inicia la Activity y llama /live-activities/register.
-    // Aquí NO enviamos update aún; lo haremos cuando cambie el estado.
-
-    // ===== WhatsApp confirmación =====
     const toPhone = this.normalizeCoPhone(
       user.phone ?? created.user?.phone ?? '',
     );
     const addressLabel = address.label ?? 'Dirección';
-    const addressLine = [address.line1, address.neighborhood, address.city]
-      .filter(Boolean)
-      .join(', ');
+    const addressLine =
+      deliveryAddressShort ||
+      [address.line1, address.neighborhood, address.city]
+        .filter(Boolean)
+        .join(', ');
+
     const waItems = created.items.map((i) => {
       const linePrice = usesB2B ? i.product.b2bPrice : i.product.price;
       return { name: i.product.name, quantity: i.quantity, price: linePrice };
@@ -238,6 +314,7 @@ export class OrdersService {
         'Atención: validar cobertura, dirección sin coordenadas',
       );
     }
+
     const notes =
       notesFromPayload
         .map((n) => (n ?? '').trim())
@@ -252,7 +329,7 @@ export class OrdersService {
       subtotal,
       shipping,
       total: created.total,
-      paymentMethod: waPaymentLabel, // etiqueta legible
+      paymentMethod: waPaymentLabel,
       items: waItems,
       addressLabel,
       addressLine,
@@ -281,8 +358,12 @@ export class OrdersService {
       },
     });
 
-    // Totales explícitos para OrderSuccessScreen
-    return { ...created, subtotal, shipping, total, address };
+    return {
+      ...this.serializeOrder(created),
+      subtotal,
+      shipping,
+      total,
+    };
   }
 
   private async calcTotal(
@@ -294,9 +375,11 @@ export class OrdersService {
       where: { id: { in: ids } },
       select: { id: true, price: true, b2bPrice: true },
     });
+
     const priceMap = new Map(
       products.map((p) => [p.id, useB2B ? p.b2bPrice : p.price]),
     );
+
     return items.reduce(
       (sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity,
       0,
@@ -304,28 +387,35 @@ export class OrdersService {
   }
 
   async findAll() {
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       orderBy: { id: 'desc' },
       include: this.orderInclude,
     });
+
+    return orders.map((o) => this.serializeOrder(o));
   }
 
   async findMine(userId: number) {
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: { userId },
       orderBy: { id: 'desc' },
       include: this.orderInclude,
     });
+
+    return orders.map((o) => this.serializeOrder(o));
   }
 
   async findOneAs(id: number, user: { id: number; role: Role }) {
     const where = user.role === Role.ADMIN ? { id } : { id, userId: user.id };
+
     const order = await this.prisma.order.findFirst({
       where,
       include: this.orderInclude,
     });
+
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+
+    return this.serializeOrder(order);
   }
 
   async findOne(id: number) {
@@ -333,30 +423,37 @@ export class OrdersService {
       where: { id },
       include: this.orderInclude,
     });
+
     if (!order) {
       throw new NotFoundException(`Order with ID ${id} not found`);
     }
-    return order;
+
+    return this.serializeOrder(order);
   }
 
   async findOneForUser(id: number, user: { id: number; role: Role }) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: { items: { include: { product: true } }, user: true },
+      include: { ...this.orderInclude },
     });
+
     if (!order) throw new NotFoundException('Order not found');
+
     if (user.role !== Role.ADMIN && order.userId !== user.id) {
       throw new ForbiddenException('You cannot access this order');
     }
-    return order;
+
+    return this.serializeOrder(order);
   }
 
   async update(id: number, dto: UpdateOrderDto) {
     const { items, ...rest } = dto;
+
     const existing = await this.prisma.order.findUnique({
       where: { id },
       select: { user: { select: { role: true } } },
     });
+
     if (!existing) {
       throw new NotFoundException(`Order with ID ${id} not found`);
     }
@@ -369,6 +466,7 @@ export class OrdersService {
       await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
       totalUpdate = await this.calcTotal(items, usesB2B);
     }
+
     const updated = await this.prisma.order.update({
       where: { id },
       data: {
@@ -385,7 +483,8 @@ export class OrdersService {
       },
       include: this.orderInclude,
     });
-    return updated;
+
+    return this.serializeOrder(updated);
   }
 
   async updateStatus(id: number, status: OrderStatus) {
@@ -395,7 +494,6 @@ export class OrdersService {
       include: this.orderInclude,
     });
 
-    // ===== Expo Push por estado (no bloquea) =====
     try {
       const msg = this.messageForStatus(status, order.id);
       if (msg) {
@@ -415,12 +513,10 @@ export class OrdersService {
       );
     }
 
-    // ===== Live Activities (APNs) — no bloquea =====
     try {
-      // Update con el nuevo estado; el service ignora si no hay LA registrada
       await this.liveActivities.update(order.id, {
         orderId: order.id,
-        status, // RECIBIDO | EN_CAMINO | ENTREGADO | CANCELADO
+        status,
       });
 
       if (status === 'ENTREGADO' || status === 'CANCELADO') {
@@ -434,7 +530,6 @@ export class OrdersService {
       );
     }
 
-    // ===== WhatsApp por estado (como estaba) =====
     if (
       status === 'EN_CAMINO' ||
       status === 'ENTREGADO' ||
@@ -470,7 +565,7 @@ export class OrdersService {
       });
     }
 
-    return order;
+    return this.serializeOrder(order);
   }
 
   async remove(id: number) {
@@ -479,9 +574,6 @@ export class OrdersService {
     return { id };
   }
 
-  // ===== Helpers privados =====
-
-  // Notificación push a todos los admins cuando entra un nuevo pedido
   private async notifyAdminsNewOrder(order: {
     id: number;
     total: number;
@@ -547,7 +639,6 @@ export class OrdersService {
     }
   }
 
-  // E.164 CO básica (+57) para Twilio WhatsApp
   private normalizeCoPhone(input: string): string {
     const digits = (input || '').replace(/\D/g, '');
     if (!digits) return '+57';
@@ -581,7 +672,6 @@ export class OrdersService {
         };
 
       default:
-        // RECIBIDO u otros no generan push extra
         return null;
     }
   }

@@ -1,4 +1,5 @@
 import type { Role } from './auth';
+import type { Address } from './address';
 
 /**
  * Estados del pedido según backend.
@@ -72,13 +73,13 @@ export interface OrderSuccess {
   status: OrderStatus;
   subtotal: number; // COP enteros
   shipping: number; // COP enteros
-  total: number;    // COP enteros
+  total: number; // COP enteros
 }
 
 export interface ProductMini {
   id: number;
   name: string;
-  price: number;    // COP enteros (B2C)
+  price: number; // COP enteros (B2C)
   b2bPrice: number; // COP enteros (B2B)
   imageUrl?: string | null;
 }
@@ -100,23 +101,52 @@ export interface OrderUserSummary {
 }
 
 /**
+ * Snapshot de dirección embebido dentro de la orden.
+ * Viene construido desde backend a partir de los campos delivery*.
+ */
+export interface OrderAddressSnapshot
+  extends Partial<
+    Pick<
+      Address,
+      | 'label'
+      | 'recipient'
+      | 'phone'
+      | 'line1'
+      | 'line2'
+      | 'neighborhood'
+      | 'city'
+      | 'state'
+      | 'country'
+      | 'lat'
+      | 'lng'
+    >
+  > {
+  notes?: string | null;
+  short?: string | null;
+}
+
+/**
  * Modelo principal de Pedido en el frontend.
  * Nota: `total` es entero en COP; `updatedAt` puede venir undefined si el backend no lo envía.
  */
 export interface Order {
   id: number;
-  total: number;          // COP enteros
+  total: number; // COP enteros
   status: OrderStatus;
-  createdAt: string;      // ISO
-  updatedAt?: string;     // ISO | undefined
+  createdAt: string; // ISO
+  updatedAt?: string; // ISO | undefined
   items: OrderItem[];
   user?: OrderUserSummary | null;
 
-  // NUEVO: notas que escribe el cliente en el checkout
+  // notas libres del cliente
   notes?: string | null;
 
-  // NUEVO: método de pago usado para este pedido
+  // método de pago usado para este pedido
   paymentMethod?: PaymentMethod;
+
+  // snapshot de dirección devuelto por backend
+  address?: OrderAddressSnapshot | null;
+  addressShort?: string | null;
 }
 
 export type OrderListItem = Order;

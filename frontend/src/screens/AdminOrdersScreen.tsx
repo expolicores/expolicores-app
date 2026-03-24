@@ -24,7 +24,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const STATUS_FLOW: OrderStatus[] = ['RECIBIDO', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'];
 
-// Labels legibles para el admin
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CASH: 'Efectivo',
   TRANSFER: 'Transferencia',
@@ -32,12 +31,11 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CREDIT: 'Crédito',
 };
 
-// Colores para identificar rápido qué debe alistar el admin
 const PAYMENT_COLORS: Record<PaymentMethod, { bg: string; text: string }> = {
-  CASH: { bg: '#FEF3C7', text: '#92400E' }, // amarillo suave
-  TRANSFER: { bg: '#DBEAFE', text: '#1D4ED8' }, // azul
-  CARD: { bg: '#ECFDF5', text: '#065F46' }, // verde
-  CREDIT: { bg: '#F3E8FF', text: '#6B21A8' }, // morado
+  CASH: { bg: '#FEF3C7', text: '#92400E' },
+  TRANSFER: { bg: '#DBEAFE', text: '#1D4ED8' },
+  CARD: { bg: '#ECFDF5', text: '#065F46' },
+  CREDIT: { bg: '#F3E8FF', text: '#6B21A8' },
 };
 
 export default function AdminOrdersScreen() {
@@ -66,17 +64,18 @@ export default function AdminOrdersScreen() {
     enabled: isAdmin,
     staleTime: 5_000,
     retry: 1,
-    // polling condicional: activar si hay pedidos activos
     refetchInterval: (dataOrQuery) => {
-      const data = Array.isArray(dataOrQuery)
+      const currentData = Array.isArray(dataOrQuery)
         ? dataOrQuery
         : Array.isArray((dataOrQuery as any)?.state?.data)
-        ? (dataOrQuery as any).state.data
-        : undefined;
+          ? (dataOrQuery as any).state.data
+          : undefined;
 
       const hasActive =
-        Array.isArray(data) &&
-        data.some((o: OrderWithUser) => o.status === 'RECIBIDO' || o.status === 'EN_CAMINO');
+        Array.isArray(currentData) &&
+        currentData.some(
+          (o: OrderWithUser) => o.status === 'RECIBIDO' || o.status === 'EN_CAMINO',
+        );
 
       return hasActive ? 8_000 : false;
     },
@@ -85,8 +84,9 @@ export default function AdminOrdersScreen() {
       const status = axiosErr?.response?.status;
       const payload = axiosErr?.response?.data;
       console.error('[AdminOrders] fetch error', status, payload ?? axiosErr?.message);
+
       if (status === 401) {
-        Alert.alert('Sesion expirada', 'Vuelve a iniciar sesion.', [
+        Alert.alert('Sesión expirada', 'Vuelve a iniciar sesión.', [
           { text: 'OK', onPress: () => signOut() },
         ]);
       }
@@ -99,6 +99,7 @@ export default function AdminOrdersScreen() {
     onMutate: async ({ orderId, status }) => {
       setUpdatingId(orderId);
       await queryClient.cancelQueries({ queryKey: ['admin-orders'] });
+
       const previous = queryClient.getQueryData<OrderWithUser[]>(['admin-orders']);
 
       queryClient.setQueryData<OrderWithUser[]>(['admin-orders'], (old) => {
@@ -114,6 +115,7 @@ export default function AdminOrdersScreen() {
       if (context?.previous) {
         queryClient.setQueryData(['admin-orders'], context.previous);
       }
+
       const message =
         err?.response?.data?.message || err?.message || 'No se pudo actualizar el estado.';
       Alert.alert('Error', String(message));
@@ -124,10 +126,7 @@ export default function AdminOrdersScreen() {
     },
   });
 
-  const orders = useMemo(
-    () => (data ?? []).slice().sort((a, b) => b.id - a.id),
-    [data],
-  );
+  const orders = useMemo(() => (data ?? []).slice().sort((a, b) => b.id - a.id), [data]);
 
   if (!isAdmin) {
     return (
@@ -154,6 +153,7 @@ export default function AdminOrdersScreen() {
     const status = axiosErr?.response?.status;
     const raw = axiosErr?.response?.data?.message;
     const serverMessage = raw ? (Array.isArray(raw) ? raw.join(' | ') : String(raw)) : null;
+
     const friendly =
       status === 403
         ? 'Tu cuenta no tiene permisos para ver los pedidos. Inicia sesión con un administrador.'
@@ -178,18 +178,15 @@ export default function AdminOrdersScreen() {
 
   const confirmChange = (order: OrderWithUser, status: OrderStatus) => {
     if (order.status === status) return;
-    Alert.alert(
-      'Cambiar estado',
-      `Pasar el pedido #${order.id} a "${statusLabel[status]}"?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Confirmar',
-          style: 'destructive',
-          onPress: () => changeStatus.mutate({ orderId: order.id, status }),
-        },
-      ],
-    );
+
+    Alert.alert('Cambiar estado', `Pasar el pedido #${order.id} a "${statusLabel[status]}"?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Confirmar',
+        style: 'destructive',
+        onPress: () => changeStatus.mutate({ orderId: order.id, status }),
+      },
+    ]);
   };
 
   return (
@@ -201,9 +198,37 @@ export default function AdminOrdersScreen() {
       renderItem={({ item }) => {
         const summary = (item.items ?? [])
           .map((i) => `${i.quantity}x ${i.product?.name ?? 'Producto'}`)
-          .join(' - ');
+          .join(' · ');
+
         const disabled = updatingId === item.id && changeStatus.isLoading;
         const pm = item.paymentMethod as PaymentMethod | undefined;
+
+        const addressLine =
+          item.addressShort ||
+          item.address?.short ||
+          item.address?.line1 ||
+          null;
+
+        const addressMeta = [
+          item.address?.line2,
+          item.address?.neighborhood,
+          item.address?.city,
+          item.address?.state,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+
+        const contactName =
+          item.address?.recipient ||
+          item.user?.name ||
+          null;
+
+        const contactPhone =
+          item.address?.phone ||
+          item.user?.phone ||
+          null;
+
+        const deliveryNotes = item.address?.notes || null;
 
         return (
           <View style={styles.card}>
@@ -212,23 +237,49 @@ export default function AdminOrdersScreen() {
               <StatusBadge status={item.status} />
             </View>
 
-            <Text style={styles.timestamp}>{new Date(item.createdAt).toLocaleString()}</Text>
+            <Text style={styles.timestamp}>
+              {new Date(item.createdAt).toLocaleString()}
+            </Text>
 
             {item.user && (
               <View style={styles.userBlock}>
                 <Text style={styles.userName}>{item.user.name || 'Sin nombre'}</Text>
-                <Text style={styles.userMeta}>{item.user.email}</Text>
-                {item.user.phone ? <Text style={styles.userMeta}>{item.user.phone}</Text> : null}
+                {!!item.user.email && <Text style={styles.userMeta}>{item.user.email}</Text>}
+                {!!item.user.phone && <Text style={styles.userMeta}>{item.user.phone}</Text>}
               </View>
             )}
 
-            {summary ? <Text style={styles.items}>{summary}</Text> : null}
+            {addressLine ? (
+              <View style={styles.addressBlock}>
+                <Text style={styles.addressLabel}>Entregar en:</Text>
+                <Text style={styles.addressLine}>{addressLine}</Text>
 
-            {/* Notas del cliente */}
-            {item.notes ? <Text style={styles.notes}>Nota: {item.notes}</Text> : null}
+                {!!addressMeta && <Text style={styles.addressMeta}>{addressMeta}</Text>}
 
-            {/* Forma de pago visible para el admin */}
-            {pm && (
+                {!!contactName && (
+                  <Text style={styles.addressMeta}>Recibe: {contactName}</Text>
+                )}
+
+                {!!contactPhone && (
+                  <Text style={styles.addressMeta}>Tel: {contactPhone}</Text>
+                )}
+
+                {!!deliveryNotes && (
+                  <Text style={styles.addressMeta}>Notas dirección: {deliveryNotes}</Text>
+                )}
+              </View>
+            ) : (
+              <View style={styles.addressBlockMuted}>
+                <Text style={styles.addressLabel}>Entregar en:</Text>
+                <Text style={styles.addressMissing}>Sin dirección disponible en este pedido</Text>
+              </View>
+            )}
+
+            {!!summary && <Text style={styles.items}>{summary}</Text>}
+
+            {!!item.notes && <Text style={styles.notes}>Nota del pedido: {item.notes}</Text>}
+
+            {!!pm && (
               <View style={styles.paymentRow}>
                 <Text style={styles.paymentLabel}>Forma de pago:</Text>
                 <View
@@ -254,6 +305,7 @@ export default function AdminOrdersScreen() {
             <View style={styles.statusRow}>
               {STATUS_FLOW.map((status) => {
                 const selected = status === item.status;
+
                 return (
                   <Pressable
                     key={status}
@@ -284,12 +336,32 @@ export default function AdminOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
-  center: { justifyContent: 'center', alignItems: 'center' },
-  muted: { marginTop: 8, color: '#6b7280' },
-  lockTitle: { fontSize: 18, fontWeight: '700', color: '#111' },
-  lockText: { marginTop: 6, color: '#6b7280', textAlign: 'center' },
-  listContent: { padding: 16 },
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 16,
+  },
+  center: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  muted: {
+    marginTop: 8,
+    color: '#6b7280',
+  },
+  lockTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111',
+  },
+  lockText: {
+    marginTop: 6,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  listContent: {
+    padding: 16,
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -307,21 +379,71 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  orderId: { fontSize: 16, fontWeight: '700', color: '#111' },
-  timestamp: { marginTop: 6, color: '#6b7280' },
-  userBlock: { marginTop: 10 },
-  userName: { fontSize: 15, fontWeight: '600', color: '#111' },
-  userMeta: { color: '#6b7280', marginTop: 2 },
-  items: { marginTop: 10, color: '#374151' },
-
-  // NUEVO: estilo para notas
-  notes: {
+  orderId: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111',
+  },
+  timestamp: {
     marginTop: 6,
-    color: '#4B5563',
+    color: '#6b7280',
+  },
+  userBlock: {
+    marginTop: 10,
+  },
+  userName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111',
+  },
+  userMeta: {
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  addressBlock: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  addressBlockMuted: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#fafafa',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  addressLabel: {
+    color: '#4b5563',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  addressLine: {
+    color: '#111827',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  addressMeta: {
+    color: '#6b7280',
+    marginTop: 3,
+  },
+  addressMissing: {
+    color: '#9ca3af',
     fontStyle: 'italic',
   },
-
-  // Forma de pago
+  items: {
+    marginTop: 10,
+    color: '#374151',
+  },
+  notes: {
+    marginTop: 6,
+    color: '#4b5563',
+    fontStyle: 'italic',
+  },
   paymentRow: {
     marginTop: 10,
     flexDirection: 'row',
@@ -343,9 +465,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-
-  total: { marginTop: 12, fontSize: 16, fontWeight: '700', color: '#111' },
-  statusRow: { marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  total: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111',
+  },
+  statusRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   statusChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -354,9 +485,21 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     backgroundColor: '#fff',
   },
-  statusChipActive: { backgroundColor: '#111827', borderColor: '#111827' },
-  statusChipText: { color: '#111827', fontWeight: '600' },
-  statusChipTextActive: { color: '#fff' },
-  statusChipTextDisabled: { color: '#9ca3af' },
-  spinner: { marginTop: 12 },
+  statusChipActive: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  statusChipText: {
+    color: '#111827',
+    fontWeight: '600',
+  },
+  statusChipTextActive: {
+    color: '#fff',
+  },
+  statusChipTextDisabled: {
+    color: '#9ca3af',
+  },
+  spinner: {
+    marginTop: 12,
+  },
 });
