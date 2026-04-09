@@ -25,11 +25,9 @@ import { validateGeo } from '../lib/api.geo';
 import { useAuth } from '../context/AuthContext';
 import { useSelectedAddress } from '../hooks/useSelectedAddress';
 import type { Address } from '../types/address';
-// ⬇️ NUEVO: helpers de notificaciones (local) y permiso
 import { presentLocalNotification } from '../lib/notifications';
 import { useNotifications } from '../context/NotificationsContext';
 
-// Etiquetas amigables para UI según método de pago
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   CASH: 'Efectivo',
   TRANSFER: 'Transferencia',
@@ -46,10 +44,8 @@ export default function CheckoutScreen() {
 
   const { items: cartItems, clear, remove } = useCart();
 
-  // Notifs (permiso best-effort para locales)
   const { status: notifStatus, ensurePermission } = useNotifications();
 
-  // === precios consistentes según rol ===
   const getUnitPriceForItem = (item: any) => {
     const base = Number(item?.price) || 0;
     const b2b = Number(item?.b2bPrice);
@@ -65,19 +61,16 @@ export default function CheckoutScreen() {
     }, 0);
   }, [cartItems, isB2BPriceUser]);
 
-  // === Direcciones ===
   const { data: addresses, isLoading: loadingAddrs } = useQuery({
     queryKey: ['addresses'],
     queryFn: async () => (await api.get('/addresses')).data as Address[],
   });
 
-  // Dirección seleccionada compartida con AddressList
   const { selectedAddress, setSelectedAddress } = useSelectedAddress(
     addresses ?? null,
   );
   const [pickerOpen, setPickerOpen] = React.useState(false);
 
-  // === Envío ===
   const [notes, setNotes] = React.useState('');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [shippingInfo, setShippingInfo] =
@@ -86,21 +79,17 @@ export default function CheckoutScreen() {
   const [shippingError, setShippingError] =
     React.useState<string | null>(null);
 
-  // Forma de pago (default: efectivo)
   const [paymentMethod, setPaymentMethod] =
     React.useState<PaymentMethod>('CASH');
 
-  // Ajuste defensivo: si deja de ser negocio y tenía Crédito, volvemos a Efectivo
   React.useEffect(() => {
     if (!isBusinessUser && paymentMethod === 'CREDIT') {
       setPaymentMethod('CASH');
     }
   }, [isBusinessUser, paymentMethod]);
 
-  // NUEVO: modal de confirmación de mayoría de edad
   const [ageModalVisible, setAgeModalVisible] = React.useState(false);
 
-  // Recalcula envío cuando cambia la dirección seleccionada
   React.useEffect(() => {
     if (!selectedAddress) {
       setShippingInfo(null);
@@ -135,7 +124,7 @@ export default function CheckoutScreen() {
           return;
         }
         setShippingInfo({
-          cost: resp.shippingCost,
+          cost: isBusinessUser ? 0 : resp.shippingCost,
           distanceKm: resp.distanceKm,
         });
         setShippingError(null);
@@ -153,7 +142,12 @@ export default function CheckoutScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedAddress?.id, selectedAddress?.lat, selectedAddress?.lng]);
+  }, [
+    selectedAddress?.id,
+    selectedAddress?.lat,
+    selectedAddress?.lng,
+    isBusinessUser,
+  ]);
 
   const currency = (v: number) =>
     new Intl.NumberFormat('es-CO', {
@@ -162,12 +156,10 @@ export default function CheckoutScreen() {
       maximumFractionDigits: 0,
     }).format(v || 0);
 
-  // === Mutación: crear orden ===
   const createOrderMutation = useMutation({
     mutationFn: async (payload: CreateOrderDto) =>
       (await api.post('/orders', payload)).data,
     onSuccess: async (order: OrderSuccess) => {
-      // Local inmediata (best-effort). Intentamos permiso si aún no está otorgado.
       try {
         if (notifStatus !== 'granted') {
           await ensurePermission().catch(() => {});
@@ -177,10 +169,9 @@ export default function CheckoutScreen() {
           `Recibimos tu pedido #${order.id} por ${currency(order.total)}`,
         );
       } catch {
-        // noop: no bloquea el flujo si falla la local
+        // noop
       }
 
-      // Limpia carrito y navega a éxito
       clear();
       navigation.replace('OrderSuccess' as never, {
         orderId: order.id,
@@ -254,7 +245,6 @@ export default function CheckoutScreen() {
     !!shippingError ||
     !shippingInfo;
 
-  // Lógica real de creación de la orden (se llama solo DESPUÉS de confirmar mayoría de edad)
   const proceedCreateOrder = () => {
     if (confirmDisabled) return;
 
@@ -274,23 +264,20 @@ export default function CheckoutScreen() {
     setIsSubmitting(true);
 
     const payload: CreateOrderDto = {
-      addressId: selectedAddress.id, // ← usa la dirección elegida en el modal
+      addressId: selectedAddress.id,
       items: cartItems.map((it) => ({
         productId: it.productId,
         quantity: it.qty,
       })),
       notes: notes.trim() || undefined,
-      // Enviamos el método de pago real seleccionado
       paymentMethod,
     };
 
     createOrderMutation.mutate(payload);
   };
 
-  // Handler del botón "Confirmar pedido"
   const handleConfirm = () => {
     if (confirmDisabled) return;
-    // Para este release, siempre mostramos el popup de mayoría de edad antes de crear la orden
     setAgeModalVisible(true);
   };
 
@@ -318,7 +305,6 @@ export default function CheckoutScreen() {
         style={{ flex: 1, backgroundColor: '#ffffff' }}
         contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
       >
-        {/* Dirección */}
         <View
           style={{
             marginBottom: 16,
@@ -335,8 +321,7 @@ export default function CheckoutScreen() {
           {selectedAddress ? (
             <>
               <Text style={{ color: '#111827', marginBottom: 4 }}>
-                {selectedAddress.label ?? 'Dirección'} —{' '}
-                {selectedAddress.line1}
+                {selectedAddress.label ?? 'Dirección'} — {selectedAddress.line1}
                 {selectedAddress.city ? `, ${selectedAddress.city}` : ''}
               </Text>
               <TouchableOpacity
@@ -375,7 +360,6 @@ export default function CheckoutScreen() {
           )}
         </View>
 
-        {/* Forma de pago */}
         <View
           style={{
             marginBottom: 16,
@@ -394,7 +378,6 @@ export default function CheckoutScreen() {
               { key: 'CASH', label: 'Efectivo' },
               { key: 'TRANSFER', label: 'Transferencia' },
               { key: 'CARD', label: 'Tarjeta' },
-              // Crédito solo para B2B / ADMIN
               ...(isBusinessUser
                 ? [{ key: 'CREDIT', label: 'Crédito' }]
                 : []),
@@ -403,9 +386,7 @@ export default function CheckoutScreen() {
               return (
                 <Pressable
                   key={opt.key}
-                  onPress={() =>
-                    setPaymentMethod(opt.key as PaymentMethod)
-                  }
+                  onPress={() => setPaymentMethod(opt.key as PaymentMethod)}
                   style={{
                     paddingVertical: 8,
                     paddingHorizontal: 12,
@@ -431,7 +412,6 @@ export default function CheckoutScreen() {
             })}
           </View>
 
-          {/* Advertencia específica para pago con tarjeta */}
           {paymentMethod === 'CARD' && (
             <View
               style={{
@@ -439,7 +419,7 @@ export default function CheckoutScreen() {
                 paddingVertical: 8,
                 paddingHorizontal: 10,
                 borderRadius: 8,
-                backgroundColor: '#FEF3C7', // amarillo suave
+                backgroundColor: '#FEF3C7',
                 borderWidth: 1,
                 borderColor: '#FBBF24',
               }}
@@ -458,7 +438,6 @@ export default function CheckoutScreen() {
           )}
         </View>
 
-        {/* Tu pedido */}
         <View
           style={{
             marginBottom: 16,
@@ -495,7 +474,6 @@ export default function CheckoutScreen() {
           })}
         </View>
 
-        {/* Notas */}
         <View
           style={{
             marginBottom: 16,
@@ -524,7 +502,6 @@ export default function CheckoutScreen() {
           />
         </View>
 
-        {/* Resumen */}
         <View
           style={{
             marginBottom: 16,
@@ -543,10 +520,10 @@ export default function CheckoutScreen() {
 
           {shippingInfo ? (
             <>
-              <Row label="Envío" value={shippingInfo.cost} />
+              <Row label="Envío" value={isBusinessUser ? 0 : shippingInfo.cost} />
               <Row
                 label="Total"
-                value={computedSubtotal + shippingInfo.cost}
+                value={computedSubtotal + (isBusinessUser ? 0 : shippingInfo.cost)}
               />
               <Row
                 label="Forma de pago"
@@ -564,16 +541,17 @@ export default function CheckoutScreen() {
             }}
           >
             {shippingInfo
-              ? `Envío estimado para ${shippingInfo.distanceKm.toFixed(
-                  1,
-                )} km.`
+              ? isBusinessUser
+                ? `Cobertura validada para ${shippingInfo.distanceKm.toFixed(
+                    1,
+                  )} km. Domicilio sin costo para cliente negocio.`
+                : `Envío estimado para ${shippingInfo.distanceKm.toFixed(1)} km.`
               : shippingError
               ? `${shippingError}.\nActualiza tu dirección para continuar.`
               : 'El envío se calcula por distancia. Edita tu dirección para estimarlo.'}
           </Text>
         </View>
 
-        {/* Confirmar */}
         <View style={{ marginTop: 8 }}>
           {createOrderMutation.isLoading || isSubmitting ? (
             <View
@@ -624,7 +602,6 @@ export default function CheckoutScreen() {
         </View>
       </ScrollView>
 
-      {/* ===== MODAL: Confirmación mayoría de edad ===== */}
       <Modal
         visible={ageModalVisible}
         animationType="fade"
@@ -704,7 +681,6 @@ export default function CheckoutScreen() {
         </View>
       </Modal>
 
-      {/* ===== MODAL: Selector de direcciones ===== */}
       <AddressPickerModal
         visible={pickerOpen}
         addresses={addresses ?? []}
@@ -754,7 +730,6 @@ function Row({
   );
 }
 
-/** Modal simple para elegir dirección sin tocar isDefault */
 function AddressPickerModal(props: {
   visible: boolean;
   addresses: Address[];
