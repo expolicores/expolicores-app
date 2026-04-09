@@ -66,6 +66,10 @@ export class OrdersService {
     );
   }
 
+  private hasFreeShipping(role: Role) {
+    return role === Role.B2B || role === Role.ADMIN;
+  }
+
   private serializeOrder<T extends Record<string, any>>(order: T) {
     const addressShort =
       order.deliveryAddressShort ||
@@ -194,6 +198,7 @@ export class OrdersService {
 
     const byId = new Map(products.map((p) => [p.id, p]));
     const usesB2B = user.role === Role.B2B || user.role === Role.ADMIN;
+    const isFreeShippingUser = this.hasFreeShipping(user.role);
 
     let subtotal = 0;
     for (const it of dto.items) {
@@ -206,6 +211,7 @@ export class OrdersService {
     }
 
     let shipping = this.shipping.min;
+
     if (hasGeo) {
       const geo = validateGeo({
         lat: address.lat as number,
@@ -216,7 +222,9 @@ export class OrdersService {
         throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
       }
 
-      shipping = geo.shippingCost;
+      shipping = isFreeShippingUser ? 0 : geo.shippingCost;
+    } else if (isFreeShippingUser) {
+      shipping = 0;
     }
 
     const total = subtotal + shipping;
