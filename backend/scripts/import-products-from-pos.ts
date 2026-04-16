@@ -9,7 +9,7 @@
 //   products/images/7701234567890.webp    <-- imágenes por código de barras
 //
 // - Usa "barcode" como clave de negocio para hacer UPSERT.
-// - Calcula price y b2bPrice en centavos (Int).
+// - price y b2bPrice se guardan como COP enteros (NO centavos).
 // - Construye imageUrl basado en el barcode: products/images/{barcode}.webp
 //
 // REQUISITOS:
@@ -31,7 +31,7 @@ const prisma = new PrismaClient();
 // URL del CSV en R2, viene del .env
 const CSV_URL = process.env.POS_PRODUCTS_CSV_URL;
 
-// Delimitador del CSV: ";" o ","
+// Delimitador del CSV
 const CSV_DELIMITER = ';';
 
 // Prefijo de imágenes dentro del bucket expolicores-feed.
@@ -48,8 +48,21 @@ const HAS_HEADER_ROW = true;
 
 type CsvRow = Record<string, string>;
 
+function removeBom(value: string): string {
+  return value.replace(/^\uFEFF/, '');
+}
+
+function sanitizeText(value?: string | null): string {
+  if (!value) return '';
+  return removeBom(String(value))
+    .replace(/\u0000/g, '')
+    .trim();
+}
+
 function parseCsvHeader(line: string): string[] {
-  return line.split(CSV_DELIMITER).map((h) => h.trim());
+  return line
+    .split(CSV_DELIMITER)
+    .map((h) => sanitizeText(h));
 }
 
 function parseCsvLine(line: string, headers: string[]): CsvRow {
@@ -57,7 +70,7 @@ function parseCsvLine(line: string, headers: string[]): CsvRow {
   const row: CsvRow = {};
 
   headers.forEach((header, index) => {
-    row[header] = (values[index] ?? '').trim();
+    row[header] = sanitizeText(values[index] ?? '');
   });
 
   return row;
@@ -74,20 +87,54 @@ function getFirstNonEmpty(row: CsvRow, keys: string[]): string | undefined {
 }
 
 /**
- * Convierte string de precio en COP a centavos (Int).
- * Acepta formatos como "12500", "12.500", "12,500.00", "12500,5", etc.
+ * Convierte string de precio a COP entero.
+ * NO multiplica por 100.
+ *
+ * Acepta formatos como:
+ * - "12500"
+ * - "12.500"
+ * - "$ 12.500"
+ * - "12,500"     -> queda 12500 por limpieza de no dígitos
+ * - "113001"
+ *
+ * Regla operativa para este proyecto:
+ * el CSV debe traer precios enteros en COP.
  */
-function parsePriceToCents(raw?: string): number {
+function parsePriceToInt(raw?: string): number {
   if (!raw) return 0;
-  let s = raw.trim();
 
-  // Eliminar separadores de miles comunes
-  s = s.replace(/\./g, '').replace(/,/g, '.');
+  const clean = sanitizeText(raw).replace(/[^\d]/g, '');
+  if (!clean) return 0;
 
-  const num = Number(s);
-  if (Number.isNaN(num) || num <= 0) return 0;
+  const num = Number.parseInt(clean, 10);
+  if (!Number.isFinite(num) || num <= 0) return 0;
 
-  return Math.round(num * 100);
+  return num;
+}
+
+/**
+ * Convierte stock a entero.
+ */
+function parseStock(raw?: string): number {
+  if (!raw) return 0;
+
+  const clean = sanitizeText(raw).replace(/[^\d-]/g, '');
+  if (!clean) return 0;
+
+  const num = Number.parseInt(clean, 10);
+  if (!Number.isFinite(num)) return 0;
+
+  return Math.max(0, num);
+}
+
+/**
+ * Normaliza barcode.
+ * Conserva solo texto limpio sin espacios alrededor.
+ */
+function normalizeBarcode(raw?: string): string | undefined {
+  const value = sanitizeText(raw);
+  if (!value) return undefined;
+  return value;
 }
 
 /**
@@ -115,14 +162,27 @@ async function main() {
 
   console.log('Descargando CSV desde:', CSV_URL);
 
-  const res = await fetch(CSV_URL);
+  const res = await fetch(CSV_URL, {
+    headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+  });
+
   if (!res.ok) {
     console.error('ERROR al descargar el CSV:', res.status, res.statusText);
     process.exit(1);
   }
 
-  const csvText = await res.text();
-  const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  let csvText = await res.text();
+
+  // Limpieza mínima defensiva
+  csvText = removeBom(csvText);
+
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
 
   if (lines.length === 0) {
     console.error('El CSV está vacío.');
@@ -156,21 +216,26 @@ async function main() {
     // --------- MAPEO DE COLUMNAS (AJUSTA A TU CSV DEL POS) ---------
     const name =
       getFirstNonEmpty(row, ['name', 'Name', 'NOMBRE', 'descripcion']) ?? '';
-    const barcode = getFirstNonEmpty(row, [
-      'barcode',
-      'Barcode',
-      'CODIGO_BARRAS',
-      'COD_BARRAS',
-      'codigo_barras',
-    ]);
+
+    const barcode = normalizeBarcode(
+      getFirstNonEmpty(row, [
+        'barcode',
+        'Barcode',
+        'CODIGO_BARRAS',
+        'COD_BARRAS',
+        'codigo_barras',
+      ]),
+    );
+
     const category =
       getFirstNonEmpty(row, ['category', 'Category', 'CATEGORIA']) ?? null;
+
     const description =
-      getFirstNonEmpty(row, ['description', 'DESCRIPCION', 'detalle']) ??
-      name;
+      getFirstNonEmpty(row, ['description', 'DESCRIPCION', 'detalle']) ?? name;
 
     const priceStr =
       getFirstNonEmpty(row, ['price', 'PRICE', 'precio', 'PRECIO']) ?? '0';
+
     const b2bPriceStr =
       getFirstNonEmpty(row, [
         'b2bPrice',
@@ -195,33 +260,37 @@ async function main() {
       continue;
     }
 
-    const priceInCents = parsePriceToCents(priceStr);
-    const b2bPriceInCents = parsePriceToCents(b2bPriceStr);
-
-    const stock = Number(stockStr.replace(/\./g, '').replace(/,/g, '')) || 0;
-
+    const price = parsePriceToInt(priceStr);
+    const b2bPrice = parsePriceToInt(b2bPriceStr);
+    const stock = parseStock(stockStr);
     const imageUrl = buildImagePath(barcode);
+
+    if (price <= 0) {
+      console.warn(`Línea ${i + 1} (barcode ${barcode}): precio inválido, se omite.`);
+      skipped++;
+      continue;
+    }
 
     // --------- UPSERT EN PRODUCT ---------
     try {
       await prisma.product.upsert({
         where: { barcode }, // requiere barcode @unique en el modelo
         create: {
-          name,
+          name: sanitizeText(name),
           barcode,
-          category,
-          description,
-          price: priceInCents,
-          b2bPrice: b2bPriceInCents,
+          category: category ? sanitizeText(category) : null,
+          description: sanitizeText(description),
+          price,
+          b2bPrice: b2bPrice > 0 ? b2bPrice : price,
           stock,
           imageUrl,
         },
         update: {
-          name,
-          category,
-          description,
-          price: priceInCents,
-          b2bPrice: b2bPriceInCents,
+          name: sanitizeText(name),
+          category: category ? sanitizeText(category) : null,
+          description: sanitizeText(description),
+          price,
+          b2bPrice: b2bPrice > 0 ? b2bPrice : price,
           stock,
           imageUrl,
         },
@@ -229,9 +298,7 @@ async function main() {
 
       processed++;
       if (processed % 100 === 0) {
-        console.log(
-          `Productos procesados: ${processed} (omitidos: ${skipped})`,
-        );
+        console.log(`Productos procesados: ${processed} (omitidos: ${skipped})`);
       }
     } catch (e) {
       console.error(
