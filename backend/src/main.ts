@@ -1,19 +1,48 @@
-// src/main.ts
-import { ValidationPipe } from '@nestjs/common';
+// backend/src/main.ts
+import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AppModule } from './app.module';
-import * as morgan from 'morgan';
+import morgan from 'morgan';
+import * as bodyParser from 'body-parser';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
-// ⬇️ Filtro global para mapear errores Prisma → HTTP
+import { AppModule } from './app.module';
 import { PrismaClientExceptionFilter } from './common/filters/prisma-exception.filter';
 
 async function bootstrap() {
-  // Creamos la app (desactivamos CORS aquí para configurarlo manualmente abajo)
+  // Crear app (CORS se configura abajo)
   const app = await NestFactory.create(AppModule, { cors: false });
+  const config = app.get(ConfigService);
 
-  // Validación global
+  // ======= Global Prefix (solo si ENV está presente y no vacía) =======
+  const rawPrefix = (process.env.GLOBAL_PREFIX ?? config.get<string>('GLOBAL_PREFIX') ?? '').trim();
+  const globalPrefix = rawPrefix.replace(/^\/+|\/+$/g, '');
+  if (globalPrefix.length > 0) {
+    app.setGlobalPrefix(globalPrefix);
+    console.log('[BOOT] GLOBAL_PREFIX =', `/${globalPrefix}`);
+  } else {
+    console.log('[BOOT] GLOBAL_PREFIX disabled (routes served at root)');
+  }
+
+  // ======= Raw body (webhooks) =======
+  app.use(
+    bodyParser.json({
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf?.toString();
+      },
+    }),
+  );
+  app.use(
+    bodyParser.urlencoded({
+      extended: true,
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf?.toString();
+      },
+    }),
+  );
+
+  // ======= Validación global =======
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -22,39 +51,57 @@ async function bootstrap() {
     }),
   );
 
-  // Filtro global de Prisma (P2025, P2002, etc.)
+  // ======= Filtro global Prisma =======
   app.useGlobalFilters(new PrismaClientExceptionFilter());
 
-  // CORS para dev: permitir orígenes locales y exponer X-Total-Count al FE
+  // ======= CORS =======
+  const nodeEnv = (config.get<string>('NODE_ENV') || 'development').toLowerCase();
+  const originsCsv = (config.get<string>('ORIGINS_CSV') || '').trim();
+  const origins =
+    nodeEnv === 'production' && originsCsv
+      ? originsCsv.split(',').map((s) => s.trim()).filter(Boolean)
+      : true; // dev: cualquiera (útil para Expo Go)
+
   app.enableCors({
-    origin: true, // en prod, reemplaza por tu(s) dominio(s)
+    origin: origins,
     credentials: false,
     exposedHeaders: ['X-Total-Count'],
   });
 
-  // Logs HTTP
+  // ======= Logs HTTP =======
   app.use(morgan('dev'));
 
-  // Swagger en /docs + Bearer auth (JWT)
+  // ======= Swagger =======
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Expolicores API')
     .setDescription('Documentación de la API de Expolicores')
     .setVersion('1.0')
-    .addBearerAuth() // ⬅️ para @ApiBearerAuth() en controllers
+    .addBearerAuth()
     .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
 
-  // Puerto/host
-  const config = app.get(ConfigService);
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  // Con useGlobalPrefix true, Swagger quedará en /docs o /<prefix>/docs
+  SwaggerModule.setup('docs', app, document, { useGlobalPrefix: true });
+
+  // ======= Puerto/host =======
   const port = Number(config.get('PORT')) || 3000;
   const host = (config.get<string>('HOST') || '0.0.0.0') as '0.0.0.0' | '127.0.0.1';
 
   await app.listen(port, host);
 
-  const url = await app.getUrl(); // p.ej. http://localhost:3000
-  console.log(`🚀 Servidor corriendo en ${url} (host=${host})`);
-  console.log(`📚 Swagger: ${url}/docs`);
-  console.log('💡 Desde el iPhone usa:  http://<IP_LAN_DE_TU_PC>:' + port + '/docs');
+  // ======= Logs de arranque =======
+  const baseUrl = await app.getUrl();
+  const prefixStr = globalPrefix ? `/${globalPrefix}` : '';
+  const commit = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || 'n/a';
+
+  console.log(`🚀 Servidor corriendo en ${baseUrl}${prefixStr} (host=${host}, env=${nodeEnv}, commit=${commit})`);
+  console.log(`📚 Swagger: ${baseUrl}${prefixStr}/docs`);
+  console.log(
+    `💡 Endpoints base: ${baseUrl}${prefixStr}  (ej: ${baseUrl}${prefixStr}/auth/me, ${baseUrl}${prefixStr}/feed)`,
+  );
+  if (host === '0.0.0.0') {
+    console.log(`💡 Desde iPhone (LAN): http://<IP_LAN_DE_TU_PC>:${port}${prefixStr}/docs`);
+  }
 }
+
 bootstrap();

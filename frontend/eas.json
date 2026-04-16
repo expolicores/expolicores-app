@@ -1,0 +1,44 @@
+﻿{
+  "cli": { "version": ">= 3.20.0", "appVersionSource": "local" },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "ios": { "simulator": false },
+      "env": {
+        "EAS_BUILD_PROFILE": "development",
+        "EXPO_USE_NEW_ARCH": "1",
+        "RCT_NEW_ARCH_ENABLED": "1",
+        "REANIMATED_ENABLE_NEW_ARCHITECTURE": "1",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false"
+      }
+    },
+    "production": {
+      "android": { "buildType": "app-bundle" },
+      "ios": { "image": "latest", "resourceClass": "m-medium" },
+      "channel": "production",
+      "env": {
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "EXPO_DEBUG": "1",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false"
+      }
+    },
+    "production-apk": {
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "env": {
+        "EAS_BUILD_PROFILE": "production-apk",
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false"
+      }
+    }
+  },
+  "submit": {
+    "production": { "android": { "track": "internal" } }
+  }
+}

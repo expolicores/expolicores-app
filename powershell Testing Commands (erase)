@@ -1,0 +1,91 @@
+Invoke-WebRequest -Uri "https://expolicores-app-production.up.railway.app/docs" -UseBasicParsing | Out-Null
+"Swagger OK"
+
+
+$API = "https://expolicores-app-production.up.railway.app"
+$JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMsImVtYWlsIjoiZXhwb2xpY29yZXNAb3V0bG9vay5jb20iLCJyb2xlIjoiQjJDIiwiaWF0IjoxNzYzMDAyNTM0LCJleHAiOjE3NjM2MDczMzR9.ZQlW5ney7-YqwuB1zIVrfEtjiajyQa9oT4N81FzXYvw"
+$body = @{ token = "ExponentPushToken[SIMULADO123456]"; platform = "android" } | ConvertTo-Json
+Invoke-RestMethod -Uri "$API/notifications/push/register" -Method POST `
+  -Headers @{ Authorization="Bearer $JWT"; "Content-Type"="application/json" } -Body $body
+
+
+postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway
+
+pg_dump "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway" > expolicores-backup-$(15-11-25 +%F).sql
+
+
+postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway
+
+
+$env:DATABASE_URL = "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway"
+$env:POS_PRODUCTS_CSV_URL = "https://cdn.expressapp.net/products/pos-products.csv"
+
+
+
+railway ssh --project=6d1bb50d-9eb0-44d2-b44c-325841143f7d --environment=ec030ad5-2026-4e0b-bf00-3aa4012ec8ad --service=fda892b8-6f86-46ea-9906-cb6e3ac0aacc
+
+
+C:\Users\juank\desktop\expolicores-app> railway ssh --project=6d1bb50d-9eb0-44d2-b44c-325841143f7d --environment=ec030ad5-2026-4e0b-bf00-3aa4012ec8ad --service=fda892b8-6f86-46ea-9906-cb6e3ac0aacc
+
+
+
+
+
+
+psql postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ajusta :orderId
+curl -X POST "https://https://expolicores-app-production.up.railway.app/live-activities/test-update" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiZXhwb0BhZG1pbi5jb20iLCJyb2xlIjoiQURNSU4iLCJpYXQiOjE3NjIzMTE0MTYsImV4cCI6MTc2MjkxNjIxNn0.rchlGowP0ZB_5WEGH-ed4LW7w4gPWJV34cX33hRp0u8" \
+  -H "Content-Type: application/json" \
+  -d '{"orderId": 37, "status": "EN_CAMINO"}'
+
+
+
+
+
+$env:DATABASE_URL = "postgresql://postgres:djPKeyIjwAnAjPGaYscnotqRKmVXtsrB@hopper.proxy.rlwy.net:56191/railway"
+
+# 1) cuántas migraciones hay en DB
+'SELECT COUNT(*) FROM "_prisma_migrations";' |
+  npx prisma db execute --stdin --url $env:DATABASE_URL
+
+# 2) listado de migraciones aplicadas
+@'
+SELECT migration_name, finished_at
+FROM "_prisma_migrations"
+ORDER BY started_at;
+'@ | npx prisma db execute --stdin --url $env:DATABASE_URL
+
+# 3) tipos de columnas en PromotionProduct
+@"
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema='public'
+  AND table_name='PromotionProduct'
+  AND column_name IN ('productId','productId_int');
+"@ | npx prisma db execute --stdin --url $env:DATABASE_URL
+
+# 4) conteos rápidos
+@'
+SELECT ''Product'' AS tbl, COUNT(*) FROM "Product"
+UNION ALL
+SELECT ''Order'', COUNT(*) FROM "Order"
+UNION ALL
+SELECT ''User'', COUNT(*) FROM "User"
+UNION ALL
+SELECT ''PromotionProduct'', COUNT(*) FROM "PromotionProduct";
+'@ | npx prisma db execute --stdin --url $env:DATABASE_URL

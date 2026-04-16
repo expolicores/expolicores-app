@@ -1,4 +1,3 @@
-// src/orders/orders.service.ts
 import {
   BadRequestException,
   ConflictException,
@@ -6,72 +5,230 @@ import {
   NotFoundException,
   Inject,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './create-order.dto';
 import { UpdateOrderDto } from './update-order.dto';
-import { OrderStatus, Role } from '@prisma/client';
-import { haversineKm, shippingForKm } from '../common/geo';
+import {
+  OrderStatus,
+  Role,
+  PaymentMethod as PaymentMethodEnum,
+} from '@prisma/client';
 import shippingConfig from '../config/shipping';
 import { ConfigType } from '@nestjs/config';
 import { WhatsAppService } from '../notifications/whatsapp.service';
+import { validateGeo } from '../common/geo';
+import { PushService } from '../notifications/push.service';
+import { LiveActivitiesService } from '../live-activities/live-activities.service';
+
+type AddressSnapshot = {
+  id: number;
+  label: string;
+  recipient: string;
+  phone: string;
+  line1: string;
+  line2: string | null;
+  neighborhood: string | null;
+  city: string;
+  state: string;
+  country: string;
+  lat: number | null;
+  lng: number | null;
+  notes: string | null;
+};
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(shippingConfig.KEY)
     private readonly shipping: ConfigType<typeof shippingConfig>,
     private readonly whatsapp: WhatsAppService,
+    private readonly push: PushService,
+    private readonly liveActivities: LiveActivitiesService,
   ) {}
+
+  private shortAddress(address?: {
+    line1?: string | null;
+    neighborhood?: string | null;
+    city?: string | null;
+  }) {
+    if (!address) return null;
+
+    return (
+      [address.line1, address.neighborhood, address.city]
+        .filter((v) => !!v && String(v).trim().length > 0)
+        .join(', ')
+        .trim() || null
+    );
+  }
+
+  private hasFreeShipping(role: Role) {
+    return role === Role.B2B || role === Role.ADMIN;
+  }
+
+  private serializeOrder<T extends Record<string, any>>(order: T) {
+    const addressShort =
+      order.deliveryAddressShort ||
+      this.shortAddress({
+        line1: order.deliveryLine1,
+        neighborhood: order.deliveryNeighborhood,
+        city: order.deliveryCity,
+      });
+
+    return {
+      ...order,
+      addressShort,
+      address: {
+        label: order.deliveryLabel ?? null,
+        recipient: order.deliveryRecipient ?? null,
+        phone: order.deliveryPhone ?? null,
+        line1: order.deliveryLine1 ?? null,
+        line2: order.deliveryLine2 ?? null,
+        neighborhood: order.deliveryNeighborhood ?? null,
+        city: order.deliveryCity ?? null,
+        state: order.deliveryState ?? null,
+        country: order.deliveryCountry ?? null,
+        notes: order.deliveryNotes ?? null,
+        lat: order.deliveryLat ?? null,
+        lng: order.deliveryLng ?? null,
+        short: addressShort,
+      },
+    };
+  }
 
   private readonly orderInclude = {
     items: { include: { product: true } },
-    user: { select: { id: true, email: true, name: true, role: true, phone: true } },
+    user: {
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        phone: true,
+      },
+    },
   } as const;
 
-  async create(userId: number, dto: CreateOrderDto) {
+  async create(userId: number, dto: CreateOrderDto, role: Role) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, phone: true },
+    });
+    if (!user) throw new NotFoundException('USER_NOT_FOUND');
+
     const address = await this.prisma.address.findFirst({
       where: { id: dto.addressId, userId },
       select: {
         id: true,
         label: true,
+        recipient: true,
+        phone: true,
         line1: true,
+        line2: true,
         neighborhood: true,
         city: true,
+        state: true,
+        country: true,
         lat: true,
         lng: true,
         notes: true,
       },
     });
     if (!address) throw new NotFoundException('ADDRESS_NOT_FOUND');
-    if (address.lat == null || address.lng == null) throw new BadRequestException('ADDRESS_MISSING_GEO');
 
-    const km = haversineKm(
-      { lat: this.shipping.store.lat, lng: this.shipping.store.lng },
-      { lat: address.lat, lng: address.lng },
-    );
-    if (km > this.shipping.radiusKm) throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
+    const hasGeo =
+      typeof address.lat === 'number' && typeof address.lng === 'number';
 
-    if (!dto.items || dto.items.length === 0) throw new BadRequestException('EMPTY_CART');
+    const rawPayment = dto.paymentMethod ?? 'CASH';
+
+    let paymentMethod: PaymentMethodEnum;
+    switch (rawPayment) {
+      case 'TRANSFER':
+        paymentMethod = PaymentMethodEnum.TRANSFER;
+        break;
+      case 'CARD':
+        paymentMethod = PaymentMethodEnum.CARD;
+        break;
+      case 'CREDIT':
+        paymentMethod = PaymentMethodEnum.CREDIT;
+        break;
+      case 'CASH':
+      default:
+        paymentMethod = PaymentMethodEnum.CASH;
+        break;
+    }
+
+    if (
+      paymentMethod === PaymentMethodEnum.CREDIT &&
+      role !== Role.B2B &&
+      role !== Role.ADMIN
+    ) {
+      throw new BadRequestException('PAYMENT_METHOD_CREDIT_NOT_ALLOWED');
+    }
+
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('EMPTY_CART');
+    }
 
     const ids = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids } },
-      select: { id: true, name: true, price: true, stock: true },
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        b2bPrice: true,
+        stock: true,
+      },
     });
-    if (products.length !== ids.length) throw new NotFoundException('PRODUCT_NOT_FOUND');
+
+    if (products.length !== ids.length) {
+      const foundIds = new Set(products.map((p) => p.id));
+      const missing = ids.filter((id) => !foundIds.has(id));
+      throw new NotFoundException({
+        code: 'PRODUCT_NOT_FOUND',
+        missing,
+        message: 'PRODUCT_NOT_FOUND',
+      });
+    }
 
     const byId = new Map(products.map((p) => [p.id, p]));
+    const usesB2B = user.role === Role.B2B || user.role === Role.ADMIN;
+    const isFreeShippingUser = this.hasFreeShipping(user.role);
+
     let subtotal = 0;
     for (const it of dto.items) {
       const p = byId.get(it.productId)!;
-      if (p.stock < it.quantity) throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
-      subtotal += p.price * it.quantity;
+      if (p.stock < it.quantity) {
+        throw new ConflictException(`OUT_OF_STOCK:${p.id}`);
+      }
+      const unitPrice = usesB2B ? p.b2bPrice : p.price;
+      subtotal += unitPrice * it.quantity;
     }
 
-    const shipping = shippingForKm(km, this.shipping.base, this.shipping.perKm, this.shipping.min);
+    let shipping = this.shipping.min;
+
+    if (hasGeo) {
+      const geo = validateGeo({
+        lat: address.lat as number,
+        lng: address.lng as number,
+      });
+
+      if (!geo.inCoverage) {
+        throw new BadRequestException('COVERAGE_OUT_OF_RANGE');
+      }
+
+      shipping = isFreeShippingUser ? 0 : geo.shippingCost;
+    } else if (isFreeShippingUser) {
+      shipping = 0;
+    }
+
     const total = subtotal + shipping;
+    const deliveryAddressShort = this.shortAddress(address);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
@@ -79,7 +236,29 @@ export class OrdersService {
           userId,
           total,
           status: OrderStatus.RECIBIDO,
-          items: { create: dto.items.map((i) => ({ productId: i.productId, quantity: i.quantity })) },
+          paymentMethod,
+          notes: dto.notes?.trim() || null,
+
+          deliveryLabel: address.label ?? null,
+          deliveryRecipient: address.recipient ?? null,
+          deliveryPhone: address.phone ?? null,
+          deliveryLine1: address.line1 ?? null,
+          deliveryLine2: address.line2 ?? null,
+          deliveryNeighborhood: address.neighborhood ?? null,
+          deliveryCity: address.city ?? null,
+          deliveryState: address.state ?? null,
+          deliveryCountry: address.country ?? null,
+          deliveryNotes: address.notes ?? null,
+          deliveryLat: address.lat ?? null,
+          deliveryLng: address.lng ?? null,
+          deliveryAddressShort: deliveryAddressShort || null,
+
+          items: {
+            create: dto.items.map((i) => ({
+              productId: i.productId,
+              quantity: i.quantity,
+            })),
+          },
         },
         include: this.orderInclude,
       });
@@ -89,22 +268,68 @@ export class OrdersService {
           where: { id: it.productId, stock: { gte: it.quantity } },
           data: { stock: { decrement: it.quantity } },
         });
-        if (res.count !== 1) throw new ConflictException(`OUT_OF_STOCK:${it.productId}`);
+
+        if (res.count !== 1) {
+          throw new ConflictException(`OUT_OF_STOCK:${it.productId}`);
+        }
       }
 
       return order;
     });
 
-    // --- WhatsApp confirmación (US10) ---
-    const toPhone = this.normalizeCoPhone(created.user?.phone ?? '');
+    try {
+      await this.push.sendToUser(String(userId), {
+        title: 'Pedido creado',
+        body: `#${created.id} recibido. Te avisaremos los cambios.`,
+        data: { type: 'ORDER_CREATED', orderId: created.id },
+        priority: 'high',
+        sound: 'default',
+      });
+    } catch (e) {
+      this.logger.warn(
+        `push ORDER_CREATED failed for user ${userId}: ${
+          (e as Error).message
+        }`,
+      );
+    }
+
+    this.notifyAdminsNewOrder(created as any).catch((e) => {
+      this.logger.warn(
+        `notifyAdminsNewOrder failed for order ${created.id}: ${
+          (e as Error).message
+        }`,
+      );
+    });
+
+    const toPhone = this.normalizeCoPhone(
+      user.phone ?? created.user?.phone ?? '',
+    );
     const addressLabel = address.label ?? 'Dirección';
-    const addressLine = [address.line1, address.neighborhood, address.city].filter(Boolean).join(', ');
-    const waItems = created.items.map((i) => ({
-      name: i.product.name,
-      quantity: i.quantity,
-      price: i.product.price,
-    }));
-    const notes = dto.notes ?? address.notes ?? undefined;
+    const addressLine =
+      deliveryAddressShort ||
+      [address.line1, address.neighborhood, address.city]
+        .filter(Boolean)
+        .join(', ');
+
+    const waItems = created.items.map((i) => {
+      const linePrice = usesB2B ? i.product.b2bPrice : i.product.price;
+      return { name: i.product.name, quantity: i.quantity, price: linePrice };
+    });
+
+    const notesFromPayload = [dto.notes, address.notes];
+    if (!hasGeo) {
+      notesFromPayload.push(
+        'Atención: validar cobertura, dirección sin coordenadas',
+      );
+    }
+
+    const notes =
+      notesFromPayload
+        .map((n) => (n ?? '').trim())
+        .filter((n) => n.length > 0)
+        .join(' | ') || undefined;
+
+    const waPaymentLabel = this.mapPaymentMethodToLabel(paymentMethod);
 
     const waRes = await this.whatsapp.sendOrderConfirmation({
       toPhone,
@@ -112,7 +337,7 @@ export class OrdersService {
       subtotal,
       shipping,
       total: created.total,
-      paymentMethod: dto.paymentMethod ?? 'COD',
+      paymentMethod: waPaymentLabel,
       items: waItems,
       addressLabel,
       addressLine,
@@ -120,9 +345,10 @@ export class OrdersService {
       tenant: 'Expolicores Villa de Leyva',
     });
 
-    // Log idempotente de confirmación (ORDER_CREATED)
     await this.prisma.notificationLog.upsert({
-      where: { orderId_type: { orderId: created.id, type: 'ORDER_CREATED' } },
+      where: {
+        orderId_type: { orderId: created.id, type: 'ORDER_CREATED' },
+      },
       update: {
         sid: (waRes as any).sid ?? null,
         ok: (waRes as any).ok,
@@ -140,76 +366,135 @@ export class OrdersService {
       },
     });
 
-    return { ...created, subtotal, shipping, total, address };
+    return {
+      ...this.serializeOrder(created),
+      subtotal,
+      shipping,
+      total,
+    };
   }
 
-  private async calcTotal(items: { productId: number; quantity: number }[]) {
+  private async calcTotal(
+    items: { productId: number; quantity: number }[],
+    useB2B: boolean,
+  ) {
     const ids = [...new Set(items.map((i) => i.productId))];
     const products = await this.prisma.product.findMany({
       where: { id: { in: ids } },
-      select: { id: true, price: true },
+      select: { id: true, price: true, b2bPrice: true },
     });
-    const priceMap = new Map(products.map((p) => [p.id, p.price]));
-    return items.reduce((sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
+
+    const priceMap = new Map(
+      products.map((p) => [p.id, useB2B ? p.b2bPrice : p.price]),
+    );
+
+    return items.reduce(
+      (sum, i) => sum + (priceMap.get(i.productId) ?? 0) * i.quantity,
+      0,
+    );
   }
 
   async findAll() {
-    return this.prisma.order.findMany({ orderBy: { id: 'desc' }, include: this.orderInclude });
+    const orders = await this.prisma.order.findMany({
+      orderBy: { id: 'desc' },
+      include: this.orderInclude,
+    });
+
+    return orders.map((o) => this.serializeOrder(o));
   }
 
   async findMine(userId: number) {
-    return this.prisma.order.findMany({ where: { userId }, orderBy: { id: 'desc' }, include: this.orderInclude });
+    const orders = await this.prisma.order.findMany({
+      where: { userId },
+      orderBy: { id: 'desc' },
+      include: this.orderInclude,
+    });
+
+    return orders.map((o) => this.serializeOrder(o));
   }
 
   async findOneAs(id: number, user: { id: number; role: Role }) {
-    const where = user.role === 'ADMIN' ? { id } : { id, userId: user.id };
-    const order = await this.prisma.order.findFirst({ where, include: this.orderInclude });
+    const where = user.role === Role.ADMIN ? { id } : { id, userId: user.id };
+
+    const order = await this.prisma.order.findFirst({
+      where,
+      include: this.orderInclude,
+    });
+
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+
+    return this.serializeOrder(order);
   }
 
   async findOne(id: number) {
-    const order = await this.prisma.order.findUnique({ where: { id }, include: this.orderInclude });
-    if (!order) throw new NotFoundException(`Order with ID ${id} not found`);
-    return order;
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: this.orderInclude,
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID ${id} not found`);
+    }
+
+    return this.serializeOrder(order);
   }
 
   async findOneForUser(id: number, user: { id: number; role: Role }) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: { items: { include: { product: true } }, user: true },
+      include: { ...this.orderInclude },
     });
+
     if (!order) throw new NotFoundException('Order not found');
 
-    // owner o admin
     if (user.role !== Role.ADMIN && order.userId !== user.id) {
       throw new ForbiddenException('You cannot access this order');
     }
-    return order;
+
+    return this.serializeOrder(order);
   }
 
   async update(id: number, dto: UpdateOrderDto) {
     const { items, ...rest } = dto;
+
+    const existing = await this.prisma.order.findUnique({
+      where: { id },
+      select: { user: { select: { role: true } } },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Order with ID ${id} not found`);
+    }
+
+    const usesB2B =
+      existing.user?.role === Role.B2B || existing.user?.role === Role.ADMIN;
+
     let totalUpdate: number | undefined;
     if (items) {
       await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
-      totalUpdate = await this.calcTotal(items);
+      totalUpdate = await this.calcTotal(items, usesB2B);
     }
+
     const updated = await this.prisma.order.update({
       where: { id },
       data: {
         ...rest,
         ...(totalUpdate !== undefined ? { total: totalUpdate } : {}),
         items: items
-          ? { create: items.map((i) => ({ productId: i.productId, quantity: i.quantity })) }
+          ? {
+              create: items.map((i) => ({
+                productId: i.productId,
+                quantity: i.quantity,
+              })),
+            }
           : undefined,
       },
       include: this.orderInclude,
     });
-    return updated;
+
+    return this.serializeOrder(updated);
   }
 
-  // --- Cambio de estado + WhatsApp corto + log por estado (US12) ---
   async updateStatus(id: number, status: OrderStatus) {
     const order = await this.prisma.order.update({
       where: { id },
@@ -217,8 +502,47 @@ export class OrdersService {
       include: this.orderInclude,
     });
 
-    // Solo notificamos los estados de la HU
-    if (status === 'EN_CAMINO' || status === 'ENTREGADO' || status === 'CANCELADO') {
+    try {
+      const msg = this.messageForStatus(status, order.id);
+      if (msg) {
+        await this.push.sendToUser(String(order.userId), {
+          title: msg.title,
+          body: msg.body,
+          data: { type: 'ORDER_STATUS', orderId: order.id, status },
+          priority: 'high',
+          sound: 'default',
+        });
+      }
+    } catch (e) {
+      this.logger.warn(
+        `push STATUS_${status} failed for user ${
+          order.userId
+        }: ${(e as Error).message}`,
+      );
+    }
+
+    try {
+      await this.liveActivities.update(order.id, {
+        orderId: order.id,
+        status,
+      });
+
+      if (status === 'ENTREGADO' || status === 'CANCELADO') {
+        await this.liveActivities.end(order.id, status);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `liveActivity STATUS_${status} failed for order ${
+          order.id
+        }: ${(e as Error).message}`,
+      );
+    }
+
+    if (
+      status === 'EN_CAMINO' ||
+      status === 'ENTREGADO' ||
+      status === 'CANCELADO'
+    ) {
       const toPhone = this.normalizeCoPhone(order.user?.phone ?? '');
       const res = await this.whatsapp.sendStatusUpdate({
         toPhone,
@@ -227,9 +551,10 @@ export class OrdersService {
         tenant: 'Expolicores Villa de Leyva',
       });
 
-      // Log por estado idempotente (STATUS_EN_CAMINO | STATUS_ENTREGADO | STATUS_CANCELADO)
       await this.prisma.notificationLog.upsert({
-        where: { orderId_type: { orderId: order.id, type: `STATUS_${status}` } },
+        where: {
+          orderId_type: { orderId: order.id, type: `STATUS_${status}` },
+        },
         update: {
           sid: (res as any).sid ?? null,
           ok: (res as any).ok,
@@ -248,7 +573,7 @@ export class OrdersService {
       });
     }
 
-    return order;
+    return this.serializeOrder(order);
   }
 
   async remove(id: number) {
@@ -257,14 +582,105 @@ export class OrdersService {
     return { id };
   }
 
-  // E.164 CO básica (+57) para compatibilidad con Twilio WhatsApp
+  private async notifyAdminsNewOrder(order: {
+    id: number;
+    total: number;
+    paymentMethod: PaymentMethodEnum;
+    user?: { name?: string | null; email?: string | null; phone?: string | null } | null;
+    items?: { quantity: number; product?: { name: string } | null }[];
+  }) {
+    try {
+      const admins = await this.prisma.user.findMany({
+        where: { role: Role.ADMIN },
+        select: { id: true },
+      });
+
+      if (!admins.length) return;
+
+      const title = `Nuevo pedido #${order.id}`;
+      const medio = this.mapPaymentMethodToLabel(order.paymentMethod);
+      const firstItem = order.items?.[0];
+      const resumenPrimeraLinea = firstItem?.product?.name
+        ? `${firstItem.quantity}x ${firstItem.product.name}`
+        : undefined;
+
+      const bodyParts = [
+        resumenPrimeraLinea,
+        `Total: $${Math.round(order.total).toLocaleString('es-CO')}`,
+        `Pago: ${medio}`,
+      ].filter(Boolean);
+
+      const body = bodyParts.join(' · ');
+
+      await Promise.all(
+        admins.map((adm) =>
+          this.push.sendToUser(String(adm.id), {
+            title,
+            body,
+            data: { type: 'ADMIN_ORDER_CREATED', orderId: order.id },
+            priority: 'high',
+            sound: 'default',
+          }),
+        ),
+      );
+    } catch (e) {
+      this.logger.warn(
+        `notifyAdminsNewOrder error for order ${
+          order.id
+        }: ${(e as Error).message}`,
+      );
+    }
+  }
+
+  private mapPaymentMethodToLabel(pm: PaymentMethodEnum): string {
+    switch (pm) {
+      case PaymentMethodEnum.CASH:
+        return 'Efectivo';
+      case PaymentMethodEnum.TRANSFER:
+        return 'Transferencia';
+      case PaymentMethodEnum.CARD:
+        return 'Tarjeta';
+      case PaymentMethodEnum.CREDIT:
+        return 'Crédito';
+      default:
+        return 'Contraentrega';
+    }
+  }
+
   private normalizeCoPhone(input: string): string {
     const digits = (input || '').replace(/\D/g, '');
     if (!digits) return '+57';
     if (digits.startsWith('57')) return `+${digits}`;
     if (digits.length === 10) return `+57${digits}`;
-    if (digits.startsWith('0') && digits.length === 11) return `+57${digits.slice(1)}`;
+    if (digits.startsWith('0') && digits.length === 11) {
+      return `+57${digits.slice(1)}`;
+    }
     if (input?.startsWith('+')) return input;
     return `+57${digits}`;
+  }
+
+  private messageForStatus(
+    status: OrderStatus,
+    orderId: number,
+  ): { title: string; body: string } | null {
+    switch (status) {
+      case 'EN_CAMINO':
+        return { title: 'En camino', body: `#${orderId} ya va en camino.` };
+
+      case 'ENTREGADO':
+        return {
+          title: 'Entregado',
+          body: `#${orderId} ha sido entregado. ¡Gracias!`,
+        };
+
+      case 'CANCELADO':
+        return {
+          title: 'Pedido cancelado',
+          body: `#${orderId} fue cancelado.`,
+        };
+
+      default:
+        return null;
+    }
   }
 }

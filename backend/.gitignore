@@ -4,7 +4,7 @@
 /build
 
 # Logs
-logs
+#logs #comento temporalmente para ver si esto si me permite subir ahora el modulo de logs creado el 08-11-25
 *.log
 npm-debug.log*
 pnpm-debug.log*
@@ -56,3 +56,6 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /generated/prisma
+
+#Firebase (google admin Keys)
+expressapp-dc7a1-firebase-adminsdk-fbsvc-5b55f21c14.json

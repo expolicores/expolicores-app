@@ -1,213 +1,201 @@
-// src/screens/OrderTrackingScreen.tsx
-import React from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  RefreshControl,
-  ActivityIndicator,
-  Platform,
-  ToastAndroid,
-  Alert,
-} from "react-native";
-import { useRoute } from "@react-navigation/native";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import api from "../lib/api";
-import StatusBadge from "../components/StatusBadge";
-import { Order } from "../types/order";
-import { isFinal, statusLabel } from "../lib/orderStatus";
-import { timeAgo } from "../lib/time"; // opcional, para texto "humano"
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { View, Text, ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { api } from '../lib/api';
+import type { Order } from '../types/order';
+import { ORDER_STATUS } from '../types/order';
+import { formatCOP } from '../lib/formatCurrency';
 
-async function fetchOrder(orderId: number): Promise<Order> {
-  const { data } = await api.get(`/orders/${orderId}`);
-  return data as Order;
-}
+type RouteParams = { orderId: number };
 
 export default function OrderTrackingScreen() {
-  const { params } = useRoute<any>();
-  const orderId = Number(params?.orderId);
-  const initial: Order | undefined = params?.initial;
+  // Hooks al tope (nunca condicionales)
+  const route = useRoute<any>();
+  const navigation = useNavigation();
+  const orderId = Number(route?.params?.orderId) || 0;
 
-  const qc = useQueryClient();
+  const [loading, setLoading] = useState(true);
+  const [order, setOrder] = useState<Order | null>(null);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
-  const {
-    data,
-    isLoading,
-    isFetching,
-    error,
-    refetch,
-  } = useQuery({
-    queryKey: ["order", orderId],
-    queryFn: () => fetchOrder(orderId),
-    enabled: Number.isFinite(orderId),
-    initialData: initial,            // muestra algo si venimos desde la lista
-    refetchOnFocus: true,
-    refetchOnReconnect: true,
-    refetchIntervalInBackground: false, // no gastar batería en background
-    // Polling solo si el estado no es final
-    refetchInterval: (q) => {
-      const s = (q.state.data as Order | undefined)?.status;
-      return s && !isFinal(s) ? 12000 : false;
-    },
-    staleTime: 0,
-  });
-
-  // 🔔 Si el pedido llega a estado final, actualiza lista y badge del header
-  React.useEffect(() => {
-    const s = data?.status;
-    if (s && isFinal(s)) {
-      qc.invalidateQueries({ queryKey: ["my-orders"] });
-      qc.invalidateQueries({ queryKey: ["my-orders", "active-count"] });
+  const fetchOrder = useCallback(async () => {
+    if (!orderId) return;
+    try {
+      setLoading(true);
+      const res = await api.get(`/orders/${orderId}`);
+      setOrder(res.data as Order);
+    } catch (e) {
+      // Error suave; mantén el último estado
+      // console.warn('[OrderTracking] fetch error', e);
+    } finally {
+      setLoading(false);
     }
-  }, [data?.status, qc]);
+  }, [orderId]);
 
-  if (!Number.isFinite(orderId)) {
-    return (
-      <Center>
-        <Text>ID de pedido inválido</Text>
-      </Center>
-    );
-  }
+  useEffect(() => {
+    // Primer fetch + polling
+    fetchOrder();
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingRef.current = setInterval(fetchOrder, 10000); // 10s
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [fetchOrder]);
 
-  if (isLoading && !data) {
-    return (
-      <Center>
-        <ActivityIndicator />
-      </Center>
-    );
-  }
-
-  if (error && !data) {
-    return (
-      <Center>
-        <Text style={{ color: "#ef4444", marginBottom: 8 }}>
-          No se pudo cargar el pedido.
-        </Text>
-        <Text style={{ color: "#666", fontSize: 12 }}>
-          {String((error as any)?.message ?? "Error")}
-        </Text>
-      </Center>
-    );
-  }
-
-  const order = data as Order;
-  const steps = ["RECIBIDO", "EN_CAMINO", "ENTREGADO"] as const;
-  const currentIndex =
-    order.status === "CANCELADO"
-      ? -1
-      : steps.findIndex((s) => s === order.status);
-
-  const lastUpdateISO = order.updatedAt ?? order.createdAt;
-
-  // ⚡ Opción A — aviso nativo (Toast en Android, Alert en iOS)
-  const lastStatusRef = React.useRef<Order["status"] | null>(initial?.status ?? null);
-  React.useEffect(() => {
-    const s = order?.status;
-    if (!s) return;
-
-    if (lastStatusRef.current && lastStatusRef.current !== s) {
-      const msg = `Estado actualizado: ${statusLabel[s] ?? s}`;
-      if (Platform.OS === "android") {
-        ToastAndroid.show(msg, ToastAndroid.SHORT);
-      } else {
-        Alert.alert("Pedido", msg);
-      }
+  // Derivados memorizados (no hooks condicionales)
+  const statusText = useMemo(() => {
+    if (!order) return '';
+    switch (order.status) {
+      case ORDER_STATUS.RECIBIDO:
+        return 'Recibido';
+      case ORDER_STATUS.EN_CAMINO:
+        return 'En camino';
+      case ORDER_STATUS.ENTREGADO:
+        return 'Entregado';
+      case ORDER_STATUS.CANCELADO:
+        return 'Cancelado';
+      default:
+        return String(order.status);
     }
-    lastStatusRef.current = s;
+  }, [order]);
+
+  const badgeStyle = useMemo(() => {
+    switch (order?.status) {
+      case ORDER_STATUS.EN_CAMINO:
+        return styles.badgeSky;
+      case ORDER_STATUS.ENTREGADO:
+        return styles.badgeGreen;
+      case ORDER_STATUS.CANCELADO:
+        return styles.badgeRed;
+      case ORDER_STATUS.RECIBIDO:
+      default:
+        return styles.badgeGray;
+    }
   }, [order?.status]);
 
+  // ===== A partir de aquí, render condicional (ya se invocaron todos los hooks) =====
+
+  if (!orderId) {
+    return (
+      <Centered>
+        <Text>Pedido no válido</Text>
+      </Centered>
+    );
+  }
+
+  if (loading && !order) {
+    return (
+      <Centered>
+        <ActivityIndicator />
+        <Text style={{ marginTop: 8 }}>Cargando pedido #{orderId}…</Text>
+      </Centered>
+    );
+  }
+
+  if (!order) {
+    return (
+      <Centered>
+        <Text>No se encontró el pedido #{orderId}</Text>
+      </Centered>
+    );
+  }
+
+  const items = order.items ?? [];
+  const orderTotal = order.total ?? 0;
+
+  // Render normal
   return (
-    <ScrollView
-      contentContainerStyle={{ padding: 16 }}
-      refreshControl={
-        <RefreshControl refreshing={isFetching} onRefresh={refetch} />
-      }
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Text style={{ fontSize: 20, fontWeight: "700" }}>
-          Pedido #{order.id}
-        </Text>
-        <StatusBadge status={order.status} />
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.h1}>Pedido #{order.id}</Text>
+
+      <View style={[styles.badge, badgeStyle]}>
+        <Text style={styles.badgeText}>{statusText}</Text>
       </View>
 
-      <Text style={{ marginTop: 6, color: "#666" }}>
-        Última actualización: {timeAgo(lastUpdateISO)}{" "}
-        <Text style={{ color: "#999" }}>
-          ({new Date(lastUpdateISO).toLocaleString()})
-        </Text>
-      </Text>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Detalle del pedido</Text>
 
-      <View style={{ marginTop: 20 }}>
-        {order.status === "CANCELADO" ? (
-          <Text style={{ color: "#ef4444", fontWeight: "600", fontSize: 16 }}>
-            Este pedido fue cancelado.
-          </Text>
-        ) : (
-          steps.map((s, idx) => {
-            const done = idx <= currentIndex;
-            const color = done ? "#16a34a" : "#d1d5db";
-            return (
-              <View
-                key={s}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginBottom: 14,
-                }}
-              >
-                <View
-                  style={{
-                    width: 18,
-                    height: 18,
-                    borderRadius: 9,
-                    backgroundColor: color,
-                    marginRight: 12,
-                  }}
-                />
-                <Text style={{ fontSize: 16, color: done ? "#111" : "#777" }}>
-                  {statusLabel[s]}
+        {items.length === 0 && (
+          <Text style={styles.emptyText}>Este pedido aún no tiene productos asociados.</Text>
+        )}
+
+        {items.map((item, index) => {
+          const name = item.product?.name ?? `Producto ${item.productId}`;
+          const unitPrice = item.product?.price ?? 0;
+          const key = item.id ?? `${item.productId}-${index}`;
+          return (
+            <View key={key} style={styles.itemRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.itemName}>{name}</Text>
+                <Text style={styles.itemMeta}>
+                  {item.quantity} x {formatCOP(unitPrice)}
                 </Text>
               </View>
-            );
-          })
-        )}
-      </View>
+              <Text style={styles.itemAmount}>{formatCOP(unitPrice * item.quantity)}</Text>
+            </View>
+          );
+        })}
 
-      <View
-        style={{
-          marginTop: 24,
-          padding: 12,
-          backgroundColor: "#fafafa",
-          borderRadius: 12,
-        }}
-      >
-        <Text style={{ fontWeight: "700", marginBottom: 8 }}>Resumen</Text>
-        {order.items?.map((i) => (
-          <Text key={i.id} style={{ color: "#444" }}>
-            {i.quantity}× {i.product?.name ?? "Producto"}{" "}
-            {i.product ? `— $${i.product.price}` : ""}
-          </Text>
-        ))}
-        <Text style={{ marginTop: 8, fontWeight: "700" }}>
-          Total: ${order.total}
-        </Text>
+        <View style={styles.sectionDivider} />
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>Total del pedido</Text>
+          <Text style={styles.totalAmount}>{formatCOP(orderTotal)}</Text>
+        </View>
       </View>
     </ScrollView>
   );
 }
 
-function Center({ children }: { children: React.ReactNode }) {
+/** Pequeño contenedor centrado para estados vacíos/carga */
+function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <View
-      style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}
-    >
+    <View style={styles.centered}>
       {children}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  content: { padding: 16 },
+  h1: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 8 },
+
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 },
+
+  // Badges de estado
+  badge: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+  badgeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  badgeSky: { backgroundColor: '#0ea5e9' },   // EN_CAMINO
+  badgeGreen: { backgroundColor: '#10b981' }, // ENTREGADO
+  badgeGray: { backgroundColor: '#6b7280' },  // RECIBIDO (default)
+  badgeRed: { backgroundColor: '#ef4444' },   // CANCELADO
+  section: {
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12, color: '#0f172a' },
+  emptyText: { color: '#6b7280', fontSize: 13 },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  itemName: { color: '#0f172a', fontWeight: '600', fontSize: 14 },
+  itemMeta: { color: '#6b7280', fontSize: 13, marginTop: 2 },
+  itemAmount: { color: '#0f172a', fontWeight: '700', fontSize: 14, marginLeft: 12 },
+  sectionDivider: { height: 1, backgroundColor: '#e5e7eb', marginVertical: 12 },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  totalLabel: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
+  totalAmount: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
+});

@@ -1,10 +1,11 @@
 // src/screens/HomeScreen.tsx
 import React, { useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, Pressable, StyleSheet} from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 // Feature flag (futuro: Restaurantes)
 const RESTAURANTS_ENABLED =
@@ -29,8 +30,9 @@ export default function HomeScreen() {
     console.log('[ME]', user);
   }, [user]);
 
-  // Bodega para NEGOCIO (y ADMIN si aplica)
-  const canSeeBodega = user?.role === 'NEGOCIO' || user?.role === 'ADMIN';
+  // Bodega para roles B2B (BUSINESS legacy) y ADMIN
+  const canSeeBodega =
+    user?.role === 'BUSINESS' || user?.role === 'B2B' || user?.role === 'ADMIN';
 
   return (
     <SafeAreaView style={styles.container}>

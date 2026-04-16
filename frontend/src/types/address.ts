@@ -10,6 +10,7 @@ export type Address = {
   state?: string | null;
   country?: string | null;
   isDefault: boolean;
+  short?: string | null; // representación corta opcional enviada por backend
   lat?: number | null;   // 👈
   lng?: number | null;   // 👈
   createdAt?: string;

@@ -3,7 +3,8 @@ import { View, Text, TextInput, Button, StyleSheet } from 'react-native';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { AuthContext } from '../context/AuthContext';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../context/AuthContext';
 
 // --- Validación ---
 const phoneSchema = z
@@ -34,7 +35,7 @@ function normalizeCoPhone(v: string) {
 }
 
 export default function RegisterScreen() {
-  const { register: registerUser, loading } = useContext(AuthContext);
+  const { requestOtpByPhone, requestOtpByEmail, verifyOtp, signIn, me } = useAuth();
 
   const {
     register,

@@ -24,6 +24,13 @@ export class CreateOrderItemDto {
   quantity: number;
 }
 
+// Métodos de pago soportados en el API
+// CASH      → Efectivo
+// TRANSFER  → Transferencia
+// CARD      → Tarjeta
+// CREDIT    → Crédito (solo negocios / B2B / ADMIN)
+export type PaymentMethod = 'CASH' | 'TRANSFER' | 'CARD' | 'CREDIT';
+
 export class CreateOrderDto {
   @ApiProperty({ example: 123, description: 'ID de la dirección de entrega' })
   @IsInt()
@@ -52,11 +59,12 @@ export class CreateOrderDto {
   notes?: string;
 
   @ApiPropertyOptional({
-    example: 'COD',
-    enum: ['COD'],
-    description: 'Método de pago. MVP: solo contraentrega',
+    example: 'CASH',
+    enum: ['CASH', 'TRANSFER', 'CARD', 'CREDIT'],
+    description:
+      'Método de pago: CASH=Efectivo, TRANSFER=Transferencia, CARD=Tarjeta, CREDIT=Crédito (solo negocios). Si no se envía, se asume CASH en el servicio.',
   })
   @IsOptional()
-  @IsIn(['COD'])
-  paymentMethod?: 'COD';
+  @IsIn(['CASH', 'TRANSFER', 'CARD', 'CREDIT'])
+  paymentMethod?: PaymentMethod;
 }

@@ -50,13 +50,17 @@ export class OrdersController {
   @ApiCreatedResponse({ description: 'Orden creada (status: RECIBIDO)' })
   @ApiBadRequestResponse({
     description:
-      'EMPTY_CART | ADDRESS_MISSING_GEO | COVERAGE_OUT_OF_RANGE',
+      'EMPTY_CART | ADDRESS_MISSING_GEO | COVERAGE_OUT_OF_RANGE | PAYMENT_METHOD_CREDIT_NOT_ALLOWED',
   })
   @ApiNotFoundResponse({ description: 'ADDRESS_NOT_FOUND | PRODUCT_NOT_FOUND' })
   @ApiConflictResponse({ description: 'OUT_OF_STOCK:<productId>' })
   @ApiUnauthorizedResponse()
-  create(@CurrentUser('id') userId: number, @Body() dto: CreateOrderDto) {
-    return this.ordersService.create(userId, dto);
+  create(
+    @CurrentUser() user: { id: number; role: Role },
+    @Body() dto: CreateOrderDto,
+  ) {
+    // 👇 ahora el service recibe también el rol para validar CREDIT solo para B2B/ADMIN
+    return this.ordersService.create(user.id, dto, user.role);
   }
 
   // Mis órdenes (cliente autenticado)

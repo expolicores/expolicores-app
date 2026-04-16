@@ -1,17 +1,28 @@
 // src/screens/CartScreen.tsx
 import React, { useMemo } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
   Text,
   Image,
   FlatList,
   Pressable,
-  SafeAreaView,
   StyleSheet,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCart } from '../context/CartContext';
+import { resolveProductImageUri } from '../lib/image';
+
+const COLORS = {
+  bg: '#FFFFFF',
+  border: '#E5E7EB',
+  muted: '#F7F7F8',
+  text: '#111111',
+  text2: '#666666',
+  green: '#0E8A3A',
+  red: '#D32F2F',
+};
 
 export default function CartScreen() {
   const navigation = useNavigation<any>();
@@ -21,17 +32,21 @@ export default function CartScreen() {
   const hasItems = data.length > 0;
 
   const dec = (it: any) => setQty(it.productId, Math.max(1, it.qty - 1));
-  const inc = (it: any) => setQty(it.productId, Math.min((it.qty ?? 0) + 1, it.stock ?? 9999));
+  const inc = (it: any) =>
+    setQty(it.productId, Math.min((it.qty ?? 0) + 1, it.stock ?? 9999));
 
   const renderItem = ({ item }: any) => {
     const isMin = (item.qty ?? 1) <= 1;
+    const imageUri = resolveProductImageUri(item.imageUrl);
+
     return (
       <View style={styles.card}>
-        {item.imageUrl ? (
-          <Image source={{ uri: item.imageUrl }} style={styles.image} />
-        ) : (
-          <View style={[styles.image, styles.imagePlaceholder]} />
-        )}
+        {/* Imagen producto */}
+        <Image
+          source={{ uri: imageUri }}
+          style={styles.image}
+          resizeMode="contain" // 👈 no recorta, escala dentro del cuadro
+        />
 
         <View style={styles.info}>
           <Text style={styles.name} numberOfLines={2}>
@@ -47,7 +62,9 @@ export default function CartScreen() {
               {/* IZQUIERDA: papelera si qty==1, si no, botón − */}
               <Pressable
                 onPress={() => (isMin ? remove(item.productId) : dec(item))}
-                accessibilityLabel={isMin ? 'Eliminar del carrito' : 'Disminuir cantidad'}
+                accessibilityLabel={
+                  isMin ? 'Eliminar del carrito' : 'Disminuir cantidad'
+                }
                 style={[styles.qtyBtn, isMin && styles.deleteBtn]}
               >
                 {isMin ? (
@@ -109,7 +126,9 @@ export default function CartScreen() {
       />
 
       <View style={styles.noteBox}>
-        <Text style={styles.noteText}>* El envío se calcula en el checkout.</Text>
+        <Text style={styles.noteText}>
+          * El envío se calcula en el checkout.
+        </Text>
       </View>
 
       <View style={styles.stickyBar}>
@@ -136,16 +155,6 @@ export default function CartScreen() {
   );
 }
 
-const COLORS = {
-  bg: '#FFFFFF',
-  border: '#E5E7EB',
-  muted: '#F7F7F8',
-  text: '#111111',
-  text2: '#666666',
-  green: '#0E8A3A',
-  red: '#D32F2F',
-};
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   card: {
@@ -161,8 +170,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
-  image: { width: 80, height: 80, borderRadius: 12 },
-  imagePlaceholder: { backgroundColor: COLORS.muted },
+  image: {
+    width: 80,
+    height: 80,
+    borderRadius: 12,
+    backgroundColor: '#ffffff', // 👈 relleno blanco para packs/botellas
+  },
   info: { flex: 1, marginLeft: 12 },
   name: { color: COLORS.text, fontSize: 16, fontWeight: '600' },
   price: { color: COLORS.text, fontSize: 17, fontWeight: '800', marginTop: 6 },
@@ -243,6 +256,11 @@ const styles = StyleSheet.create({
   },
   btnSecondaryText: { color: COLORS.text2, fontSize: 14, fontWeight: '600' },
 
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
   emptyText: { color: COLORS.text2, fontSize: 15, marginBottom: 10 },
 });
